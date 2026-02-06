@@ -1,5 +1,7 @@
 pub mod config;
 mod cst_to_doc;
+mod cmake_rules;
+mod comments;
 
 pub use config::{CommandCase, FormatConfig};
 

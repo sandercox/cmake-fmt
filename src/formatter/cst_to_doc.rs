@@ -5,6 +5,8 @@ use pretty::RcDoc;
 use rowan::NodeOrToken;
 
 use super::config::{CommandCase, FormatConfig};
+use super::cmake_rules;
+use super::comments;
 
 /// Format context tracking indentation level
 struct FormatContext<'a> {
@@ -60,6 +62,14 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
                         // Emit any pending comment before the command
                         if let Some(comment) = pending_comment.take() {
                             docs.push(comment);
+                            docs.push(RcDoc::hardline());
+                        }
+
+                        // Check for leading comments
+                        let leading_comments = comments::extract_leading_comments(&child_node);
+                        let indent_str = " ".repeat(current_indent * ctx.config.indent_width);
+                        for comment in leading_comments {
+                            docs.push(RcDoc::text(format!("{}{}", indent_str, comment)));
                             docs.push(RcDoc::hardline());
                         }
 
@@ -171,21 +181,36 @@ fn format_command(cmd: &CommandInvocation, ctx: &FormatContext) -> RcDoc<'static
     let formatted_name = match ctx.config.command_case {
         CommandCase::Lowercase => name.to_lowercase(),
         CommandCase::Uppercase => name.to_uppercase(),
-        CommandCase::Preserve => name,
+        CommandCase::Preserve => name.clone(),
     };
 
-    // Get arguments
+    // Get arguments and check for keyword-aware formatting
     let args_doc = if let Some(arg_list) = cmd.argument_list() {
-        format_argument_list(&arg_list, ctx)
+        // Check if this command should use keyword-aware formatting
+        if cmake_rules::is_keyword_aware_command(&name) {
+            let sections = cmake_rules::parse_keyword_sections(&arg_list);
+            cmake_rules::format_keyword_aware_args(sections, ctx.config)
+        } else {
+            format_argument_list(&arg_list, ctx)
+        }
     } else {
         RcDoc::nil()
     };
 
-    // Format as: indent + name + ( + args + )
+    // Check for trailing comment
+    let trailing_comment = comments::extract_trailing_comment(cmd.syntax());
     let cmd_doc = RcDoc::text(formatted_name)
         .append(RcDoc::text("("))
         .append(args_doc)
         .append(RcDoc::text(")"));
+
+    let cmd_doc = if let Some(comment) = trailing_comment {
+        cmd_doc
+            .append(RcDoc::space())
+            .append(RcDoc::text(comment))
+    } else {
+        cmd_doc
+    };
 
     RcDoc::text(indent_str).append(cmd_doc)
 }
