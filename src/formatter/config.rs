@@ -1,5 +1,8 @@
+use serde::Deserialize;
+
 /// Configuration for CMake formatting
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
 pub struct FormatConfig {
     /// Maximum line length before breaking (default: 80)
     pub max_line_length: usize,
@@ -26,7 +29,8 @@ impl Default for FormatConfig {
 }
 
 /// Command name casing options
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum CommandCase {
     /// Convert to lowercase (e.g., "set")
     Lowercase,
