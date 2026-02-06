@@ -21,6 +21,7 @@ impl ParseError {
     ///
     /// # Example
     /// ```
+    /// use cmake_formatter::parser::ParseError;
     /// let source = "hello\nworld\n";
     /// let error = ParseError { message: "test".to_string(), offset: 6 };
     /// assert_eq!(error.line_col(source), (2, 1)); // "world" starts at line 2, col 1
