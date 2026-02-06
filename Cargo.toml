@@ -7,6 +7,7 @@ edition = "2021"
 rowan = "0.16.1"
 anyhow = "1.0"
 miette = { version = "7.6", features = ["fancy"] }
+pretty = "0.12"
 
 [dev-dependencies]
 insta = { version = "1.46", features = ["yaml"] }
