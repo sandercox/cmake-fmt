@@ -1,0 +1,41 @@
+cmake_minimum_required(VERSION 3.20)
+PROJECT(RealWorld VERSION 1.2.3 LANGUAGES CXX)
+
+set( CMAKE_CXX_STANDARD   17 )
+SET(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Platform-specific sources
+if(WIN32)
+  set(PLATFORM_SOURCES
+    src/platform/windows.cpp
+    src/platform/windows_utils.cpp
+  )
+elseif(APPLE)
+  set(PLATFORM_SOURCES
+    src/platform/macos.cpp
+  )
+else()
+  set(PLATFORM_SOURCES
+    src/platform/linux.cpp
+  )
+endif()
+
+# Main library
+add_library(realworld STATIC
+  src/core.cpp
+  src/parser.cpp
+  src/formatter.cpp
+  ${PLATFORM_SOURCES}
+)
+
+target_include_directories(realworld PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include> PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+TARGET_COMPILE_OPTIONS(realworld PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX> $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
+
+target_link_libraries(realworld PUBLIC fmt::fmt PRIVATE Threads::Threads)
+
+# Install rules
+install(TARGETS realworld ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+
+install(DIRECTORY include/ DESTINATION include)

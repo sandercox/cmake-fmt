@@ -1,0 +1,4 @@
+target_link_libraries(myapp lib1 lib2 lib3 lib4 lib5 lib6 lib7 lib8 lib9 lib10 lib11 lib12)
+set(VERY_LONG_LIST item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15)
+add_executable(myapp src/main.cpp src/utils.cpp src/helper.cpp src/parser.cpp src/formatter.cpp src/config.cpp src/cli.cpp)
+message(STATUS "This is a very long message that should probably stay on one line because it is a quoted string and cannot be broken")
