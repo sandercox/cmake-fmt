@@ -37,17 +37,71 @@ pub fn run() -> Result<ExitCode> {
     // Determine if we're in check mode
     let check_mode = cli.check || cli.dry_run;
 
-    // Create default config (config file loading comes in Plan 02)
-    let config = FormatConfig::default();
-
     // Determine if we're processing stdin or files
     let is_stdin = cli.files.is_empty() || (cli.files.len() == 1 && cli.files[0] == PathBuf::from("-"));
 
     if is_stdin {
+        // For stdin, resolve config from current directory
+        let config = crate::config::resolve_config(None, cli.style.as_deref());
         process_stdin(&config, check_mode)
     } else {
-        process_files(&cli.files, &config, cli.in_place, check_mode)
+        // Expand glob patterns
+        let expanded = expand_files(&cli.files)?;
+
+        // Handle case where glob patterns match no files
+        if expanded.is_empty() {
+            eprintln!("No files found");
+            return Ok(ExitCode::SUCCESS);
+        }
+
+        process_files(&expanded, cli.style.as_deref(), cli.in_place, check_mode)
     }
+}
+
+/// Expand glob patterns in file paths
+fn expand_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let mut expanded = Vec::new();
+
+    for path in paths {
+        let path_str = path.to_string_lossy();
+
+        // Check if the path contains glob characters
+        if path_str.contains('*') || path_str.contains('?') || path_str.contains('[') {
+            // Expand glob pattern
+            match glob::glob(&path_str) {
+                Ok(entries) => {
+                    let mut found_any = false;
+                    for entry in entries {
+                        match entry {
+                            Ok(p) => {
+                                if p.is_file() {
+                                    expanded.push(p);
+                                    found_any = true;
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Warning: Error reading glob entry: {:#}", e);
+                            }
+                        }
+                    }
+                    if !found_any {
+                        eprintln!("Warning: No files matched pattern: {}", path_str);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: Invalid glob pattern '{}': {:#}", path_str, e);
+                }
+            }
+        } else {
+            // Not a glob pattern, use as-is
+            expanded.push(path.clone());
+        }
+    }
+
+    // Sort for deterministic order
+    expanded.sort();
+
+    Ok(expanded)
 }
 
 /// Process stdin to stdout
@@ -76,11 +130,12 @@ fn process_stdin(config: &FormatConfig, check_mode: bool) -> Result<ExitCode> {
 /// Process files
 fn process_files(
     files: &[PathBuf],
-    config: &FormatConfig,
+    style_override: Option<&str>,
     in_place: bool,
     check_mode: bool,
 ) -> Result<ExitCode> {
     use std::io::{stdout, Write};
+    use std::collections::HashMap;
 
     let mut any_need_formatting = false;
     let mut stdout_handle = if !in_place && !check_mode {
@@ -88,6 +143,9 @@ fn process_files(
     } else {
         None
     };
+
+    // Cache configs by parent directory to avoid redundant file system walks
+    let mut config_cache: HashMap<PathBuf, FormatConfig> = HashMap::new();
 
     for file in files {
         // Validate file exists
@@ -100,6 +158,12 @@ fn process_files(
             eprintln!("Warning: Not a file: {}", file.display());
             continue;
         }
+
+        // Resolve config for this file (using cache for efficiency)
+        let parent = file.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let config = config_cache.entry(parent.to_path_buf()).or_insert_with(|| {
+            crate::config::resolve_config(Some(file), style_override)
+        });
 
         match process_file(file, config, in_place, check_mode) {
             Ok(needs_formatting) => {
