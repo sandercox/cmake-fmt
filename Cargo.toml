@@ -8,6 +8,12 @@ rowan = "0.16.1"
 anyhow = "1.0"
 miette = { version = "7.6", features = ["fancy"] }
 pretty = "0.12"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+serde_yml = "0.0.12"
+tempfile = "3"
+glob = "0.3"
 
 [dev-dependencies]
 insta = { version = "1.46", features = ["yaml", "glob"] }
