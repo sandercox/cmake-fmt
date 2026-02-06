@@ -198,25 +198,26 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
         return RcDoc::nil();
     }
 
-    // Build argument documents
-    let mut arg_docs = Vec::new();
+    // Build argument documents with separators
+    let mut docs = vec![RcDoc::line_()]; // Soft line at start
+
     for (i, arg) in args.iter().enumerate() {
         let text = arg.text().to_string();
-        arg_docs.push(RcDoc::text(text));
+        docs.push(RcDoc::text(text));
 
         // Add separator between arguments (not after last)
         if i < args.len() - 1 {
-            arg_docs.push(RcDoc::line());
+            docs.push(RcDoc::line());
         }
     }
 
-    // Group the arguments: tries flat first, breaks if too long
-    // When broken, indent arguments and place closing paren at command level
-    let args_concat = RcDoc::concat(arg_docs);
-    let grouped = args_concat.nest(ctx.config.indent_width as isize).group();
+    docs.push(RcDoc::line_()); // Soft line at end
 
-    // Add softline at start (empty when flat, newline when broken)
-    RcDoc::line_().append(grouped).append(RcDoc::line_())
+    // Group everything together: tries flat first, breaks if too long
+    // When broken, nest the arguments
+    RcDoc::concat(docs)
+        .nest(ctx.config.indent_width as isize)
+        .group()
 }
 
 /// Check if command is a block opener

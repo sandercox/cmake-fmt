@@ -28,12 +28,15 @@ fn render_doc(doc: RcDoc<'static, ()>, config: &FormatConfig) -> String {
     let result = String::from_utf8(output)
         .expect("formatted output should be valid UTF-8");
 
-    // Ensure file ends with single newline
-    if result.is_empty() {
+    // Trim the result and ensure proper ending
+    let trimmed = result.trim();
+
+    // If nothing meaningful, return empty
+    if trimmed.is_empty() {
         String::new()
-    } else if !result.ends_with('\n') {
-        format!("{}\n", result)
+    } else if !trimmed.ends_with('\n') {
+        format!("{}\n", trimmed)
     } else {
-        result
+        trimmed.to_string()
     }
 }
