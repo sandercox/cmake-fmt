@@ -47,30 +47,77 @@ pub fn format_cst(cst: &CSTRoot, config: &FormatConfig) -> RcDoc<'static, ()> {
     format_file(&cst.root, &ctx)
 }
 
+/// Collect all trailing comments in the file
+fn collect_trailing_comments(node: &SyntaxNode) -> std::collections::HashSet<String> {
+    let mut trailing_comments = std::collections::HashSet::new();
+    for child in node.children_with_tokens() {
+        if let NodeOrToken::Node(child_node) = &child {
+            if child_node.kind() == SyntaxKind::COMMAND_INVOCATION {
+                if let Some(trailing) = comments::extract_trailing_comment(child_node) {
+                    trailing_comments.insert(trailing);
+                }
+            }
+        }
+    }
+    trailing_comments
+}
+
 /// Format the FILE node
 fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
     let mut docs = Vec::new();
     let mut current_indent: usize = 0;
     let mut blank_line_count = 0;
-    let mut pending_comment: Option<RcDoc<'static, ()>> = None;
 
+    // First pass: collect all comments that will be handled as leading/trailing
+    // Trailing comments take precedence over leading comments (to avoid duplication)
+    let mut handled_comments = std::collections::HashSet::new();
+    let trailing_comments = collect_trailing_comments(node);
+
+    // Add trailing comments to handled set
+    for trailing in &trailing_comments {
+        handled_comments.insert(trailing.clone());
+    }
+
+    // Then collect leading comments, but skip those that are trailing comments
+    for child in node.children_with_tokens() {
+        if let NodeOrToken::Node(child_node) = &child {
+            if child_node.kind() == SyntaxKind::COMMAND_INVOCATION {
+                for comment in comments::extract_leading_comments(child_node) {
+                    // Don't mark as handled if it's a trailing comment
+                    if !trailing_comments.contains(&comment) {
+                        handled_comments.insert(comment);
+                    }
+                }
+            }
+        }
+    }
+
+    // Second pass: emit formatted output
     for child in node.children_with_tokens() {
         match child {
             NodeOrToken::Node(child_node) => {
                 match child_node.kind() {
                     SyntaxKind::COMMAND_INVOCATION => {
-                        // Emit any pending comment before the command
-                        if let Some(comment) = pending_comment.take() {
-                            docs.push(comment);
-                            docs.push(RcDoc::hardline());
+                        // Check for leading comments FIRST
+                        let leading_comments = comments::extract_leading_comments(&child_node);
+
+                        // Emit accumulated blank lines before command/comments
+                        // But only if not first content
+                        if blank_line_count >= 2 && !docs.is_empty() {
+                            let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, ctx.config.max_blank_lines);
+                            for _ in 0..blank_lines_to_emit {
+                                docs.push(RcDoc::hardline());
+                            }
                         }
 
-                        // Check for leading comments
-                        let leading_comments = comments::extract_leading_comments(&child_node);
+                        // Emit leading comments (skip if already handled as trailing)
                         let indent_str = " ".repeat(current_indent * ctx.config.indent_width);
-                        for comment in leading_comments {
-                            docs.push(RcDoc::text(format!("{}{}", indent_str, comment)));
-                            docs.push(RcDoc::hardline());
+                        for comment in &leading_comments {
+                            // Only emit if not already handled as a trailing comment
+                            if !trailing_comments.contains(comment) {
+                                docs.push(RcDoc::text(format!("{}{}", indent_str, comment)));
+                                docs.push(RcDoc::hardline());
+                            }
                         }
 
                         // Determine command name and adjust indentation
@@ -99,7 +146,13 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
                             };
 
                             // Format and emit command
-                            let cmd_doc = format_command(&cmd, &cmd_ctx);
+                            let mut cmd_doc = format_command(&cmd, &cmd_ctx);
+
+                            // Check for trailing comment
+                            if let Some(trailing_comment) = comments::extract_trailing_comment(&child_node) {
+                                cmd_doc = cmd_doc.append(RcDoc::space()).append(RcDoc::text(trailing_comment));
+                            }
+
                             docs.push(cmd_doc);
                             docs.push(RcDoc::hardline());
 
@@ -112,6 +165,15 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
                         }
                     }
                     SyntaxKind::ERROR => {
+                        // Emit accumulated blank lines before error
+                        // But only if not first content
+                        if blank_line_count >= 2 && !docs.is_empty() {
+                            let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, ctx.config.max_blank_lines);
+                            for _ in 0..blank_lines_to_emit {
+                                docs.push(RcDoc::hardline());
+                            }
+                        }
+
                         // Preserve error nodes verbatim
                         let text = child_node.text().to_string();
                         if !text.trim().is_empty() {
@@ -125,34 +187,28 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
             }
             NodeOrToken::Token(token) => {
                 match token.kind() {
-                    SyntaxKind::COMMENT => {
-                        let text = token.text();
-                        let indent_str = " ".repeat(current_indent * ctx.config.indent_width);
-                        pending_comment = Some(RcDoc::text(format!("{}{}", indent_str, text)));
-                        blank_line_count = 0;
-                    }
-                    SyntaxKind::BRACKET_COMMENT => {
-                        let text = token.text();
-                        let indent_str = " ".repeat(current_indent * ctx.config.indent_width);
-                        // Bracket comments can be multi-line, preserve as-is with indentation
-                        let lines: Vec<_> = text.lines().collect();
-                        if let Some((first, rest)) = lines.split_first() {
-                            let mut comment_doc = RcDoc::text(format!("{}{}", indent_str, first));
-                            for line in rest {
-                                comment_doc = comment_doc.append(RcDoc::hardline())
-                                    .append(RcDoc::text(format!("{}{}", indent_str, line)));
+                    SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
+                        // Only emit standalone comments (not already handled)
+                        let comment_text = token.text().to_string();
+                        if !handled_comments.contains(&comment_text) {
+                            // Emit accumulated blank lines before standalone comment
+                            // But only if not first content
+                            if blank_line_count >= 2 && !docs.is_empty() {
+                                let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, ctx.config.max_blank_lines);
+                                for _ in 0..blank_lines_to_emit {
+                                    docs.push(RcDoc::hardline());
+                                }
                             }
-                            docs.push(comment_doc);
+
+                            let indent_str = " ".repeat(current_indent * ctx.config.indent_width);
+                            docs.push(RcDoc::text(format!("{}{}", indent_str, comment_text)));
                             docs.push(RcDoc::hardline());
+                            blank_line_count = 0;
                         }
-                        blank_line_count = 0;
+                        // Don't reset blank_line_count for handled comments - they're part of leading comments
                     }
                     SyntaxKind::NEWLINE => {
                         blank_line_count += 1;
-                        // Emit blank lines up to max_blank_lines
-                        if blank_line_count > 1 && blank_line_count <= ctx.config.max_blank_lines + 1 {
-                            docs.push(RcDoc::hardline());
-                        }
                     }
                     SyntaxKind::WHITESPACE => {
                         // Skip - formatter decides whitespace
@@ -161,12 +217,6 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
                 }
             }
         }
-    }
-
-    // Emit any trailing comment
-    if let Some(comment) = pending_comment {
-        docs.push(comment);
-        docs.push(RcDoc::hardline());
     }
 
     RcDoc::concat(docs)
@@ -197,20 +247,11 @@ fn format_command(cmd: &CommandInvocation, ctx: &FormatContext) -> RcDoc<'static
         RcDoc::nil()
     };
 
-    // Check for trailing comment
-    let trailing_comment = comments::extract_trailing_comment(cmd.syntax());
+    // Format as: indent + name + ( + args + )
     let cmd_doc = RcDoc::text(formatted_name)
         .append(RcDoc::text("("))
         .append(args_doc)
         .append(RcDoc::text(")"));
-
-    let cmd_doc = if let Some(comment) = trailing_comment {
-        cmd_doc
-            .append(RcDoc::space())
-            .append(RcDoc::text(comment))
-    } else {
-        cmd_doc
-    };
 
     RcDoc::text(indent_str).append(cmd_doc)
 }

@@ -1,0 +1,12 @@
+---
+source: tests/formatting_snapshot_tests.rs
+expression: output
+input_file: tests/format_fixtures/simple_commands.cmake
+---
+cmake_minimum_required(VERSION 3.20)
+project(MyProject LANGUAGES CXX)
+
+set(MY_VAR "hello")
+message(STATUS "Building ${MY_VAR}")
+set(SIMPLE value)
+message("done")

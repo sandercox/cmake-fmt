@@ -51,15 +51,15 @@ pub fn extract_trailing_comment(node: &SyntaxNode) -> Option<String> {
         match &next {
             NodeOrToken::Token(token) => {
                 match token.kind() {
-                    SyntaxKind::COMMENT => {
-                        // Found a trailing comment
+                    SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
+                        // Found a trailing comment (before any newline)
                         return Some(token.text().to_string());
                     }
                     SyntaxKind::WHITESPACE => {
-                        // Continue through whitespace
+                        // Continue through whitespace (spaces/tabs only, not newlines)
                     }
                     SyntaxKind::NEWLINE => {
-                        // Hit a newline before finding a comment
+                        // Hit a newline before finding a comment - no trailing comment
                         return None;
                     }
                     _ => {

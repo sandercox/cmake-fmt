@@ -1,0 +1,37 @@
+---
+source: tests/formatting_snapshot_tests.rs
+expression: output
+input_file: tests/format_fixtures/comments_mixed.cmake
+---
+# File header comment
+# Another header line
+cmake_minimum_required(VERSION 3.20)
+
+# Section: Project setup
+project(CommentTest)
+
+set(MY_VAR value) # trailing comment
+set(OTHER_VAR other) # another trailing
+
+# Before if block
+if(WIN32)
+
+  # Inside if block
+  set(A b)
+else() # trailing on else
+
+  # Inside else block
+  set(C d)
+endif() # end comment
+
+#[=[
+This is a bracket comment
+that spans multiple lines
+and should be preserved exactly
+]=]
+message(STATUS "after bracket comment")
+
+# Multiple comments
+# before a single
+# command
+set(FINAL done)
