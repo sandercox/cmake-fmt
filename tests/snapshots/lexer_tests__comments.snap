@@ -1,0 +1,41 @@
+---
+source: tests/lexer_tests.rs
+assertion_line: 319
+expression: snapshot
+---
+- - COMMENT
+  - "# This is a line comment"
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - message
+- - LPAREN
+  - (
+- - UNQUOTED_ARGUMENT
+  - hello
+- - RPAREN
+  - )
+- - WHITESPACE
+  - " "
+- - COMMENT
+  - "# Inline comment"
+- - NEWLINE
+  - "\n"
+- - BRACKET_COMMENT
+  - "#[[This is a bracket comment]]"
+- - NEWLINE
+  - "\n"
+- - BRACKET_COMMENT
+  - "#[=[\nMulti-line bracket comment\nwith ]] inside\n]=]"
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - message
+- - LPAREN
+  - (
+- - UNQUOTED_ARGUMENT
+  - world
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"

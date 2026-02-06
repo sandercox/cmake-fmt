@@ -1,0 +1,103 @@
+---
+source: tests/lexer_tests.rs
+assertion_line: 319
+expression: snapshot
+---
+- - COMMAND_NAME
+  - cmake_minimum_required
+- - LPAREN
+  - (
+- - UNQUOTED_ARGUMENT
+  - VERSION
+- - WHITESPACE
+  - " "
+- - UNQUOTED_ARGUMENT
+  - "3.20"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - project
+- - LPAREN
+  - (
+- - UNQUOTED_ARGUMENT
+  - MyProject
+- - WHITESPACE
+  - " "
+- - UNQUOTED_ARGUMENT
+  - LANGUAGES
+- - WHITESPACE
+  - " "
+- - UNQUOTED_ARGUMENT
+  - CXX
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - set
+- - LPAREN
+  - (
+- - UNQUOTED_ARGUMENT
+  - SOURCES
+- - NEWLINE
+  - "\n"
+- - WHITESPACE
+  - "  "
+- - COMMAND_NAME
+  - main.cpp
+- - NEWLINE
+  - "\n"
+- - WHITESPACE
+  - "  "
+- - COMMAND_NAME
+  - utils.cpp
+- - NEWLINE
+  - "\n"
+- - WHITESPACE
+  - "  "
+- - COMMAND_NAME
+  - helper.cpp
+- - NEWLINE
+  - "\n"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - add_executable
+- - LPAREN
+  - (
+- - UNQUOTED_ARGUMENT
+  - myapp
+- - WHITESPACE
+  - " "
+- - VARIABLE_REF
+  - "${SOURCES}"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - target_link_libraries
+- - LPAREN
+  - (
+- - UNQUOTED_ARGUMENT
+  - myapp
+- - WHITESPACE
+  - " "
+- - UNQUOTED_ARGUMENT
+  - PRIVATE
+- - WHITESPACE
+  - " "
+- - UNQUOTED_ARGUMENT
+  - "fmt::fmt"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"

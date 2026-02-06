@@ -1,0 +1,73 @@
+---
+source: tests/lexer_tests.rs
+assertion_line: 319
+expression: snapshot
+---
+- - COMMAND_NAME
+  - target_compile_options
+- - LPAREN
+  - (
+- - UNQUOTED_ARGUMENT
+  - foo
+- - WHITESPACE
+  - " "
+- - UNQUOTED_ARGUMENT
+  - PRIVATE
+- - WHITESPACE
+  - " "
+- - GENERATOR_EXPR
+  - "$<$<CONFIG:Debug>:-g>"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - target_compile_options
+- - LPAREN
+  - (
+- - UNQUOTED_ARGUMENT
+  - foo
+- - WHITESPACE
+  - " "
+- - UNQUOTED_ARGUMENT
+  - PRIVATE
+- - WHITESPACE
+  - " "
+- - GENERATOR_EXPR
+  - "$<$<AND:$<BOOL:${VAR}>,$<CONFIG:Debug>>:-g>"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - set
+- - LPAREN
+  - (
+- - UNQUOTED_ARGUMENT
+  - FLAGS
+- - WHITESPACE
+  - " "
+- - GENERATOR_EXPR
+  - "$<$<AND:$<BOOL:${VAR}>,$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>>:-g>"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - target_compile_definitions
+- - LPAREN
+  - (
+- - UNQUOTED_ARGUMENT
+  - foo
+- - WHITESPACE
+  - " "
+- - UNQUOTED_ARGUMENT
+  - PRIVATE
+- - WHITESPACE
+  - " "
+- - GENERATOR_EXPR
+  - "$<$<BOOL:${USE_FEATURE}>:FEATURE_ENABLED>"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"

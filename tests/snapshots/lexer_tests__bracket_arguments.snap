@@ -1,0 +1,75 @@
+---
+source: tests/lexer_tests.rs
+assertion_line: 319
+expression: snapshot
+---
+- - COMMENT
+  - "# 0 equals"
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - message
+- - LPAREN
+  - (
+- - BRACKET_ARGUMENT
+  - "[[Simple bracket argument]]"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - COMMENT
+  - "# 1 equal"
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - message
+- - LPAREN
+  - (
+- - BRACKET_ARGUMENT
+  - "[=[Contains ]] inside]=]"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - COMMENT
+  - "# 2 equals"
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - message
+- - LPAREN
+  - (
+- - BRACKET_ARGUMENT
+  - "[==[Contains ]=] inside]==]"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - COMMENT
+  - "# Empty bracket"
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - message
+- - LPAREN
+  - (
+- - BRACKET_ARGUMENT
+  - "[[]]"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - COMMENT
+  - "# Multiline bracket"
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - message
+- - LPAREN
+  - (
+- - BRACKET_ARGUMENT
+  - "[[\nLine 1\nLine 2\n]]"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"

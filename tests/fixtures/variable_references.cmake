@@ -1,0 +1,5 @@
+set(MY_VAR "hello")
+message(${MY_VAR})
+message($ENV{PATH})
+message($CACHE{MY_CACHE_VAR})
+set(NESTED ${PREFIX_${SUFFIX}})

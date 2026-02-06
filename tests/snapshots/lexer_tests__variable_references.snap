@@ -1,0 +1,63 @@
+---
+source: tests/lexer_tests.rs
+assertion_line: 319
+expression: snapshot
+---
+- - COMMAND_NAME
+  - set
+- - LPAREN
+  - (
+- - UNQUOTED_ARGUMENT
+  - MY_VAR
+- - WHITESPACE
+  - " "
+- - QUOTED_ARGUMENT
+  - "\"hello\""
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - message
+- - LPAREN
+  - (
+- - VARIABLE_REF
+  - "${MY_VAR}"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - message
+- - LPAREN
+  - (
+- - ENV_VAR_REF
+  - "$ENV{PATH}"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - message
+- - LPAREN
+  - (
+- - CACHE_VAR_REF
+  - "$CACHE{MY_CACHE_VAR}"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
+- - COMMAND_NAME
+  - set
+- - LPAREN
+  - (
+- - UNQUOTED_ARGUMENT
+  - NESTED
+- - WHITESPACE
+  - " "
+- - VARIABLE_REF
+  - "${PREFIX_${SUFFIX}}"
+- - RPAREN
+  - )
+- - NEWLINE
+  - "\n"
