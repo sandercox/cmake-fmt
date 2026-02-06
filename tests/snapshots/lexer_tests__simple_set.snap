@@ -1,6 +1,5 @@
 ---
 source: tests/lexer_tests.rs
-assertion_line: 319
 expression: snapshot
 ---
 - - COMMAND_NAME
@@ -47,19 +46,19 @@ expression: snapshot
   - "\n"
 - - WHITESPACE
   - "  "
-- - COMMAND_NAME
+- - UNQUOTED_ARGUMENT
   - main.cpp
 - - NEWLINE
   - "\n"
 - - WHITESPACE
   - "  "
-- - COMMAND_NAME
+- - UNQUOTED_ARGUMENT
   - utils.cpp
 - - NEWLINE
   - "\n"
 - - WHITESPACE
   - "  "
-- - COMMAND_NAME
+- - UNQUOTED_ARGUMENT
   - helper.cpp
 - - NEWLINE
   - "\n"

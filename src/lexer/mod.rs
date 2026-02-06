@@ -17,15 +17,15 @@ pub fn lex(input: &str) -> Vec<Token> {
 
 struct Lexer<'a> {
     cursor: Cursor<'a>,
-    /// Track whether we're expecting a command name (after newline/start) or in arguments (after LPAREN)
-    expecting_command: bool,
+    /// Track parenthesis depth - 0 means we're at top level (expecting commands)
+    paren_depth: u32,
 }
 
 impl<'a> Lexer<'a> {
     fn new(input: &'a str) -> Self {
         Self {
             cursor: Cursor::new(input),
-            expecting_command: true, // Start of file expects command
+            paren_depth: 0, // Start at top level
         }
     }
 
@@ -49,13 +49,11 @@ impl<'a> Lexer<'a> {
             // Newlines (separate from whitespace for line tracking)
             '\n' => {
                 self.cursor.advance();
-                self.expecting_command = true; // After newline, expect command
                 SyntaxKind::NEWLINE
             }
             '\r' if self.cursor.peek_nth(1) == Some('\n') => {
                 self.cursor.advance(); // \r
                 self.cursor.advance(); // \n
-                self.expecting_command = true;
                 SyntaxKind::NEWLINE
             }
 
@@ -88,12 +86,12 @@ impl<'a> Lexer<'a> {
             // Parentheses
             '(' => {
                 self.cursor.advance();
-                self.expecting_command = false; // Inside arguments now
+                self.paren_depth += 1;
                 SyntaxKind::LPAREN
             }
             ')' => {
                 self.cursor.advance();
-                self.expecting_command = true; // After closing paren, expect command
+                self.paren_depth = self.paren_depth.saturating_sub(1);
                 SyntaxKind::RPAREN
             }
 
@@ -377,7 +375,8 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        if self.expecting_command {
+        // At depth 0, identifiers are command names; inside parens they're arguments
+        if self.paren_depth == 0 {
             SyntaxKind::COMMAND_NAME
         } else {
             SyntaxKind::UNQUOTED_ARGUMENT
