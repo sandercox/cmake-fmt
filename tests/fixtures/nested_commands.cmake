@@ -1,0 +1,11 @@
+if(WIN32)
+  set(PLATFORM_SOURCES win32_impl.cpp)
+elseif(UNIX)
+  set(PLATFORM_SOURCES unix_impl.cpp)
+else()
+  message(FATAL_ERROR "Unsupported platform")
+endif()
+
+foreach(src ${SOURCES})
+  message(STATUS "Source: ${src}")
+endforeach()

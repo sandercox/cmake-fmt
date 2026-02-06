@@ -1,0 +1,46 @@
+---
+source: tests/parser_tests.rs
+expression: cst.root
+---
+FILE@0..202
+  COMMENT@0..15 "# Valid command"
+  NEWLINE@15..16 "\n"
+  COMMAND_INVOCATION@16..30
+    COMMAND_NAME@16..23 "message"
+    LPAREN@23..24 "("
+    ARGUMENT_LIST@24..29
+      UNQUOTED_ARGUMENT@24..29 "hello"
+    RPAREN@29..30 ")"
+  NEWLINE@30..31 "\n"
+  COMMENT@31..54 "# Missing closing paren"
+  NEWLINE@54..55 "\n"
+  COMMAND_INVOCATION@55..202
+    COMMAND_NAME@55..58 "set"
+    LPAREN@58..59 "("
+    ARGUMENT_LIST@59..202
+      UNQUOTED_ARGUMENT@59..65 "MY_VAR"
+      WHITESPACE@65..66 " "
+      QUOTED_ARGUMENT@66..73 "\"value\""
+      NEWLINE@73..74 "\n"
+      COMMENT@74..109 "# Another valid comma ..."
+      NEWLINE@109..110 "\n"
+      UNQUOTED_ARGUMENT@110..117 "project"
+      LPAREN@117..118 "("
+      ARGUMENT_LIST@118..127
+        UNQUOTED_ARGUMENT@118..127 "MyProject"
+      RPAREN@127..128 ")"
+      NEWLINE@128..129 "\n"
+      COMMENT@129..147 "# Unexpected token"
+      NEWLINE@147..148 "\n"
+      UNQUOTED_ARGUMENT@148..158 "!!!invalid"
+      NEWLINE@158..159 "\n"
+      COMMENT@159..172 "# Valid again"
+      NEWLINE@172..173 "\n"
+      UNQUOTED_ARGUMENT@173..187 "add_executable"
+      LPAREN@187..188 "("
+      ARGUMENT_LIST@188..200
+        UNQUOTED_ARGUMENT@188..191 "app"
+        WHITESPACE@191..192 " "
+        UNQUOTED_ARGUMENT@192..200 "main.cpp"
+      RPAREN@200..201 ")"
+      NEWLINE@201..202 "\n"

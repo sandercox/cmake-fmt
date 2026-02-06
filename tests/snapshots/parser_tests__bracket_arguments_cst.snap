@@ -1,0 +1,50 @@
+---
+source: tests/parser_tests.rs
+expression: cst.root
+---
+FILE@0..219
+  COMMENT@0..10 "# 0 equals"
+  NEWLINE@10..11 "\n"
+  COMMAND_INVOCATION@11..47
+    COMMAND_NAME@11..18 "message"
+    LPAREN@18..19 "("
+    ARGUMENT_LIST@19..46
+      BRACKET_ARGUMENT@19..46 "[[Simple bracket argu ..."
+    RPAREN@46..47 ")"
+  NEWLINE@47..48 "\n"
+  COMMENT@48..57 "# 1 equal"
+  NEWLINE@57..58 "\n"
+  COMMAND_INVOCATION@58..91
+    COMMAND_NAME@58..65 "message"
+    LPAREN@65..66 "("
+    ARGUMENT_LIST@66..90
+      BRACKET_ARGUMENT@66..90 "[=[Contains ]] inside]=]"
+    RPAREN@90..91 ")"
+  NEWLINE@91..92 "\n"
+  COMMENT@92..102 "# 2 equals"
+  NEWLINE@102..103 "\n"
+  COMMAND_INVOCATION@103..139
+    COMMAND_NAME@103..110 "message"
+    LPAREN@110..111 "("
+    ARGUMENT_LIST@111..138
+      BRACKET_ARGUMENT@111..138 "[==[Contains ]=] insi ..."
+    RPAREN@138..139 ")"
+  NEWLINE@139..140 "\n"
+  COMMENT@140..155 "# Empty bracket"
+  NEWLINE@155..156 "\n"
+  COMMAND_INVOCATION@156..169
+    COMMAND_NAME@156..163 "message"
+    LPAREN@163..164 "("
+    ARGUMENT_LIST@164..168
+      BRACKET_ARGUMENT@164..168 "[[]]"
+    RPAREN@168..169 ")"
+  NEWLINE@169..170 "\n"
+  COMMENT@170..189 "# Multiline bracket"
+  NEWLINE@189..190 "\n"
+  COMMAND_INVOCATION@190..218
+    COMMAND_NAME@190..197 "message"
+    LPAREN@197..198 "("
+    ARGUMENT_LIST@198..217
+      BRACKET_ARGUMENT@198..217 "[[\nLine 1\nLine 2\n]]"
+    RPAREN@217..218 ")"
+  NEWLINE@218..219 "\n"
