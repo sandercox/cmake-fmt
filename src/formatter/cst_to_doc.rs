@@ -315,33 +315,46 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
     // Detect formatting signals
     let signals = detect_argument_formatting_signals(arg_list);
 
-    // If no multiline signals, use original behavior (soft lines + group)
+    // If no multiline signals, use auto-layout (soft lines + group)
+    // But follow ARGL-03: first arg should be on same line as command when broken
     if !signals.force_multiline {
-        let mut docs = vec![RcDoc::line_()]; // Soft line at start
-
-        for (i, arg) in args.iter().enumerate() {
-            let text = arg.text().to_string();
-            docs.push(RcDoc::text(text));
-
-            // Add separator between arguments (not after last)
-            if i < args.len() - 1 {
-                docs.push(RcDoc::line());
-            }
+        if args.len() == 1 {
+            // Single argument: simple case
+            let text = args[0].text().to_string();
+            return RcDoc::text(text);
         }
 
-        docs.push(RcDoc::line_()); // Soft line at end
+        // Multiple arguments: first arg not nested, rest nested
+        // This ensures ARGL-03 even when auto-layout breaks
+        let first_text = args[0].text().to_string();
+        let mut rest_docs = Vec::new();
 
-        // Group everything together: tries flat first, breaks if too long
-        return RcDoc::concat(docs)
-            .nest(ctx.config.indent_width as isize)
-            .group();
+        for (i, arg) in args.iter().enumerate().skip(1) {
+            rest_docs.push(RcDoc::line());
+            let text = arg.text().to_string();
+            rest_docs.push(RcDoc::text(text));
+        }
+
+        rest_docs.push(RcDoc::line_()); // Soft line before closing paren
+
+        // Build: first + grouped(nested(rest))
+        // When flat: "first rest1 rest2"
+        // When broken: "first\n  rest1\n  rest2\n"
+        return RcDoc::text(first_text)
+            .append(
+                RcDoc::concat(rest_docs)
+                    .nest(ctx.config.indent_width as isize)
+                    .group()
+            );
     }
 
     // Force multiline: walk tokens and build Doc IR with hardlines
-    let mut docs = vec![RcDoc::line_()]; // First break - collapses to nothing (ARGL-03)
-    let mut last_was_arg = false;
+    // Strategy for ARGL-03: first arg not indented, rest indented
+    // Build first_arg_doc separately, then build rest_docs with nesting
+    let mut first_arg_doc: Option<RcDoc<'static, ()>> = None;
+    let mut rest_docs = Vec::new();
     let mut consecutive_newline_count = 0;
-    let mut first_arg = true;
+    let mut seen_first_arg = false;
 
     for child in arg_list.syntax().children_with_tokens() {
         match child {
@@ -354,39 +367,50 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
                     | SyntaxKind::ENV_VAR_REF
                     | SyntaxKind::CACHE_VAR_REF
                     | SyntaxKind::GENERATOR_EXPR => {
-                        // Add hardline separator before this arg (if not first)
-                        if last_was_arg && !first_arg {
-                            docs.push(RcDoc::hardline());
-                        }
-
                         let text = token.text().to_string();
-                        docs.push(RcDoc::text(text));
-                        last_was_arg = true;
-                        first_arg = false;
+
+                        if !seen_first_arg {
+                            // First argument: no indent, no break before
+                            first_arg_doc = Some(RcDoc::text(text));
+                            seen_first_arg = true;
+                        } else {
+                            // Subsequent arguments: add hardline before each
+                            rest_docs.push(RcDoc::hardline());
+
+                            // If there were blank lines before this arg, emit extra hardlines
+                            if consecutive_newline_count >= 2 {
+                                // consecutive_newline_count includes the line-ending newline
+                                // So 2 newlines = 1 blank line, 3 newlines = 2 blank lines, etc.
+                                let blank_lines = consecutive_newline_count - 1;
+                                let blank_lines_to_emit = std::cmp::min(blank_lines, ctx.config.max_blank_lines);
+                                for _ in 0..blank_lines_to_emit {
+                                    rest_docs.push(RcDoc::hardline());
+                                }
+                            }
+
+                            rest_docs.push(RcDoc::text(text));
+                        }
                         consecutive_newline_count = 0;
                     }
                     SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
-                        // Emit comment with hardline after
+                        // Comments always go in rest_docs (indented)
                         let text = token.text().to_string();
-                        docs.push(RcDoc::hardline());
-                        docs.push(RcDoc::text(text));
-                        docs.push(RcDoc::hardline());
-                        last_was_arg = false;
+                        rest_docs.push(RcDoc::hardline());
+
+                        // If there were blank lines before this comment, emit extra hardlines
+                        if consecutive_newline_count >= 2 {
+                            let blank_lines = consecutive_newline_count - 1;
+                            let blank_lines_to_emit = std::cmp::min(blank_lines, ctx.config.max_blank_lines);
+                            for _ in 0..blank_lines_to_emit {
+                                rest_docs.push(RcDoc::hardline());
+                            }
+                        }
+
+                        rest_docs.push(RcDoc::text(text));
                         consecutive_newline_count = 0;
                     }
                     SyntaxKind::NEWLINE => {
                         consecutive_newline_count += 1;
-                        // If this is a blank line (2+ consecutive newlines), emit extra hardline
-                        if consecutive_newline_count >= 2 {
-                            // Respect max_blank_lines config
-                            let blank_lines_to_emit = consecutive_newline_count - 1;
-                            let max_blank = ctx.config.max_blank_lines;
-                            if blank_lines_to_emit <= max_blank {
-                                docs.push(RcDoc::hardline());
-                            }
-                            // Reset so we don't emit multiple times for same blank line run
-                            consecutive_newline_count = 1;
-                        }
                     }
                     SyntaxKind::WHITESPACE | SyntaxKind::LPAREN | SyntaxKind::RPAREN => {
                         // Skip - whitespace is formatter's job, parens are handled by format_command
@@ -404,10 +428,23 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
         }
     }
 
-    docs.push(RcDoc::line_()); // Last break - collapses to nothing
-
-    // Nest without group (forced multiline must not collapse)
-    RcDoc::concat(docs).nest(ctx.config.indent_width as isize)
+    // Build final Doc IR
+    if let Some(first) = first_arg_doc {
+        // We have a first arg
+        if !rest_docs.is_empty() {
+            // First arg + nested rest + hardline before closing paren
+            first
+                .append(RcDoc::concat(rest_docs).nest(ctx.config.indent_width as isize))
+                .append(RcDoc::hardline())
+        } else {
+            // Only first arg - but since multiline was forced, there must be a newline somewhere
+            // This shouldn't happen in practice (if only 1 arg and no newlines, not forced multiline)
+            first
+        }
+    } else {
+        // No arguments at all
+        RcDoc::nil()
+    }
 }
 
 /// Build an indentation string for the given level, respecting tabs/spaces config

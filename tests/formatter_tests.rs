@@ -424,3 +424,168 @@ fn test_standalone_comment_indentation_spaces() {
     assert!(!result.contains("\t# Standalone comment"),
         "Should not contain tab before standalone comment");
 }
+
+// ============================================================================
+// ARGUMENT LIST ENHANCEMENT TESTS (Phase 7)
+// ============================================================================
+
+/// Test CMNT-01: Comments inside argument lists are preserved
+#[test]
+fn test_arglist_comment_inside_set() {
+    let input = "set(MY_LIST\n  item1\n  # Group A\n  item2\n  item3\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    // Comment should be present
+    assert!(result.contains("# Group A"), "Comment should be preserved, got: {}", result);
+    // All items should be present
+    assert!(result.contains("item1"), "item1 should be present");
+    assert!(result.contains("item2"), "item2 should be present");
+    assert!(result.contains("item3"), "item3 should be present");
+
+    // Comment should appear between item1 and item2
+    let item1_pos = result.find("item1").unwrap();
+    let comment_pos = result.find("# Group A").unwrap();
+    let item2_pos = result.find("item2").unwrap();
+    assert!(item1_pos < comment_pos && comment_pos < item2_pos,
+        "Comment should appear between item1 and item2");
+}
+
+/// Test CMNT-01: Comments are not duplicated
+#[test]
+fn test_arglist_comment_not_duplicated() {
+    let input = "set(MY_LIST\n  item1\n  # Comment inside\n  item2\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    // Count occurrences of comment
+    let count = result.matches("# Comment inside").count();
+    assert_eq!(count, 1, "Comment should appear exactly once, got {} occurrences in: {}", count, result);
+}
+
+/// Test ARGL-01: Blank lines are preserved in argument lists
+#[test]
+fn test_arglist_blank_line_preserved() {
+    let input = "set(SOURCES\n  src/a.cpp\n  src/b.cpp\n\n  src/c.cpp\n  src/d.cpp\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    // Should have a blank line between src/b.cpp and src/c.cpp
+    // Look for pattern: b.cpp\n\n (two newlines)
+    assert!(result.contains("src/b.cpp\n\n"),
+        "Should have blank line after src/b.cpp, got: {}", result);
+}
+
+/// Test ARGL-01: Blank lines respect max_blank_lines config
+#[test]
+fn test_arglist_blank_line_respects_max() {
+    let input = "set(SOURCES\n  src/a.cpp\n\n\n\n  src/b.cpp\n)\n";
+    let config = FormatConfig {
+        max_blank_lines: 1,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+
+    // Should have at most 1 blank line (2 consecutive newlines)
+    assert!(!result.contains("\n\n\n"),
+        "Should not have more than 1 blank line (max_blank_lines=1), got: {}", result);
+    // Should still have 1 blank line
+    assert!(result.contains("src/a.cpp\n\n"),
+        "Should have 1 blank line preserved, got: {}", result);
+}
+
+/// Test ARGL-02: Multiline argument lists stay multiline
+#[test]
+fn test_arglist_multiline_stays_multiline() {
+    let input = "set(SHORT_LIST\n  a\n  b\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    // Should stay multiline (not collapse to one line)
+    assert!(result.contains("a\n"), "Should have newline after 'a', got: {}", result);
+    assert!(result.contains("b\n"), "Should have newline after 'b', got: {}", result);
+    assert!(!result.eq("set(SHORT_LIST a b)\n"),
+        "Should NOT collapse to single line, got: {}", result);
+}
+
+/// Test ARGL-02: One-line argument lists stay one line
+#[test]
+fn test_arglist_oneline_stays_oneline() {
+    let input = "set(SHORT_LIST a b)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    // Should stay on one line
+    assert_eq!(result, "set(SHORT_LIST a b)\n", "Should stay on one line");
+}
+
+/// Test ARGL-03: First argument appears on same line as command name
+#[test]
+fn test_arglist_first_arg_same_line() {
+    let input = "set(MY_LIST\n  item1\n  item2\n  item3\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    // First line should start with "set(MY_LIST"
+    let first_line = result.lines().next().unwrap();
+    assert!(first_line.starts_with("set(MY_LIST"),
+        "First line should start with 'set(MY_LIST', got: {}", first_line);
+
+    // Should NOT contain "set(\n" pattern
+    assert!(!result.contains("set(\n"),
+        "Should not have newline immediately after opening paren");
+}
+
+/// Test ARGL-03: First argument same line even with comment
+#[test]
+fn test_arglist_first_arg_same_line_with_comment() {
+    let input = "set(MY_LIST\n  item1\n  # comment\n  item2\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    // First line should start with "set(MY_LIST"
+    let first_line = result.lines().next().unwrap();
+    assert!(first_line.starts_with("set(MY_LIST"),
+        "First line should start with 'set(MY_LIST' even with comment, got: {}", first_line);
+}
+
+/// Test combined: comment and blank line in argument list
+#[test]
+fn test_arglist_comment_and_blank_line() {
+    let input = "set(SOURCES\n  src/a.cpp\n  # Group separator\n\n  src/b.cpp\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    // Comment should be preserved
+    assert!(result.contains("# Group separator"),
+        "Comment should be preserved");
+
+    // Blank line should be preserved
+    assert!(result.contains("\n\n"),
+        "Blank line should be preserved");
+
+    // First arg on same line
+    let first_line = result.lines().next().unwrap();
+    assert!(first_line.starts_with("set(SOURCES"),
+        "First arg should be on same line as command");
+}
+
+/// Test idempotency: formatting twice produces same result
+#[test]
+fn test_arglist_idempotency() {
+    let inputs = vec![
+        "set(MY_LIST\n  item1\n  # Group A\n  item2\n)\n",
+        "set(SOURCES\n  src/a.cpp\n\n  src/b.cpp\n)\n",
+        "set(SHORT_LIST\n  a\n  b\n)\n",
+        "set(MY_LIST\n  item1\n  item2\n)\n",
+    ];
+
+    let config = default_config();
+
+    for input in inputs {
+        let once = format_text(input, &config);
+        let twice = format_text(&once, &config);
+        assert_eq!(once, twice,
+            "Formatting should be idempotent for input: {}", input);
+    }
+}

@@ -12,19 +12,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Platform-specific sources
 if(WIN32)
-	set(
-    PLATFORM_SOURCES
+	set(PLATFORM_SOURCES
     src/platform/windows.cpp
     src/platform/windows_utils.cpp
 )
 elseif(APPLE)
-	set(
-    PLATFORM_SOURCES
+	set(PLATFORM_SOURCES
     src/platform/macos.cpp
 )
 else()
-	set(
-    PLATFORM_SOURCES
+	set(PLATFORM_SOURCES
     src/platform/linux.cpp
 )
 endif()
