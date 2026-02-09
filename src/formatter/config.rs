@@ -16,6 +16,8 @@ pub struct FormatConfig {
     pub max_blank_lines: usize,
     /// Line ending style (default: Auto)
     pub line_ending: LineEnding,
+    /// Block closer argument handling (default: Keep)
+    pub closing_style: ClosingStyle,
 }
 
 impl Default for FormatConfig {
@@ -27,6 +29,7 @@ impl Default for FormatConfig {
             command_case: CommandCase::Lowercase,
             max_blank_lines: 1,
             line_ending: LineEnding::Auto,
+            closing_style: ClosingStyle::Keep,
         }
     }
 }
@@ -54,4 +57,22 @@ pub enum CommandCase {
     Uppercase,
     /// Keep original casing
     Preserve,
+}
+
+/// Block closer argument handling options
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClosingStyle {
+    /// Keep arguments as written in input (default)
+    Keep,
+    /// Remove arguments from closers (modernize)
+    Remove,
+    /// Add arguments to match openers (enforce explicit)
+    Force,
+}
+
+impl Default for ClosingStyle {
+    fn default() -> Self {
+        Self::Keep
+    }
 }

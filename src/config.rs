@@ -156,6 +156,14 @@ fn apply_style_overrides(config: &mut FormatConfig, style: &str) {
                     _ => eprintln!("Warning: Invalid value for line_ending (expected auto, lf, or crlf): {}", value),
                 }
             }
+            "closing_style" => {
+                match value {
+                    "keep" => config.closing_style = cmake_format::formatter::ClosingStyle::Keep,
+                    "remove" => config.closing_style = cmake_format::formatter::ClosingStyle::Remove,
+                    "force" => config.closing_style = cmake_format::formatter::ClosingStyle::Force,
+                    _ => eprintln!("Warning: Invalid value for closing_style (expected keep, remove, or force): {}", value),
+                }
+            }
             _ => {
                 eprintln!("Warning: Unknown config key (ignored): {}", key);
             }

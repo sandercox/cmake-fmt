@@ -3,7 +3,7 @@ mod cst_to_doc;
 mod cmake_rules;
 mod comments;
 
-pub use config::{CommandCase, FormatConfig, LineEnding};
+pub use config::{ClosingStyle, CommandCase, FormatConfig, LineEnding};
 
 use crate::cst::parse_text;
 use pretty::RcDoc;
