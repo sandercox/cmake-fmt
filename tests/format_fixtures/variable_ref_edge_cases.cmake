@@ -1,0 +1,73 @@
+# ============================================================================
+# VARIABLE REFERENCE EDGE CASES
+# ============================================================================
+# Tests atomic token preservation for nested and complex variable references.
+# Lexer depth-tracks ${...} nesting - these are single tokens.
+
+# ----------------------------------------------------------------------------
+# Basic Variable References
+# ----------------------------------------------------------------------------
+
+# Simple variable reference
+set(OUTPUT ${MY_VAR})
+
+# ENV variable reference
+set(SYSTEM_PATH $ENV{PATH})
+
+# CACHE variable reference
+set(CACHED $CACHE{MY_CACHE_VAR})
+
+# ----------------------------------------------------------------------------
+# Nested Variable References
+# ----------------------------------------------------------------------------
+
+# Nested 2 levels
+set(COMPUTED ${PREFIX_${SUFFIX}})
+
+# Nested 3 levels (deep)
+set(DEEPLY_NESTED ${${OUTER_${INNER}}})
+
+# Real-world pattern: project name + component + property
+set(INCLUDE_DIR ${${PROJECT_NAME}_${COMPONENT}_INCLUDE_DIR})
+
+# ----------------------------------------------------------------------------
+# Adjacent Variable References
+# ----------------------------------------------------------------------------
+
+# Adjacent refs with no space (concatenation)
+set(COMBINED ${A}${B}${C})
+
+# Mixed adjacent: variable, env, generator expr
+set(MIXED ${A}$ENV{B}$<CONFIG:Debug>)
+
+# Multiple adjacent in quoted string
+message("${PREFIX}_${MIDDLE}_${SUFFIX}_done")
+
+# ----------------------------------------------------------------------------
+# Variable References Inside Other Constructs
+# ----------------------------------------------------------------------------
+
+# Variable ref inside generator expression
+target_compile_options(app PRIVATE $<$<BOOL:${MY_VAR}>:value>)
+
+# Variable ref in quoted string
+set(MESSAGE "Value is: ${VAR_NAME}")
+
+# Multiple variables in quoted string
+set(FULL_PATH "${BASE_DIR}/${SUBDIR}/${FILENAME}")
+
+# ----------------------------------------------------------------------------
+# Edge Cases
+# ----------------------------------------------------------------------------
+
+# Empty-looking variable (valid CMake syntax)
+set(EMPTY ${})
+
+# Variable reference in command name position (rare but valid)
+# Note: This is actually valid CMake - the variable is expanded before command lookup
+${COMMAND_VAR}(argument)
+
+# Variable inside bracket argument (NOT expanded - preserved literally)
+set(SCRIPT [[
+  set(NOT_EXPANDED ${VAR})
+]])

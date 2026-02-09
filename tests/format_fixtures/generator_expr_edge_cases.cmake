@@ -1,0 +1,67 @@
+# ============================================================================
+# GENERATOR EXPRESSION EDGE CASES
+# ============================================================================
+# Tests atomic token preservation for complex generator expressions.
+# These must NEVER break across lines - they are lexed as single tokens.
+
+# ----------------------------------------------------------------------------
+# Simple and Nested Generator Expressions
+# ----------------------------------------------------------------------------
+
+# Simple nested (depth=2)
+set(FLAGS $<$<CONFIG:Debug>:-g>)
+
+# Double nested with AND (depth=3)
+target_compile_options(app PRIVATE $<$<AND:$<BOOL:${VAR}>,$<CONFIG:Debug>>:-g>)
+
+# Triple nested with OR (depth=4)
+set(COMPLEX_FLAGS $<$<AND:$<BOOL:${VAR}>,$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>>:-g>)
+
+# ----------------------------------------------------------------------------
+# Extra-Long Generator Expressions (>200 chars)
+# ----------------------------------------------------------------------------
+# CRITICAL: Must NOT break across lines despite length
+
+target_compile_options(myapp PRIVATE $<$<AND:$<BOOL:${ENABLE_LONG_FEATURE_NAME}>,$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>>:-Wall -Wextra -Wpedantic -Werror -Wno-unused-parameter -Wno-missing-field-initializers>)
+
+# ----------------------------------------------------------------------------
+# Generator Expressions with Special Content
+# ----------------------------------------------------------------------------
+
+# Semicolons inside (list separator - preserved in generator expr)
+set(LIST_ITEMS $<$<BOOL:${USE_IT}>:a;b;c>)
+
+# Commas in logical expressions
+set(MULTI_COND $<$<OR:$<CONFIG:Debug>,$<CONFIG:Release>,$<PLATFORM_ID:Linux>>:value>)
+
+# ----------------------------------------------------------------------------
+# Generator Expressions as Arguments
+# ----------------------------------------------------------------------------
+
+# As only argument
+set(X $<BOOL:${FLAG}>)
+
+# Multiple generator exprs in one command
+set(CONFIGS $<CONFIG:Debug> $<CONFIG:Release>)
+
+# Inside quoted string
+set(PREFIXED "prefix_$<CONFIG:Debug>_suffix")
+
+# ----------------------------------------------------------------------------
+# Common Generator Expression Types
+# ----------------------------------------------------------------------------
+
+# BUILD_INTERFACE / INSTALL_INTERFACE pattern
+target_include_directories(mylib PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+# TARGET_PROPERTY access
+set(INHERITED_DIRS $<TARGET_PROPERTY:tgt,INTERFACE_INCLUDE_DIRECTORIES>)
+
+# IF conditional
+set(MAYBE $<IF:$<BOOL:${CONDITION}>,yes,no>)
+
+# String operations
+set(LOWERED $<LOWER_CASE:${MY_VAR}>)
