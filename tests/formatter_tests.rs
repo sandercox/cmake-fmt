@@ -120,7 +120,7 @@ fn test_indent_if_block() {
     let input = "if(WIN32)\nset(FOO bar)\nendif()\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "if(WIN32)\n  set(FOO bar)\nendif()\n");
+    assert_eq!(result, "if(WIN32)\n\tset(FOO bar)\nendif()\n");
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn test_indent_if_else_endif() {
     let input = "if(WIN32)\nset(A b)\nelse()\nset(C d)\nendif()\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "if(WIN32)\n  set(A b)\nelse()\n  set(C d)\nendif()\n");
+    assert_eq!(result, "if(WIN32)\n\tset(A b)\nelse()\n\tset(C d)\nendif()\n");
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn test_indent_if_elseif_else_endif() {
     let input = "if(WIN32)\nset(A b)\nelseif(UNIX)\nset(B c)\nelse()\nset(C d)\nendif()\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "if(WIN32)\n  set(A b)\nelseif(UNIX)\n  set(B c)\nelse()\n  set(C d)\nendif()\n");
+    assert_eq!(result, "if(WIN32)\n\tset(A b)\nelseif(UNIX)\n\tset(B c)\nelse()\n\tset(C d)\nendif()\n");
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn test_indent_nested_if() {
     let input = "if(A)\nif(B)\nset(C d)\nendif()\nendif()\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "if(A)\n  if(B)\n    set(C d)\n  endif()\nendif()\n");
+    assert_eq!(result, "if(A)\n\tif(B)\n\t\tset(C d)\n\tendif()\nendif()\n");
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn test_indent_foreach() {
     let input = "foreach(src ${SOURCES})\nmessage(STATUS ${src})\nendforeach()\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "foreach(src ${SOURCES})\n  message(STATUS ${src})\nendforeach()\n");
+    assert_eq!(result, "foreach(src ${SOURCES})\n\tmessage(STATUS ${src})\nendforeach()\n");
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn test_indent_function() {
     let input = "function(my_func ARG)\nmessage(${ARG})\nendfunction()\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "function(my_func ARG)\n  message(${ARG})\nendfunction()\n");
+    assert_eq!(result, "function(my_func ARG)\n\tmessage(${ARG})\nendfunction()\n");
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn test_indent_macro() {
     let input = "macro(my_macro ARG)\nmessage(${ARG})\nendmacro()\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "macro(my_macro ARG)\n  message(${ARG})\nendmacro()\n");
+    assert_eq!(result, "macro(my_macro ARG)\n\tmessage(${ARG})\nendmacro()\n");
 }
 
 #[test]
@@ -176,6 +176,7 @@ fn test_indent_width_4() {
     let input = "if(WIN32)\nset(FOO bar)\nendif()\n";
     let config = FormatConfig {
         indent_width: 4,
+        use_tabs: false,
         ..default_config()
     };
     let result = format_text(input, &config);
@@ -335,5 +336,91 @@ fn test_comment_indentation() {
     let config = default_config();
     let result = format_text(input, &config);
     // Comment should be indented with the block
-    assert!(result.contains("  # Comment inside if"));
+    assert!(result.contains("\t# Comment inside if"));
+}
+
+// ============================================================================
+// COMMENT INDENTATION WITH TABS VS SPACES (CMNT-02)
+// ============================================================================
+
+/// Test CMNT-02: Comment indentation respects use_tabs=false with indent_width=2
+#[test]
+fn test_comment_indentation_with_spaces() {
+    let input = "if(WIN32)\n# Comment inside if\nset(A b)\nendif()\n";
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 2,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    // Comment should be indented with 2 spaces (not tab)
+    assert!(result.contains("  # Comment inside if"),
+        "Expected '  # Comment inside if' but got: {:?}", result);
+    assert!(!result.contains("\t# Comment inside if"),
+        "Should not contain tab before comment");
+}
+
+/// Test CMNT-02: Comment indentation respects use_tabs=false with indent_width=4
+#[test]
+fn test_comment_indentation_with_spaces_4() {
+    let input = "if(WIN32)\n# Comment inside if\nset(A b)\nendif()\n";
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    // Comment should be indented with 4 spaces (not tab)
+    assert!(result.contains("    # Comment inside if"),
+        "Expected '    # Comment inside if' but got: {:?}", result);
+    assert!(!result.contains("\t# Comment inside if"),
+        "Should not contain tab before comment");
+}
+
+/// Test CMNT-02: Nested comment indentation with tabs (2 levels)
+#[test]
+fn test_nested_comment_indentation_tabs() {
+    let input = "if(A)\nif(B)\n# Deep comment\nset(X y)\nendif()\nendif()\n";
+    let config = FormatConfig {
+        use_tabs: true,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    // Comment should be indented with 2 tabs (2 levels deep)
+    assert!(result.contains("\t\t# Deep comment"),
+        "Expected '\\t\\t# Deep comment' but got: {:?}", result);
+}
+
+/// Test CMNT-02: Nested comment indentation with spaces (2 levels)
+#[test]
+fn test_nested_comment_indentation_spaces() {
+    let input = "if(A)\nif(B)\n# Deep comment\nset(X y)\nendif()\nendif()\n";
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 2,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    // Comment should be indented with 4 spaces (2 levels * 2 width)
+    assert!(result.contains("    # Deep comment"),
+        "Expected '    # Deep comment' (4 spaces) but got: {:?}", result);
+    assert!(!result.contains("\t\t# Deep comment"),
+        "Should not contain tabs before comment");
+}
+
+/// Test CMNT-02: Standalone comment (not leading a command) inside if block with spaces
+#[test]
+fn test_standalone_comment_indentation_spaces() {
+    let input = "if(WIN32)\n# Standalone comment\nendif()\n";
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    // Standalone comment should be indented with 4 spaces
+    assert!(result.contains("    # Standalone comment"),
+        "Expected '    # Standalone comment' but got: {:?}", result);
+    assert!(!result.contains("\t# Standalone comment"),
+        "Should not contain tab before standalone comment");
 }
