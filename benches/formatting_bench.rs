@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use cmake_formatter::formatter::{format_text, FormatConfig};
+use cmake_format::formatter::{format_text, FormatConfig};
 use std::fs;
 
 fn bench_format_small(c: &mut Criterion) {

@@ -3,11 +3,11 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use cmake_formatter::formatter::{format_text, FormatConfig};
+use cmake_format::formatter::{format_text, FormatConfig};
 
 /// Format CMake files
 #[derive(Parser)]
-#[command(name = "cmake-formatter", version, about = "Format CMake files")]
+#[command(name = "cmake-format", version, about = "Format CMake files")]
 pub struct Cli {
     /// Files to format (use "-" for stdin)
     #[arg(value_name = "FILE")]

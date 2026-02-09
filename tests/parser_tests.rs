@@ -1,5 +1,5 @@
-use cmake_formatter::cst::{parse_text, CommandInvocation, ArgumentList};
-use cmake_formatter::syntax_kind::SyntaxKind;
+use cmake_format::cst::{parse_text, CommandInvocation, ArgumentList};
+use cmake_format::syntax_kind::SyntaxKind;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 use std::fs;

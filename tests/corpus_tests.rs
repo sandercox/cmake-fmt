@@ -1,5 +1,5 @@
-use cmake_formatter::cst::parse_text;
-use cmake_formatter::formatter::{format_text, FormatConfig};
+use cmake_format::cst::parse_text;
+use cmake_format::formatter::{format_text, FormatConfig};
 use std::panic;
 use std::path::PathBuf;
 use walkdir::WalkDir;

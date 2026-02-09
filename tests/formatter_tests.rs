@@ -1,5 +1,5 @@
-use cmake_formatter::formatter::{CommandCase, FormatConfig};
-use cmake_formatter::formatter::format_text;
+use cmake_format::formatter::{CommandCase, FormatConfig};
+use cmake_format::formatter::format_text;
 
 // Helper to create default config
 fn default_config() -> FormatConfig {

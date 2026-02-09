@@ -1,5 +1,5 @@
-use cmake_formatter::cst::parse_text;
-use cmake_formatter::parser::ParseError;
+use cmake_format::cst::parse_text;
+use cmake_format::parser::ParseError;
 use rstest::rstest;
 use std::fs;
 

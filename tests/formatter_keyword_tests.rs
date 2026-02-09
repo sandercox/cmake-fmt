@@ -1,4 +1,4 @@
-use cmake_formatter::formatter::{format_text, CommandCase, FormatConfig};
+use cmake_format::formatter::{format_text, CommandCase, FormatConfig};
 
 fn default_config() -> FormatConfig {
     FormatConfig::default()

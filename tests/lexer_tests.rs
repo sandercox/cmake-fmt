@@ -1,5 +1,5 @@
-use cmake_formatter::lexer::{lex, Token};
-use cmake_formatter::SyntaxKind;
+use cmake_format::lexer::{lex, Token};
+use cmake_format::SyntaxKind;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 

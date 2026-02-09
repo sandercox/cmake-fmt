@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use cmake_formatter::formatter::FormatConfig;
+use cmake_format::formatter::FormatConfig;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -136,9 +136,9 @@ fn apply_style_overrides(config: &mut FormatConfig, style: &str) {
             }
             "command_case" => {
                 match value {
-                    "lowercase" => config.command_case = cmake_formatter::formatter::CommandCase::Lowercase,
-                    "uppercase" => config.command_case = cmake_formatter::formatter::CommandCase::Uppercase,
-                    "preserve" => config.command_case = cmake_formatter::formatter::CommandCase::Preserve,
+                    "lowercase" => config.command_case = cmake_format::formatter::CommandCase::Lowercase,
+                    "uppercase" => config.command_case = cmake_format::formatter::CommandCase::Uppercase,
+                    "preserve" => config.command_case = cmake_format::formatter::CommandCase::Preserve,
                     _ => eprintln!("Warning: Invalid value for command_case (expected lowercase, uppercase, or preserve): {}", value),
                 }
             }
