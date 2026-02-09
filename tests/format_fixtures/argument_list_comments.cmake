@@ -1,0 +1,42 @@
+# Test: Comments inside argument lists
+set(SOURCES
+  src/main.cpp
+  # Core library sources
+  src/core.cpp
+  src/parser.cpp
+  # Utility sources
+  src/utils.cpp
+)
+
+# Test: Comment inside keyword-aware command
+target_link_libraries(myapp
+  PUBLIC
+    fmt::fmt
+    # System libraries
+    Threads::Threads
+  PRIVATE
+    internal_lib
+)
+
+# Test: Trailing comment on argument
+set(FLAGS
+  -Wall
+  -Wextra # Extra warnings
+  -Wpedantic
+)
+
+# Test: Comment as first item after paren
+set(MY_LIST
+  # This is the list header
+  item1
+  item2
+)
+
+# Test: Bracket comment inside argument list
+set(DOCUMENTED_LIST
+  value1
+  #[=[
+  This value is special
+  ]=]
+  value2
+)

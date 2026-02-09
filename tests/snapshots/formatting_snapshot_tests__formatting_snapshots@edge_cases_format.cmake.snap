@@ -7,7 +7,7 @@ message()
 message()
 set(A)
 set()
-add_executable( app)
+add_executable(app)
 message(${A} ${B} $<CONFIG:Debug> "quoted")
 set(HELP [[
 Usage: myapp [options]

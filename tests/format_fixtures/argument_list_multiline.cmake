@@ -1,0 +1,41 @@
+# Test: Short list that user wrote multiline (ARGL-02: don't collapse)
+set(SHORT
+  a
+  b
+)
+
+# Test: Short list on one line stays one line
+set(ONELINER a b c)
+
+# Test: Blank line grouping inside argument list (ARGL-01)
+set(GROUPED_SOURCES
+  src/module_a/file1.cpp
+  src/module_a/file2.cpp
+
+  src/module_b/file1.cpp
+  src/module_b/file2.cpp
+)
+
+# Test: Multiline keyword-aware (ARGL-02)
+target_link_libraries(myapp
+  PRIVATE
+    lib1
+)
+
+# Test: First arg on same line (ARGL-03)
+set(MY_VAR
+  value1
+  value2
+  value3
+)
+
+# Test: Combined - comments + blank lines + multiline
+set(COMPLEX_LIST
+  # Header items
+  item_a
+  item_b
+
+  # Footer items
+  item_c
+  item_d
+)

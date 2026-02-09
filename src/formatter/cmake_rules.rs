@@ -311,6 +311,7 @@ pub fn format_keyword_aware_args(
 /// Format arguments without keyword awareness (simple line breaking)
 fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_multiline: bool) -> RcDoc<'static, ()> {
     let mut docs = vec![RcDoc::line_()];
+    let mut is_first_arg = true;
 
     // Collect all args and comments from all sections
     for section in sections {
@@ -327,6 +328,7 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
                     }
                     docs.push(RcDoc::text(comment.clone()));
                     comment_iter.next();
+                    is_first_arg = false;
                 } else {
                     break;
                 }
@@ -335,14 +337,19 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
             // Check for blank line before this argument
             if section.blank_lines.contains(&arg_idx) && force_multiline {
                 docs.push(RcDoc::hardline());
+                is_first_arg = false;
             }
 
-            if force_multiline {
-                docs.push(RcDoc::hardline());
-            } else {
-                docs.push(RcDoc::line());
+            // Add separator before arg (except for the very first arg)
+            if !is_first_arg {
+                if force_multiline {
+                    docs.push(RcDoc::hardline());
+                } else {
+                    docs.push(RcDoc::line());
+                }
             }
             docs.push(RcDoc::text(arg.clone()));
+            is_first_arg = false;
         }
 
         // Emit trailing comments (after last argument)
@@ -353,6 +360,7 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
                 docs.push(RcDoc::line());
             }
             docs.push(RcDoc::text(comment.clone()));
+            is_first_arg = false;
         }
     }
 
