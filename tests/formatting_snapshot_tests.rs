@@ -117,14 +117,22 @@ fn test_empty_file_formats() {
 
 #[test]
 fn test_crlf_handling() {
-    let config = FormatConfig::default();
+    let config = FormatConfig::default(); // Auto mode
     let input = "set(FOO bar)\r\nmessage(\"hello\")\r\n";
     let output = format_text(input, &config);
 
-    // Output should normalize to LF
-    assert!(!output.contains("\r\n"), "Output should not contain CRLF");
+    // Auto mode: CRLF input → CRLF output (preserves detected line ending)
+    assert!(output.contains("\r\n"), "Auto mode should preserve CRLF from input");
     assert!(output.contains("set(FOO bar)"));
     assert!(output.contains("message(\"hello\")"));
+
+    // Force LF mode should strip CRLF
+    let lf_config = FormatConfig {
+        line_ending: cmake_format::formatter::LineEnding::Lf,
+        ..FormatConfig::default()
+    };
+    let lf_output = format_text(input, &lf_config);
+    assert!(!lf_output.contains("\r\n"), "LF mode should not contain CRLF");
 }
 
 #[test]

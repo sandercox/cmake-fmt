@@ -3,10 +3,29 @@ mod cst_to_doc;
 mod cmake_rules;
 mod comments;
 
-pub use config::{CommandCase, FormatConfig};
+pub use config::{CommandCase, FormatConfig, LineEnding};
 
 use crate::cst::parse_text;
 use pretty::RcDoc;
+
+/// Detect the line ending style used in the input text.
+///
+/// Counts CRLF (`\r\n`) vs lone LF (`\n`) occurrences. The majority wins.
+/// Returns `LineEnding::Lf` if there are no newlines.
+pub fn detect_line_ending(input: &str) -> LineEnding {
+    let crlf_count = input.matches("\r\n").count();
+    // Lone LF = total LF minus those that are part of CRLF
+    let total_lf = input.matches('\n').count();
+    let lone_lf_count = total_lf - crlf_count;
+
+    if crlf_count == 0 && lone_lf_count == 0 {
+        LineEnding::Lf
+    } else if crlf_count > lone_lf_count {
+        LineEnding::CrLf
+    } else {
+        LineEnding::Lf
+    }
+}
 
 /// Format CMake code with the given configuration
 ///
@@ -17,9 +36,31 @@ use pretty::RcDoc;
 /// # Returns
 /// Formatted CMake code as a String, guaranteed to end with a single newline
 pub fn format_text(input: &str, config: &FormatConfig) -> String {
-    let cst = parse_text(input);
+    // Resolve effective line ending
+    let effective_line_ending = match config.line_ending {
+        LineEnding::Auto => detect_line_ending(input),
+        other => other,
+    };
+
+    // Normalize input: strip \r so the parser/formatter sees only \n
+    let normalized;
+    let parse_input = if input.contains('\r') {
+        normalized = input.replace('\r', "");
+        &normalized
+    } else {
+        input
+    };
+
+    let cst = parse_text(parse_input);
     let doc = cst_to_doc::format_cst(&cst, config);
-    render_doc(doc, config)
+    let mut result = render_doc(doc, config);
+
+    // Apply CRLF if needed
+    if effective_line_ending == LineEnding::CrLf && !result.is_empty() {
+        result = result.replace('\n', "\r\n");
+    }
+
+    result
 }
 
 /// Render a Doc to a String

@@ -148,6 +148,14 @@ fn apply_style_overrides(config: &mut FormatConfig, style: &str) {
                     Err(_) => eprintln!("Warning: Invalid value for max_blank_lines: {}", value),
                 }
             }
+            "line_ending" => {
+                match value {
+                    "auto" => config.line_ending = cmake_format::formatter::LineEnding::Auto,
+                    "lf" => config.line_ending = cmake_format::formatter::LineEnding::Lf,
+                    "crlf" => config.line_ending = cmake_format::formatter::LineEnding::CrLf,
+                    _ => eprintln!("Warning: Invalid value for line_ending (expected auto, lf, or crlf): {}", value),
+                }
+            }
             _ => {
                 eprintln!("Warning: Unknown config key (ignored): {}", key);
             }
