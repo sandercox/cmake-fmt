@@ -1,0 +1,5 @@
+---
+source: tests/formatting_snapshot_tests.rs
+expression: output
+---
+set(COMPUTED ${PREFIX_${SUFFIX}})

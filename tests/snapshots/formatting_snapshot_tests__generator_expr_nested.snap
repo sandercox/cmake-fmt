@@ -1,0 +1,7 @@
+---
+source: tests/formatting_snapshot_tests.rs
+expression: output
+---
+set(COMPLEX_FLAGS
+    $<$<AND:$<BOOL:${VAR}>,$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>>:-g>
+)

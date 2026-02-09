@@ -315,3 +315,302 @@ fn test_block_closer_idempotency() {
         );
     }
 }
+
+// ============================================================================
+// EDGE CASE HARDENING TESTS (Phase 9)
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// EDGE-01: Generator Expression Preservation
+// ----------------------------------------------------------------------------
+
+#[test]
+fn test_generator_expr_no_line_break() {
+    let config = FormatConfig::default();
+    // This line is >200 chars - test that generator expression stays atomic
+    let input = r#"target_compile_options(myapp PRIVATE $<$<AND:$<BOOL:${ENABLE_LONG_FEATURE_NAME}>,$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>>:-Wall -Wextra -Wpedantic -Werror -Wno-unused-parameter -Wno-missing-field-initializers>)"#;
+    let output = format_text(input, &config);
+
+    // Find the generator expression in output
+    let genexpr_start = output.find("$<").expect("Generator expr should exist");
+    let genexpr_end = output.rfind(">").expect("Generator expr should close");
+    let genexpr = &output[genexpr_start..=genexpr_end];
+
+    // Critical assertion: NO newlines inside the generator expression token
+    assert!(
+        !genexpr.contains('\n'),
+        "Generator expression was broken across lines:\n{}",
+        genexpr
+    );
+
+    insta::assert_snapshot!("generator_expr_no_line_break", output);
+}
+
+#[test]
+fn test_generator_expr_nested_snapshot() {
+    let config = FormatConfig::default();
+    let input = "set(COMPLEX_FLAGS $<$<AND:$<BOOL:${VAR}>,$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>>:-g>)";
+    let output = format_text(input, &config);
+    insta::assert_snapshot!("generator_expr_nested", output);
+}
+
+#[test]
+fn test_generator_expr_adjacent_no_space() {
+    let config = FormatConfig::default();
+    let input = "set(CONFIGS $<CONFIG:Debug> $<CONFIG:Release>)";
+    let output = format_text(input, &config);
+
+    // Find both generator expressions in output
+    let first_start = output.find("$<CONFIG:Debug>").expect("First genexpr should exist");
+    let second_start = output.find("$<CONFIG:Release>").expect("Second genexpr should exist");
+
+    // Extract the substring between them
+    let between = &output[first_start + "$<CONFIG:Debug>".len()..second_start];
+
+    // They should be separated by exactly one space (not collapsed, not multiple)
+    assert_eq!(between, " ", "Generator expressions should be separated by exactly one space");
+
+    insta::assert_snapshot!("generator_expr_adjacent", output);
+}
+
+// ----------------------------------------------------------------------------
+// EDGE-02: Variable Reference Preservation
+// ----------------------------------------------------------------------------
+
+#[test]
+fn test_nested_variable_ref_preserved() {
+    let config = FormatConfig::default();
+    let input = "set(COMPUTED ${PREFIX_${SUFFIX}})";
+    let output = format_text(input, &config);
+
+    // Critical assertion: nested variable reference is preserved exactly
+    assert!(
+        output.contains("${PREFIX_${SUFFIX}}"),
+        "Nested variable reference was corrupted:\n{}",
+        output
+    );
+
+    insta::assert_snapshot!("nested_variable_ref", output);
+}
+
+#[test]
+fn test_deeply_nested_variable_ref() {
+    let config = FormatConfig::default();
+    let input = "set(DEEPLY_NESTED ${${OUTER_${INNER}}})";
+    let output = format_text(input, &config);
+
+    // Critical assertion: triple-nested variable reference preserved
+    assert!(
+        output.contains("${${OUTER_${INNER}}}"),
+        "Deeply nested variable reference was corrupted:\n{}",
+        output
+    );
+
+    insta::assert_snapshot!("deeply_nested_variable_ref", output);
+}
+
+#[test]
+fn test_adjacent_refs_preserved() {
+    let config = FormatConfig::default();
+    let input = "set(COMBINED ${A}${B}${C})";
+    let output = format_text(input, &config);
+
+    // Critical assertion: all three variable references are preserved as separate tokens
+    assert!(
+        output.contains("${A}") && output.contains("${B}") && output.contains("${C}"),
+        "All three adjacent variable references should be preserved:\n{}",
+        output
+    );
+
+    // They should remain separate arguments (not merged into one token)
+    assert!(
+        output.matches("${").count() == 3,
+        "Should have exactly 3 variable references"
+    );
+
+    insta::assert_snapshot!("adjacent_refs_preserved", output);
+}
+
+// ----------------------------------------------------------------------------
+// EDGE-03: Bracket Argument Byte Preservation
+// ----------------------------------------------------------------------------
+
+#[test]
+fn test_bracket_arg_byte_identical() {
+    let config = FormatConfig::default();
+
+    // Test each bracket argument variant
+    let test_cases = vec![
+        ("message([[simple bracket arg]])", "[[simple bracket arg]]"),
+        ("message([=[contains ]] inside]=])", "[=[contains ]] inside]=]"),
+        ("message([==[contains ]=] inside]==])", "[==[contains ]=] inside]==]"),
+    ];
+
+    for (input, expected_bracket) in test_cases {
+        let output = format_text(input, &config);
+
+        // Extract bracket argument from output
+        let bracket_start = if expected_bracket.starts_with("[==") {
+            output.find("[==").expect("Bracket arg should exist")
+        } else if expected_bracket.starts_with("[=") {
+            output.find("[=").expect("Bracket arg should exist")
+        } else {
+            output.find("[[").expect("Bracket arg should exist")
+        };
+
+        let bracket_end = if expected_bracket.ends_with("]==]") {
+            output.rfind("]==]").expect("Bracket arg should close") + 3
+        } else if expected_bracket.ends_with("]=]") {
+            output.rfind("]=]").expect("Bracket arg should close") + 2
+        } else {
+            output.rfind("]]").expect("Bracket arg should close") + 1
+        };
+
+        let bracket_output = &output[bracket_start..=bracket_end];
+
+        // Critical assertion: bracket argument is byte-for-byte identical
+        assert_eq!(
+            bracket_output, expected_bracket,
+            "Bracket argument was not byte-identical:\nExpected: {}\nGot: {}",
+            expected_bracket, bracket_output
+        );
+    }
+
+    insta::assert_snapshot!("bracket_arg_byte_identical",
+        format_text("message([[simple bracket arg]])", &config));
+}
+
+#[test]
+fn test_bracket_arg_multiline_preserved() {
+    let config = FormatConfig::default();
+    let input = r#"set(HELP [[
+Usage: myapp [options]
+  --help     Show help
+  --version  Show version
+]])"#;
+    let output = format_text(input, &config);
+
+    // Extract the content between [[ and ]]
+    let bracket_start = output.find("[[").expect("Bracket arg should exist");
+    let bracket_end = output.rfind("]]").expect("Bracket arg should close");
+    let bracket_content = &output[bracket_start..=bracket_end + 1];
+
+    // The multiline content should be preserved exactly
+    assert!(
+        bracket_content.contains("Usage: myapp [options]"),
+        "Bracket argument multiline content was corrupted"
+    );
+    assert!(
+        bracket_content.contains("  --help     Show help"),
+        "Bracket argument indentation was not preserved"
+    );
+
+    insta::assert_snapshot!("bracket_arg_multiline", output);
+}
+
+// ----------------------------------------------------------------------------
+// EDGE-04: Comment Placement
+// ----------------------------------------------------------------------------
+
+#[test]
+fn test_eof_comment_no_trailing_newline() {
+    let config = FormatConfig::default();
+    // Create input with no trailing newline after comment
+    let input = "set(X y)\n# EOF comment";
+    let output = format_text(input, &config);
+
+    // Comment should be preserved
+    assert!(
+        output.contains("# EOF comment"),
+        "EOF comment was not preserved:\n{}",
+        output
+    );
+
+    insta::assert_snapshot!("eof_comment_no_trailing_newline", output);
+}
+
+#[test]
+fn test_comment_after_closing_paren() {
+    let config = FormatConfig::default();
+    let input = "message(hello)# attached comment";
+    let output = format_text(input, &config);
+
+    // Both command and comment should be preserved
+    assert!(output.contains("message(hello)"), "Command was not preserved");
+    assert!(output.contains("# attached comment"), "Attached comment was not preserved");
+
+    insta::assert_snapshot!("comment_after_closing_paren", output);
+}
+
+#[test]
+fn test_comment_between_args() {
+    let config = FormatConfig::default();
+    let input = "set(LIST\na\n# middle comment\nb\n)";
+    let output = format_text(input, &config);
+
+    // Comment should be preserved with proper placement
+    assert!(
+        output.contains("# middle comment"),
+        "Comment between args was not preserved:\n{}",
+        output
+    );
+
+    insta::assert_snapshot!("comment_between_args", output);
+}
+
+// ----------------------------------------------------------------------------
+// Cross-cutting: Edge Case Idempotency with Non-default Configs
+// ----------------------------------------------------------------------------
+
+#[test]
+fn test_edge_case_idempotency_uppercase() {
+    let config = FormatConfig {
+        command_case: CommandCase::Uppercase,
+        ..FormatConfig::default()
+    };
+
+    let edge_fixtures = [
+        "tests/format_fixtures/generator_expr_edge_cases.cmake",
+        "tests/format_fixtures/variable_ref_edge_cases.cmake",
+        "tests/format_fixtures/bracket_arg_edge_cases.cmake",
+        "tests/format_fixtures/comment_edge_cases.cmake",
+    ];
+
+    for fixture_path in &edge_fixtures {
+        let input = std::fs::read_to_string(fixture_path).unwrap();
+        let once = format_text(&input, &config);
+        let twice = format_text(&once, &config);
+        assert_eq!(
+            once, twice,
+            "Idempotency failed with uppercase config for {}",
+            fixture_path
+        );
+    }
+}
+
+#[test]
+fn test_edge_case_idempotency_spaces() {
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..FormatConfig::default()
+    };
+
+    let edge_fixtures = [
+        "tests/format_fixtures/generator_expr_edge_cases.cmake",
+        "tests/format_fixtures/variable_ref_edge_cases.cmake",
+        "tests/format_fixtures/bracket_arg_edge_cases.cmake",
+        "tests/format_fixtures/comment_edge_cases.cmake",
+    ];
+
+    for fixture_path in &edge_fixtures {
+        let input = std::fs::read_to_string(fixture_path).unwrap();
+        let once = format_text(&input, &config);
+        let twice = format_text(&once, &config);
+        assert_eq!(
+            once, twice,
+            "Idempotency failed with spaces config for {}",
+            fixture_path
+        );
+    }
+}

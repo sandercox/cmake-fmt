@@ -1,0 +1,5 @@
+---
+source: tests/formatting_snapshot_tests.rs
+expression: "format_text(\"message([[simple bracket arg]])\", &config)"
+---
+message([[simple bracket arg]])

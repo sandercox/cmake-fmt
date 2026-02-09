@@ -1,0 +1,9 @@
+---
+source: tests/formatting_snapshot_tests.rs
+expression: output
+---
+set(LIST
+    a
+    # middle comment
+    b
+)

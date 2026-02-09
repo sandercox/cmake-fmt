@@ -1,0 +1,6 @@
+---
+source: tests/formatting_snapshot_tests.rs
+expression: output
+---
+set(X y)
+# EOF comment
