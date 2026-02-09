@@ -1,0 +1,12 @@
+# Ensure consistent line endings for test fixtures across platforms
+tests/corpus/** text eol=lf
+tests/fixtures/** text eol=lf
+tests/format_fixtures/** text eol=lf
+
+# Source files should use LF
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+
+# Let Git determine line endings for other files
+* text=auto
