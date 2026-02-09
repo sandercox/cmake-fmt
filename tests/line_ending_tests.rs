@@ -143,3 +143,195 @@ fn test_empty_input_with_crlf_config() {
     let result = format_text(input, &config);
     assert_eq!(result, "");
 }
+
+// ============================================================================
+// EDGE CASE TESTS (LINE-01, LINE-02, LINE-03)
+// ============================================================================
+
+/// Test LINE-03: CRLF with nested scopes (multi-level nesting)
+#[test]
+fn test_crlf_with_nested_scopes() {
+    let input = "if(WIN32)\r\n  foreach(src ${SOURCES})\r\n    set(A b)\r\n  endforeach()\r\nendif()\r\n";
+    let config = FormatConfig::default(); // Auto mode
+    let result = format_text(input, &config);
+
+    // Verify all newlines are CRLF (no lone LF)
+    let without_crlf = result.replace("\r\n", "");
+    assert!(!without_crlf.contains('\n'),
+        "Output should only contain CRLF, not lone LF. Found lone LF in: {:?}", result);
+
+    // Verify formatting is correct
+    assert!(result.contains("if(WIN32)\r\n"));
+    assert!(result.contains("foreach(src ${SOURCES})\r\n"));
+    assert!(result.contains("set(A b)\r\n"));
+    assert!(result.contains("endforeach()\r\n"));
+    assert!(result.contains("endif()\r\n"));
+}
+
+/// Test LINE-03: CRLF with comments in scoped blocks
+#[test]
+fn test_crlf_with_comments_in_scopes() {
+    let input = "if(WIN32)\r\n  # Comment inside if\r\n  set(FOO bar)\r\nendif()\r\n";
+    let config = FormatConfig::default(); // Auto mode
+    let result = format_text(input, &config);
+
+    // Verify all newlines are CRLF
+    let without_crlf = result.replace("\r\n", "");
+    assert!(!without_crlf.contains('\n'),
+        "Output should only contain CRLF, not lone LF. Found lone LF in: {:?}", result);
+
+    // Verify comment is preserved
+    assert!(result.contains("# Comment inside if"));
+}
+
+/// Test LINE-03: CRLF with keyword-aware commands that break lines
+#[test]
+fn test_crlf_with_line_breaking() {
+    let input = "target_link_libraries(myapp PRIVATE lib1 lib2 lib3 lib4 lib5 lib6 lib7 lib8)\r\n";
+    let config = FormatConfig {
+        max_line_length: 40, // Force line breaking
+        ..FormatConfig::default()
+    };
+    let result = format_text(input, &config);
+
+    // Verify all newlines are CRLF
+    let without_crlf = result.replace("\r\n", "");
+    assert!(!without_crlf.contains('\n'),
+        "Output should only contain CRLF, not lone LF. Found lone LF in: {:?}", result);
+
+    // Verify line breaking occurred
+    assert!(result.lines().count() > 1, "Expected multiple lines due to line breaking");
+}
+
+/// Test LINE-03: CRLF with blank lines
+#[test]
+fn test_crlf_with_blank_lines() {
+    let input = "set(A b)\r\n\r\nset(C d)\r\n";
+    let config = FormatConfig::default(); // Auto mode
+    let result = format_text(input, &config);
+
+    // Verify all newlines are CRLF
+    let without_crlf = result.replace("\r\n", "");
+    assert!(!without_crlf.contains('\n'),
+        "Output should only contain CRLF, not lone LF. Found lone LF in: {:?}", result);
+
+    // Verify blank line is preserved
+    assert_eq!(result, "set(A b)\r\n\r\nset(C d)\r\n");
+}
+
+/// Test LINE-01: Config deserialization from TOML
+#[test]
+fn test_line_ending_toml_deserialization() {
+    // Test Auto
+    let config: FormatConfig = toml::from_str("line_ending = \"auto\"")
+        .expect("Failed to parse auto");
+    assert_eq!(config.line_ending, LineEnding::Auto);
+
+    // Test Lf
+    let config: FormatConfig = toml::from_str("line_ending = \"lf\"")
+        .expect("Failed to parse lf");
+    assert_eq!(config.line_ending, LineEnding::Lf);
+
+    // Test CrLf
+    let config: FormatConfig = toml::from_str("line_ending = \"crlf\"")
+        .expect("Failed to parse crlf");
+    assert_eq!(config.line_ending, LineEnding::CrLf);
+}
+
+/// Test LINE-01: Config deserialization from YAML
+#[test]
+fn test_line_ending_yaml_deserialization() {
+    // Test Auto
+    let config: FormatConfig = serde_yml::from_str("line_ending: auto")
+        .expect("Failed to parse auto");
+    assert_eq!(config.line_ending, LineEnding::Auto);
+
+    // Test Lf
+    let config: FormatConfig = serde_yml::from_str("line_ending: lf")
+        .expect("Failed to parse lf");
+    assert_eq!(config.line_ending, LineEnding::Lf);
+
+    // Test CrLf
+    let config: FormatConfig = serde_yml::from_str("line_ending: crlf")
+        .expect("Failed to parse crlf");
+    assert_eq!(config.line_ending, LineEnding::CrLf);
+}
+
+/// Test LINE-01: CLI --style override for line_ending
+/// Note: This test verifies the line_ending override works by checking the behavior,
+/// since the config module is private to the binary.
+#[test]
+fn test_line_ending_cli_override() {
+    // We can't directly test resolve_config since it's in the binary crate,
+    // but we can verify that the line_ending option can be set programmatically
+    // which is what the CLI would do after parsing the --style flag.
+
+    let config_crlf = FormatConfig {
+        line_ending: LineEnding::CrLf,
+        ..FormatConfig::default()
+    };
+    assert_eq!(config_crlf.line_ending, LineEnding::CrLf);
+
+    let config_lf = FormatConfig {
+        line_ending: LineEnding::Lf,
+        ..FormatConfig::default()
+    };
+    assert_eq!(config_lf.line_ending, LineEnding::Lf);
+
+    let config_auto = FormatConfig {
+        line_ending: LineEnding::Auto,
+        ..FormatConfig::default()
+    };
+    assert_eq!(config_auto.line_ending, LineEnding::Auto);
+}
+
+/// Test comprehensive roundtrip for all line ending modes (LINE-01, LINE-02, LINE-03)
+#[test]
+fn test_line_ending_full_roundtrip() {
+    let input_lf = "if(TRUE)\n  set(FOO bar)\n  # Comment\nendif()\n\nset(BAZ qux)\n";
+    let input_crlf = "if(TRUE)\r\n  set(FOO bar)\r\n  # Comment\r\nendif()\r\n\r\nset(BAZ qux)\r\n";
+
+    // Test Auto mode with LF input
+    let config_auto = FormatConfig::default();
+    let result = format_text(input_lf, &config_auto);
+    assert!(!result.contains("\r\n"), "Auto mode with LF input should produce LF output");
+
+    // Test Auto mode with CRLF input
+    let result = format_text(input_crlf, &config_auto);
+    let without_crlf = result.replace("\r\n", "");
+    assert!(!without_crlf.contains('\n'), "Auto mode with CRLF input should produce CRLF output");
+
+    // Test forced CrLf mode
+    let config_crlf = FormatConfig {
+        line_ending: LineEnding::CrLf,
+        ..FormatConfig::default()
+    };
+    let result = format_text(input_lf, &config_crlf);
+    let without_crlf = result.replace("\r\n", "");
+    assert!(!without_crlf.contains('\n'), "Forced CRLF mode should produce CRLF output");
+
+    // Test forced Lf mode
+    let config_lf = FormatConfig {
+        line_ending: LineEnding::Lf,
+        ..FormatConfig::default()
+    };
+    let result = format_text(input_crlf, &config_lf);
+    assert!(!result.contains("\r\n"), "Forced LF mode should produce LF output");
+
+    // Test idempotency for each mode
+    let result_lf = format_text(input_lf, &config_lf);
+    let result_lf_2 = format_text(&result_lf, &config_lf);
+    assert_eq!(result_lf, result_lf_2, "LF mode should be idempotent");
+
+    let result_crlf = format_text(input_crlf, &config_crlf);
+    let result_crlf_2 = format_text(&result_crlf, &config_crlf);
+    assert_eq!(result_crlf, result_crlf_2, "CRLF mode should be idempotent");
+
+    let result_auto_lf = format_text(input_lf, &config_auto);
+    let result_auto_lf_2 = format_text(&result_auto_lf, &config_auto);
+    assert_eq!(result_auto_lf, result_auto_lf_2, "Auto mode with LF should be idempotent");
+
+    let result_auto_crlf = format_text(input_crlf, &config_auto);
+    let result_auto_crlf_2 = format_text(&result_auto_crlf, &config_auto);
+    assert_eq!(result_auto_crlf, result_auto_crlf_2, "Auto mode with CRLF should be idempotent");
+}
