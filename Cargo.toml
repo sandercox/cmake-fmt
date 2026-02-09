@@ -19,3 +19,4 @@ glob = "0.3"
 insta = { version = "1.46", features = ["yaml", "glob"] }
 rstest = "0.26"
 pretty_assertions = "1.4"
+walkdir = "2"
