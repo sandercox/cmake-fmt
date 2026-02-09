@@ -8,6 +8,19 @@ use walkdir::WalkDir;
 // HELPER FUNCTIONS
 // ============================================================================
 
+/// Format text on a thread with a larger stack to handle large files
+/// (the recursive descent parser can overflow the default 8MB stack on 10k+ line files)
+fn format_text_safe(input: &str, config: &FormatConfig) -> String {
+    let input = input.to_string();
+    let config = config.clone();
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024) // 16MB stack
+        .spawn(move || format_text(&input, &config))
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
 /// Find all .cmake files in the corpus directory recursively
 fn corpus_files() -> Vec<PathBuf> {
     let corpus_dir = "tests/corpus";
@@ -66,9 +79,11 @@ fn test_corpus_no_panics() {
         let input = std::fs::read_to_string(path)
             .unwrap_or_else(|_| panic!("Failed to read {}", path.display()));
 
-        // Catch panics
-        let result = panic::catch_unwind(|| {
-            format_text(&input, &config);
+        // Catch panics (use format_text_safe for stack safety on large files)
+        let input_clone = input.clone();
+        let config_clone = config.clone();
+        let result = panic::catch_unwind(move || {
+            format_text_safe(&input_clone, &config_clone);
         });
 
         if result.is_err() {
@@ -99,7 +114,7 @@ fn test_corpus_semantic_preservation() {
         let input = std::fs::read_to_string(path)
             .unwrap_or_else(|_| panic!("Failed to read {}", path.display()));
 
-        let output = format_text(&input, &config);
+        let output = format_text_safe(&input, &config);
 
         let input_commands = extract_semantic_commands(&input);
         let output_commands = extract_semantic_commands(&output);
@@ -126,8 +141,8 @@ fn test_corpus_idempotency() {
         let input = std::fs::read_to_string(path)
             .unwrap_or_else(|_| panic!("Failed to read {}", path.display()));
 
-        let once = format_text(&input, &config);
-        let twice = format_text(&once, &config);
+        let once = format_text_safe(&input, &config);
+        let twice = format_text_safe(&once, &config);
 
         assert_eq!(
             once, twice,
@@ -156,7 +171,7 @@ fn test_corpus_output_not_empty() {
             continue;
         }
 
-        let output = format_text(&input, &config);
+        let output = format_text_safe(&input, &config);
 
         assert!(
             !output.trim().is_empty(),
@@ -180,7 +195,7 @@ fn test_corpus_no_trailing_whitespace() {
         let input = std::fs::read_to_string(path)
             .unwrap_or_else(|_| panic!("Failed to read {}", path.display()));
 
-        let output = format_text(&input, &config);
+        let output = format_text_safe(&input, &config);
 
         for (line_num, line) in output.lines().enumerate() {
             let has_trailing_whitespace =
@@ -216,7 +231,7 @@ fn test_corpus_ends_with_newline() {
             continue;
         }
 
-        let output = format_text(&input, &config);
+        let output = format_text_safe(&input, &config);
 
         assert!(
             !output.is_empty() && output.ends_with('\n'),
