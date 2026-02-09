@@ -3,8 +3,7 @@ source: tests/formatting_snapshot_tests.rs
 expression: output
 input_file: tests/format_fixtures/keyword_commands.cmake
 ---
-target_link_libraries(
-    myapp
+target_link_libraries(myapp
     PUBLIC
         fmt::fmt
         spdlog::spdlog
@@ -12,8 +11,7 @@ target_link_libraries(
         Threads::Threads
         Boost::filesystem
 )
-target_include_directories(
-    mylib
+target_include_directories(mylib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         /include
@@ -23,16 +21,14 @@ target_include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}
         /src
 )
-target_compile_definitions(
-    myapp
+target_compile_definitions(myapp
     PRIVATE
         $<$<CONFIG:Debug>:DEBUG_MODE>
     PUBLIC
         VERSION=
         "${PROJECT_VERSION}"
 )
-target_sources(
-    mylib
+target_sources(mylib
     PRIVATE
         src/a.cpp
         src/b.cpp
@@ -43,7 +39,6 @@ target_sources(
 )
 add_library(mylib STATIC src/core.cpp src/utils.cpp src/parser.cpp)
 install(
-
     TARGETS
         mylib
     ARCHIVE

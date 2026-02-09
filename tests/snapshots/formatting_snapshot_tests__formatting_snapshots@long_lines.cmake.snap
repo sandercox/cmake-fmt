@@ -4,6 +4,7 @@ expression: output
 input_file: tests/format_fixtures/long_lines.cmake
 ---
 target_link_libraries(
+
     myapp
     lib1
     lib2
@@ -36,6 +37,7 @@ set(VERY_LONG_LIST
     item15
 )
 add_executable(
+
     myapp
     src/main.cpp
     src/utils.cpp

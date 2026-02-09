@@ -4,6 +4,7 @@ use pretty::RcDoc;
 use rowan::NodeOrToken;
 
 use super::config::FormatConfig;
+use super::cst_to_doc::detect_argument_formatting_signals;
 
 /// Check if a command name requires keyword-aware formatting
 pub fn is_keyword_aware_command(name: &str) -> bool {
@@ -90,6 +91,11 @@ pub struct KeywordSection {
     pub keyword: Option<String>,
     /// Arguments belonging to this section
     pub args: Vec<String>,
+    /// Comments with their positions: (position_after_arg_index, comment_text)
+    /// position_after_arg_index = 0 means before first arg, 1 means after first arg, etc.
+    pub comments: Vec<(usize, String)>,
+    /// Blank line positions: indices after which a blank line appears
+    pub blank_lines: Vec<usize>,
 }
 
 /// Parse an argument list into keyword sections
@@ -98,7 +104,11 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
     let mut current_section = KeywordSection {
         keyword: None,
         args: Vec::new(),
+        comments: Vec::new(),
+        blank_lines: Vec::new(),
     };
+
+    let mut consecutive_newlines = 0;
 
     // Iterate through all tokens in the argument list
     for child in arg_list.syntax().children_with_tokens() {
@@ -114,6 +124,9 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
                 | SyntaxKind::ENV_VAR_REF
                 | SyntaxKind::CACHE_VAR_REF
                 | SyntaxKind::GENERATOR_EXPR => {
+                    // Reset newline counter when we see an argument
+                    consecutive_newlines = 0;
+
                     // Check if this argument is a keyword
                     if is_cmake_keyword(&text) {
                         // Start a new section
@@ -123,15 +136,37 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
                         current_section = KeywordSection {
                             keyword: Some(text),
                             args: Vec::new(),
+                            comments: Vec::new(),
+                            blank_lines: Vec::new(),
                         };
                     } else {
                         // Add as argument to current section
                         current_section.args.push(text);
                     }
                 }
-                // Skip whitespace and comments (handled separately)
-                SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {}
-                _ => {}
+                // Track comments
+                SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
+                    consecutive_newlines = 0;
+                    // Position is after the current arg count
+                    let position = current_section.args.len();
+                    current_section.comments.push((position, text));
+                }
+                // Track newlines for blank line detection
+                SyntaxKind::NEWLINE => {
+                    consecutive_newlines += 1;
+                    if consecutive_newlines >= 2 {
+                        // Blank line detected - record position after last arg
+                        let position = current_section.args.len();
+                        if !current_section.blank_lines.contains(&position) {
+                            current_section.blank_lines.push(position);
+                        }
+                    }
+                }
+                // Whitespace doesn't reset newline counter
+                SyntaxKind::WHITESPACE => {}
+                _ => {
+                    consecutive_newlines = 0;
+                }
             }
         }
     }
@@ -146,6 +181,7 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
 
 /// Format arguments for a keyword-aware command
 pub fn format_keyword_aware_args(
+    arg_list: &ArgumentList,
     sections: Vec<KeywordSection>,
     config: &FormatConfig,
 ) -> RcDoc<'static, ()> {
@@ -153,30 +189,87 @@ pub fn format_keyword_aware_args(
         return RcDoc::nil();
     }
 
+    // Detect formatting signals from the argument list
+    let signals = detect_argument_formatting_signals(arg_list);
+
     // Check if we have any actual keywords (not just pre-keyword args)
     let has_keywords = sections.iter().any(|s| s.keyword.is_some());
 
     if !has_keywords {
         // No keywords found, fall back to simple formatting
-        return format_simple_args(&sections, config);
+        return format_simple_args(&sections, config, signals.force_multiline);
     }
 
     // Build keyword-aware Doc structure
-    let mut docs = vec![RcDoc::line_()]; // Soft line at start (empty when flat)
+    // ARGL-03: first arg should stay on same line as command (no separator before it)
+    let mut docs = Vec::new();
+    let mut is_first_arg = true;
 
     for (i, section) in sections.iter().enumerate() {
+        // Check if previous section had a trailing blank line (blank line between sections)
+        if i > 0 && signals.force_multiline {
+            let prev_section = &sections[i - 1];
+            if prev_section.blank_lines.contains(&prev_section.args.len()) {
+                // Extra blank line between sections
+                docs.push(RcDoc::hardline());
+            }
+        }
+
         if let Some(keyword) = &section.keyword {
             // Keyword on its own line at 1 indent level
-            docs.push(RcDoc::line());
+            // Use hardline if force_multiline, otherwise line()
+            if signals.force_multiline {
+                docs.push(RcDoc::hardline());
+            } else {
+                docs.push(RcDoc::line());
+            }
             docs.push(RcDoc::text(keyword.clone()));
+            is_first_arg = false;
 
             // Values under the keyword at 2 indent levels (extra nest)
             if !section.args.is_empty() {
                 let mut value_docs = Vec::new();
-                for arg in &section.args {
-                    value_docs.push(RcDoc::line());
+                let mut comment_iter = section.comments.iter().peekable();
+
+                for (arg_idx, arg) in section.args.iter().enumerate() {
+                    // Emit comments before this argument
+                    while let Some((pos, comment)) = comment_iter.peek() {
+                        if *pos == arg_idx {
+                            if signals.force_multiline {
+                                value_docs.push(RcDoc::hardline());
+                            } else {
+                                value_docs.push(RcDoc::line());
+                            }
+                            value_docs.push(RcDoc::text(comment.clone()));
+                            comment_iter.next();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Check for blank line before this argument
+                    if section.blank_lines.contains(&arg_idx) && signals.force_multiline {
+                        value_docs.push(RcDoc::hardline());
+                    }
+
+                    if signals.force_multiline {
+                        value_docs.push(RcDoc::hardline());
+                    } else {
+                        value_docs.push(RcDoc::line());
+                    }
                     value_docs.push(RcDoc::text(arg.clone()));
                 }
+
+                // Emit trailing comments (after last argument)
+                while let Some((_, comment)) = comment_iter.next() {
+                    if signals.force_multiline {
+                        value_docs.push(RcDoc::hardline());
+                    } else {
+                        value_docs.push(RcDoc::line());
+                    }
+                    value_docs.push(RcDoc::text(comment.clone()));
+                }
+
                 docs.push(
                     RcDoc::concat(value_docs)
                         .nest(config.indent_width as isize)
@@ -184,12 +277,18 @@ pub fn format_keyword_aware_args(
             }
         } else {
             // Pre-keyword arguments (e.g., target name)
-            // These go on the same line as the command
+            // ARGL-03: first arg stays on same line as command
             for (j, arg) in section.args.iter().enumerate() {
-                // First arg of first section: no separator (line_() at start handles it)
-                // Other args: add space/newline separator
-                if i > 0 || j > 0 {
-                    docs.push(RcDoc::line());
+                if is_first_arg {
+                    // First arg: no separator
+                    is_first_arg = false;
+                } else {
+                    // Other args: add separator
+                    if signals.force_multiline {
+                        docs.push(RcDoc::hardline());
+                    } else {
+                        docs.push(RcDoc::line());
+                    }
                 }
                 docs.push(RcDoc::text(arg.clone()));
             }
@@ -199,34 +298,71 @@ pub fn format_keyword_aware_args(
     // Add soft line at the end
     docs.push(RcDoc::line_());
 
-    // Nest everything and wrap in group
-    // Group tries flat first; if too long, breaks with proper indentation
-    RcDoc::concat(docs)
-        .nest(config.indent_width as isize)
-        .group()
+    // If force_multiline, don't wrap in group
+    let nested = RcDoc::concat(docs).nest(config.indent_width as isize);
+
+    if signals.force_multiline {
+        nested
+    } else {
+        nested.group()
+    }
 }
 
 /// Format arguments without keyword awareness (simple line breaking)
-fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig) -> RcDoc<'static, ()> {
+fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_multiline: bool) -> RcDoc<'static, ()> {
     let mut docs = vec![RcDoc::line_()];
 
-    // Collect all args from all sections
-    let all_args: Vec<&String> = sections
-        .iter()
-        .flat_map(|s| s.args.iter())
-        .collect();
+    // Collect all args and comments from all sections
+    for section in sections {
+        let mut comment_iter = section.comments.iter().peekable();
 
-    for (i, arg) in all_args.iter().enumerate() {
-        docs.push(RcDoc::text((*arg).clone()));
+        for (arg_idx, arg) in section.args.iter().enumerate() {
+            // Emit comments before this argument
+            while let Some((pos, comment)) = comment_iter.peek() {
+                if *pos == arg_idx {
+                    if force_multiline {
+                        docs.push(RcDoc::hardline());
+                    } else {
+                        docs.push(RcDoc::line());
+                    }
+                    docs.push(RcDoc::text(comment.clone()));
+                    comment_iter.next();
+                } else {
+                    break;
+                }
+            }
 
-        if i < all_args.len() - 1 {
-            docs.push(RcDoc::line());
+            // Check for blank line before this argument
+            if section.blank_lines.contains(&arg_idx) && force_multiline {
+                docs.push(RcDoc::hardline());
+            }
+
+            if force_multiline {
+                docs.push(RcDoc::hardline());
+            } else {
+                docs.push(RcDoc::line());
+            }
+            docs.push(RcDoc::text(arg.clone()));
+        }
+
+        // Emit trailing comments (after last argument)
+        while let Some((_, comment)) = comment_iter.next() {
+            if force_multiline {
+                docs.push(RcDoc::hardline());
+            } else {
+                docs.push(RcDoc::line());
+            }
+            docs.push(RcDoc::text(comment.clone()));
         }
     }
 
     docs.push(RcDoc::line_());
 
-    RcDoc::concat(docs)
-        .nest(config.indent_width as isize)
-        .group()
+    let nested = RcDoc::concat(docs).nest(config.indent_width as isize);
+
+    if force_multiline {
+        nested
+    } else {
+        nested.group()
+    }
 }

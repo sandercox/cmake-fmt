@@ -143,7 +143,7 @@ fn test_comment_inside_if_block() {
     let result = format_text(input, &default_config());
     assert!(result.contains("# Platform specific"));
     // Comment should be indented inside the if block
-    assert!(result.contains("  # Platform specific"));
+    assert!(result.contains("\t# Platform specific"));
 }
 
 #[test]
@@ -269,9 +269,9 @@ fn test_keyword_aware_with_comment_inside_if() {
     let input = "if(WIN32)\n  # Windows-specific libraries\n  target_link_libraries(myapp PRIVATE kernel32 user32)\nendif()\n";
     let result = format_text(input, &default_config());
     // Comment should be indented at if-block level
-    assert!(result.contains("  # Windows-specific libraries\n"));
+    assert!(result.contains("\t# Windows-specific libraries\n"));
     // Command should stay on one line (short enough)
-    assert!(result.contains("  target_link_libraries(myapp PRIVATE kernel32 user32)\n"));
+    assert!(result.contains("\ttarget_link_libraries(myapp PRIVATE kernel32 user32)\n"));
 }
 
 #[test]
@@ -368,4 +368,99 @@ fn test_keyword_only_no_values() {
     // If it fits on one line, it may stay flat
     // If too long, it will break
     assert!(result.len() < 200); // Sanity check
+}
+
+// ============================================================================
+// KEYWORD-AWARE ARGUMENT LIST ENHANCEMENT TESTS (Phase 7)
+// ============================================================================
+
+#[test]
+fn test_keyword_arglist_comment_in_section() {
+    let input = "target_link_libraries(myapp\n  PUBLIC\n    lib1\n    # Platform libs\n    lib2\n  PRIVATE\n    lib3\n)\n";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // Comment should appear between lib1 and lib2
+    assert!(result.contains("# Platform libs"));
+    // Check that lib1 and lib2 are present
+    assert!(result.contains("lib1"));
+    assert!(result.contains("lib2"));
+    // The order should be maintained
+    let lib1_pos = result.find("lib1").unwrap();
+    let comment_pos = result.find("# Platform libs").unwrap();
+    let lib2_pos = result.find("lib2").unwrap();
+    assert!(lib1_pos < comment_pos);
+    assert!(comment_pos < lib2_pos);
+}
+
+#[test]
+fn test_keyword_arglist_blank_line_between_sections() {
+    let input = "target_link_libraries(myapp\n  PUBLIC\n    lib1\n\n  PRIVATE\n    lib2\n)\n";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // Should preserve the blank line structure
+    assert!(result.contains("PUBLIC"));
+    assert!(result.contains("PRIVATE"));
+    assert!(result.contains("lib1"));
+    assert!(result.contains("lib2"));
+    // Check for blank line (two consecutive newlines)
+    assert!(result.contains("\n\n") || result.contains("lib1\n    \n"));
+}
+
+#[test]
+fn test_keyword_arglist_multiline_stays_multiline() {
+    let input = "target_link_libraries(myapp\n  PRIVATE\n    lib1\n)\n";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // Even though this is short enough to fit on one line,
+    // user chose multiline, so it should stay multiline
+    assert!(result.contains("PRIVATE\n"));
+    assert!(result.contains("lib1\n"));
+    // Should NOT be collapsed to: target_link_libraries(myapp PRIVATE lib1)
+    assert!(!result.contains("myapp PRIVATE lib1)\n"));
+}
+
+#[test]
+fn test_keyword_arglist_comment_not_duplicated() {
+    let input = "target_link_libraries(myapp\n  PUBLIC\n    lib1  # main lib\n    lib2\n)\n";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // Comment should appear exactly once
+    let count = result.matches("# main lib").count();
+    assert_eq!(count, 1, "Comment should appear exactly once, found {} times", count);
+}
+
+#[test]
+fn test_keyword_arglist_first_arg_same_line() {
+    let input = "target_link_libraries(myapp\n  PUBLIC lib1\n)\n";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // First arg (myapp) should be on same line as command
+    assert!(result.starts_with("target_link_libraries(myapp"));
+    assert!(!result.starts_with("target_link_libraries(\n"));
+}
+
+#[test]
+fn test_keyword_arglist_idempotency() {
+    let inputs = vec![
+        "target_link_libraries(myapp\n  PUBLIC\n    lib1\n    # Platform libs\n    lib2\n  PRIVATE\n    lib3\n)\n",
+        "target_link_libraries(myapp\n  PUBLIC\n    lib1\n\n  PRIVATE\n    lib2\n)\n",
+        "target_link_libraries(myapp\n  PRIVATE\n    lib1\n)\n",
+    ];
+
+    for input in inputs {
+        let once = format_text(input, &default_config());
+        let twice = format_text(&once, &default_config());
+        assert_eq!(once, twice, "Formatting should be idempotent for input:\n{}", input);
+    }
+}
+
+#[test]
+fn test_keyword_arglist_bracket_comment() {
+    let input = "target_link_libraries(myapp\n  PUBLIC\n    lib1\n    #[=[\n    Special lib\n    ]=]\n    lib2\n)\n";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // Bracket comment should be preserved
+    assert!(result.contains("#[=["));
+    assert!(result.contains("Special lib"));
+    assert!(result.contains("]=]"));
 }

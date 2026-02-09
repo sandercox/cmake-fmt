@@ -9,11 +9,11 @@ use super::cmake_rules;
 use super::comments;
 
 /// Signals detected in argument list that affect formatting
-struct ArgumentFormatSignals {
-    has_comments: bool,
-    has_blank_lines: bool,
-    has_newlines: bool,
-    force_multiline: bool,
+pub(crate) struct ArgumentFormatSignals {
+    pub(crate) has_comments: bool,
+    pub(crate) has_blank_lines: bool,
+    pub(crate) has_newlines: bool,
+    pub(crate) force_multiline: bool,
 }
 
 /// Format context tracking indentation level
@@ -239,7 +239,7 @@ fn format_command(cmd: &CommandInvocation, ctx: &FormatContext) -> RcDoc<'static
         // Check if this command should use keyword-aware formatting
         if cmake_rules::is_keyword_aware_command(&name) {
             let sections = cmake_rules::parse_keyword_sections(&arg_list);
-            cmake_rules::format_keyword_aware_args(sections, ctx.config)
+            cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config)
         } else {
             format_argument_list(&arg_list, ctx)
         }
@@ -257,7 +257,7 @@ fn format_command(cmd: &CommandInvocation, ctx: &FormatContext) -> RcDoc<'static
 }
 
 /// Detect formatting signals in argument list (comments, blank lines, newlines)
-fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> ArgumentFormatSignals {
+pub(crate) fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> ArgumentFormatSignals {
     let mut has_comments = false;
     let mut has_blank_lines = false;
     let mut has_newlines = false;

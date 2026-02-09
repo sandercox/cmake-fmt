@@ -27,8 +27,7 @@ else()
 endif()
 
 # Main library
-add_library(
-    realworld
+add_library(realworld
     STATIC
         src/core.cpp
         src/parser.cpp
@@ -36,8 +35,7 @@ add_library(
         ${PLATFORM_SOURCES}
 )
 
-target_include_directories(
-    realworld
+target_include_directories(realworld
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
@@ -46,8 +44,7 @@ target_include_directories(
         /src
 )
 
-target_compile_options(
-    realworld
+target_compile_options(realworld
     PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>
@@ -57,7 +54,6 @@ target_link_libraries(realworld PUBLIC fmt::fmt PRIVATE Threads::Threads)
 
 # Install rules
 install(
-
     TARGETS
         realworld
     ARCHIVE
