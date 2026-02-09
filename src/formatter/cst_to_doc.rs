@@ -4,7 +4,7 @@ use crate::SyntaxNode;
 use pretty::RcDoc;
 use rowan::NodeOrToken;
 
-use super::config::{CommandCase, FormatConfig};
+use super::config::{ClosingStyle, CommandCase, FormatConfig};
 use super::cmake_rules;
 use super::comments;
 
@@ -14,6 +14,17 @@ pub(crate) struct ArgumentFormatSignals {
     pub(crate) has_blank_lines: bool,
     pub(crate) has_newlines: bool,
     pub(crate) force_multiline: bool,
+}
+
+/// Scope frame for tracking block opener arguments
+struct ScopeFrame {
+    opener_args: Vec<String>,
+}
+
+/// Context for formatting block closers and mid-block commands
+struct CloserContext {
+    opener_args: Vec<String>,
+    is_mid_block: bool,
 }
 
 /// Format context tracking indentation level
@@ -67,6 +78,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
     let mut docs = Vec::new();
     let mut current_indent: usize = 0;
     let mut blank_line_count = 0;
+    let mut scope_stack: Vec<ScopeFrame> = Vec::new();
 
     // First pass: collect all comments that will be handled as leading/trailing
     // Trailing comments take precedence over leading comments (to avoid duplication)
@@ -126,14 +138,34 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
                                 .map(|s| s.to_lowercase())
                                 .unwrap_or_default();
 
+                            // Determine if this is a closer or mid-block command
+                            let is_closer = is_block_closer(&cmd_name);
+                            let is_mid = is_block_mid(&cmd_name);
+
+                            // Prepare closer_context before dedenting/formatting
+                            let closer_context = if is_closer {
+                                // Pop scope for closers
+                                scope_stack.pop().map(|frame| CloserContext {
+                                    opener_args: frame.opener_args,
+                                    is_mid_block: false,
+                                })
+                            } else if is_mid {
+                                // Peek scope for mid-block commands
+                                scope_stack.last().map(|frame| CloserContext {
+                                    opener_args: frame.opener_args.clone(),
+                                    is_mid_block: true,
+                                })
+                            } else {
+                                None
+                            };
+
                             // Handle block closers (dedent before emitting)
-                            if is_block_closer(&cmd_name) {
+                            if is_closer {
                                 current_indent = current_indent.saturating_sub(1);
                             }
 
                             // Handle mid-block commands (dedent for this line only)
-                            let temp_dedent = is_block_mid(&cmd_name);
-                            let cmd_indent = if temp_dedent {
+                            let cmd_indent = if is_mid {
                                 current_indent.saturating_sub(1)
                             } else {
                                 current_indent
@@ -146,7 +178,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
                             };
 
                             // Format and emit command
-                            let mut cmd_doc = format_command(&cmd, &cmd_ctx);
+                            let mut cmd_doc = format_command(&cmd, &cmd_ctx, closer_context.as_ref());
 
                             // Check for trailing comment
                             if let Some(trailing_comment) = comments::extract_trailing_comment(&child_node) {
@@ -156,9 +188,16 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
                             docs.push(cmd_doc);
                             docs.push(RcDoc::hardline());
 
-                            // Handle block openers (indent after emitting)
+                            // Handle block openers (indent and push scope after emitting)
                             if is_block_opener(&cmd_name) {
                                 current_indent += 1;
+                                // Extract opener arguments for scope tracking
+                                let opener_args: Vec<String> = cmd.argument_list()
+                                    .map(|al| al.arguments()
+                                        .map(|t| t.text().to_string())
+                                        .collect())
+                                    .unwrap_or_default();
+                                scope_stack.push(ScopeFrame { opener_args });
                             }
 
                             blank_line_count = 0;
@@ -223,7 +262,11 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
 }
 
 /// Format a command invocation
-fn format_command(cmd: &CommandInvocation, ctx: &FormatContext) -> RcDoc<'static, ()> {
+fn format_command(
+    cmd: &CommandInvocation,
+    ctx: &FormatContext,
+    closer_context: Option<&CloserContext>
+) -> RcDoc<'static, ()> {
     let indent_str = ctx.indent_str();
 
     // Get command name and apply casing
@@ -234,17 +277,48 @@ fn format_command(cmd: &CommandInvocation, ctx: &FormatContext) -> RcDoc<'static
         CommandCase::Preserve => name.clone(),
     };
 
-    // Get arguments and check for keyword-aware formatting
-    let args_doc = if let Some(arg_list) = cmd.argument_list() {
-        // Check if this command should use keyword-aware formatting
-        if cmake_rules::is_keyword_aware_command(&name) {
-            let sections = cmake_rules::parse_keyword_sections(&arg_list);
-            cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config)
-        } else {
-            format_argument_list(&arg_list, ctx)
+    // Handle block closers and mid-block commands based on closing_style
+    let args_doc = if let Some(closer_ctx) = closer_context {
+        match ctx.config.closing_style {
+            ClosingStyle::Keep => {
+                // Keep mode: format normally, ignore closer_context
+                if let Some(arg_list) = cmd.argument_list() {
+                    if cmake_rules::is_keyword_aware_command(&name) {
+                        let sections = cmake_rules::parse_keyword_sections(&arg_list);
+                        cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config)
+                    } else {
+                        format_argument_list(&arg_list, ctx)
+                    }
+                } else {
+                    RcDoc::nil()
+                }
+            }
+            ClosingStyle::Remove => {
+                // Remove mode: emit empty argument list
+                RcDoc::nil()
+            }
+            ClosingStyle::Force => {
+                // Force mode: emit opener's arguments
+                if closer_ctx.opener_args.is_empty() {
+                    RcDoc::nil()
+                } else {
+                    RcDoc::text(closer_ctx.opener_args.join(" "))
+                }
+            }
         }
     } else {
-        RcDoc::nil()
+        // Not a closer/mid-block command: format normally
+        if let Some(arg_list) = cmd.argument_list() {
+            // Check if this command should use keyword-aware formatting
+            if cmake_rules::is_keyword_aware_command(&name) {
+                let sections = cmake_rules::parse_keyword_sections(&arg_list);
+                cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config)
+            } else {
+                format_argument_list(&arg_list, ctx)
+            }
+        } else {
+            RcDoc::nil()
+        }
     };
 
     // Format as: indent + name + ( + args + )
