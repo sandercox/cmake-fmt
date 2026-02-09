@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod diff;
 
 use std::process::ExitCode;
 
