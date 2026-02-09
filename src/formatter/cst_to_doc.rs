@@ -8,6 +8,14 @@ use super::config::{CommandCase, FormatConfig};
 use super::cmake_rules;
 use super::comments;
 
+/// Signals detected in argument list that affect formatting
+struct ArgumentFormatSignals {
+    has_comments: bool,
+    has_blank_lines: bool,
+    has_newlines: bool,
+    force_multiline: bool,
+}
+
 /// Format context tracking indentation level
 struct FormatContext<'a> {
     config: &'a FormatConfig,
@@ -103,7 +111,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
                         }
 
                         // Emit leading comments (skip if already handled as trailing)
-                        let indent_str = " ".repeat(current_indent * ctx.config.indent_width);
+                        let indent_str = indent_string(current_indent, ctx.config);
                         for comment in &leading_comments {
                             // Only emit if not already handled as a trailing comment
                             if !trailing_comments.contains(comment) {
@@ -192,7 +200,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
                                 }
                             }
 
-                            let indent_str = " ".repeat(current_indent * ctx.config.indent_width);
+                            let indent_str = indent_string(current_indent, ctx.config);
                             docs.push(RcDoc::text(format!("{}{}", indent_str, comment_text)));
                             docs.push(RcDoc::hardline());
                             blank_line_count = 0;
@@ -248,6 +256,54 @@ fn format_command(cmd: &CommandInvocation, ctx: &FormatContext) -> RcDoc<'static
     RcDoc::text(indent_str).append(cmd_doc)
 }
 
+/// Detect formatting signals in argument list (comments, blank lines, newlines)
+fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> ArgumentFormatSignals {
+    let mut has_comments = false;
+    let mut has_blank_lines = false;
+    let mut has_newlines = false;
+    let mut consecutive_newline_count = 0;
+
+    for child in arg_list.syntax().children_with_tokens() {
+        match child {
+            NodeOrToken::Token(token) => {
+                match token.kind() {
+                    SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
+                        has_comments = true;
+                        consecutive_newline_count = 0;
+                    }
+                    SyntaxKind::NEWLINE => {
+                        has_newlines = true;
+                        consecutive_newline_count += 1;
+                        if consecutive_newline_count >= 2 {
+                            has_blank_lines = true;
+                        }
+                    }
+                    SyntaxKind::WHITESPACE => {
+                        // Whitespace doesn't reset newline count
+                    }
+                    _ => {
+                        // Any other token resets newline count
+                        consecutive_newline_count = 0;
+                    }
+                }
+            }
+            NodeOrToken::Node(_) => {
+                // Nodes reset newline count
+                consecutive_newline_count = 0;
+            }
+        }
+    }
+
+    let force_multiline = has_comments || has_blank_lines || has_newlines;
+
+    ArgumentFormatSignals {
+        has_comments,
+        has_blank_lines,
+        has_newlines,
+        force_multiline,
+    }
+}
+
 /// Format an argument list with intelligent line breaking
 fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'static, ()> {
     let args: Vec<_> = arg_list.arguments().collect();
@@ -256,26 +312,111 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
         return RcDoc::nil();
     }
 
-    // Build argument documents with separators
-    let mut docs = vec![RcDoc::line_()]; // Soft line at start
+    // Detect formatting signals
+    let signals = detect_argument_formatting_signals(arg_list);
 
-    for (i, arg) in args.iter().enumerate() {
-        let text = arg.text().to_string();
-        docs.push(RcDoc::text(text));
+    // If no multiline signals, use original behavior (soft lines + group)
+    if !signals.force_multiline {
+        let mut docs = vec![RcDoc::line_()]; // Soft line at start
 
-        // Add separator between arguments (not after last)
-        if i < args.len() - 1 {
-            docs.push(RcDoc::line());
+        for (i, arg) in args.iter().enumerate() {
+            let text = arg.text().to_string();
+            docs.push(RcDoc::text(text));
+
+            // Add separator between arguments (not after last)
+            if i < args.len() - 1 {
+                docs.push(RcDoc::line());
+            }
+        }
+
+        docs.push(RcDoc::line_()); // Soft line at end
+
+        // Group everything together: tries flat first, breaks if too long
+        return RcDoc::concat(docs)
+            .nest(ctx.config.indent_width as isize)
+            .group();
+    }
+
+    // Force multiline: walk tokens and build Doc IR with hardlines
+    let mut docs = vec![RcDoc::line_()]; // First break - collapses to nothing (ARGL-03)
+    let mut last_was_arg = false;
+    let mut consecutive_newline_count = 0;
+    let mut first_arg = true;
+
+    for child in arg_list.syntax().children_with_tokens() {
+        match child {
+            NodeOrToken::Token(token) => {
+                match token.kind() {
+                    SyntaxKind::UNQUOTED_ARGUMENT
+                    | SyntaxKind::QUOTED_ARGUMENT
+                    | SyntaxKind::BRACKET_ARGUMENT
+                    | SyntaxKind::VARIABLE_REF
+                    | SyntaxKind::ENV_VAR_REF
+                    | SyntaxKind::CACHE_VAR_REF
+                    | SyntaxKind::GENERATOR_EXPR => {
+                        // Add hardline separator before this arg (if not first)
+                        if last_was_arg && !first_arg {
+                            docs.push(RcDoc::hardline());
+                        }
+
+                        let text = token.text().to_string();
+                        docs.push(RcDoc::text(text));
+                        last_was_arg = true;
+                        first_arg = false;
+                        consecutive_newline_count = 0;
+                    }
+                    SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
+                        // Emit comment with hardline after
+                        let text = token.text().to_string();
+                        docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(text));
+                        docs.push(RcDoc::hardline());
+                        last_was_arg = false;
+                        consecutive_newline_count = 0;
+                    }
+                    SyntaxKind::NEWLINE => {
+                        consecutive_newline_count += 1;
+                        // If this is a blank line (2+ consecutive newlines), emit extra hardline
+                        if consecutive_newline_count >= 2 {
+                            // Respect max_blank_lines config
+                            let blank_lines_to_emit = consecutive_newline_count - 1;
+                            let max_blank = ctx.config.max_blank_lines;
+                            if blank_lines_to_emit <= max_blank {
+                                docs.push(RcDoc::hardline());
+                            }
+                            // Reset so we don't emit multiple times for same blank line run
+                            consecutive_newline_count = 1;
+                        }
+                    }
+                    SyntaxKind::WHITESPACE | SyntaxKind::LPAREN | SyntaxKind::RPAREN => {
+                        // Skip - whitespace is formatter's job, parens are handled by format_command
+                    }
+                    _ => {
+                        // Reset state for other tokens
+                        consecutive_newline_count = 0;
+                    }
+                }
+            }
+            NodeOrToken::Node(_) => {
+                // Nested nodes - skip for now
+                consecutive_newline_count = 0;
+            }
         }
     }
 
-    docs.push(RcDoc::line_()); // Soft line at end
+    docs.push(RcDoc::line_()); // Last break - collapses to nothing
 
-    // Group everything together: tries flat first, breaks if too long
-    // When broken, nest the arguments
-    RcDoc::concat(docs)
-        .nest(ctx.config.indent_width as isize)
-        .group()
+    // Nest without group (forced multiline must not collapse)
+    RcDoc::concat(docs).nest(ctx.config.indent_width as isize)
+}
+
+/// Build an indentation string for the given level, respecting tabs/spaces config
+fn indent_string(level: usize, config: &FormatConfig) -> String {
+    if config.use_tabs {
+        "\t".repeat(level)
+    } else {
+        " ".repeat(level * config.indent_width)
+    }
 }
 
 /// Check if command is a block opener
