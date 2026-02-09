@@ -25,6 +25,10 @@ pub struct Cli {
     #[arg(long = "dry-run", conflicts_with = "in_place")]
     pub dry_run: bool,
 
+    /// Show diff of formatting changes
+    #[arg(long, conflicts_with = "in_place")]
+    pub diff: bool,
+
     /// Override config inline (e.g., "indent_width=4,max_line_length=100")
     #[arg(long)]
     pub style: Option<String>,
@@ -37,13 +41,16 @@ pub fn run() -> Result<ExitCode> {
     // Determine if we're in check mode
     let check_mode = cli.check || cli.dry_run;
 
+    // Determine if we're in diff mode
+    let diff_mode = cli.diff;
+
     // Determine if we're processing stdin or files
     let is_stdin = cli.files.is_empty() || (cli.files.len() == 1 && cli.files[0] == PathBuf::from("-"));
 
     if is_stdin {
         // For stdin, resolve config from current directory
         let config = crate::config::resolve_config(None, cli.style.as_deref());
-        process_stdin(&config, check_mode)
+        process_stdin(&config, check_mode, diff_mode)
     } else {
         // Expand glob patterns
         let expanded = expand_files(&cli.files)?;
@@ -54,7 +61,7 @@ pub fn run() -> Result<ExitCode> {
             return Ok(ExitCode::SUCCESS);
         }
 
-        process_files(&expanded, cli.style.as_deref(), cli.in_place, check_mode)
+        process_files(&expanded, cli.style.as_deref(), cli.in_place, check_mode, diff_mode)
     }
 }
 
@@ -105,7 +112,7 @@ fn expand_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 }
 
 /// Process stdin to stdout
-fn process_stdin(config: &FormatConfig, check_mode: bool) -> Result<ExitCode> {
+fn process_stdin(config: &FormatConfig, check_mode: bool, diff_mode: bool) -> Result<ExitCode> {
     use std::io::{stdin, stdout, Read, Write};
 
     let mut input = String::new();
@@ -113,7 +120,16 @@ fn process_stdin(config: &FormatConfig, check_mode: bool) -> Result<ExitCode> {
 
     let formatted = format_text(&input, config);
 
-    if check_mode {
+    if diff_mode {
+        if input != formatted {
+            if let Some(diff_output) = cmake_format::diff::generate_diff(&input, &formatted, "stdin") {
+                cmake_format::diff::print_colored_diff(&diff_output);
+            }
+            Ok(ExitCode::from(1))
+        } else {
+            Ok(ExitCode::SUCCESS)
+        }
+    } else if check_mode {
         if input != formatted {
             eprintln!("Would reformat: stdin");
             Ok(ExitCode::from(1))
@@ -133,12 +149,13 @@ fn process_files(
     style_override: Option<&str>,
     in_place: bool,
     check_mode: bool,
+    diff_mode: bool,
 ) -> Result<ExitCode> {
     use std::io::{stdout, Write};
     use std::collections::HashMap;
 
     let mut any_need_formatting = false;
-    let mut stdout_handle = if !in_place && !check_mode {
+    let mut stdout_handle = if !in_place && !check_mode && !diff_mode {
         Some(stdout().lock())
     } else {
         None
@@ -165,7 +182,7 @@ fn process_files(
             crate::config::resolve_config(Some(file), style_override)
         });
 
-        match process_file(file, config, in_place, check_mode) {
+        match process_file(file, config, in_place, check_mode, diff_mode) {
             Ok(needs_formatting) => {
                 if needs_formatting {
                     any_need_formatting = true;
@@ -184,13 +201,13 @@ fn process_files(
         }
     }
 
-    // Print summary in check mode
-    if check_mode && any_need_formatting {
+    // Print summary in check mode (but not in diff mode where diffs speak for themselves)
+    if check_mode && !diff_mode && any_need_formatting {
         let count = files.len();
         eprintln!("{} file(s) would be reformatted", count);
     }
 
-    if check_mode && any_need_formatting {
+    if (check_mode || diff_mode) && any_need_formatting {
         Ok(ExitCode::from(1))
     } else {
         Ok(ExitCode::SUCCESS)
@@ -203,13 +220,23 @@ fn process_file(
     config: &FormatConfig,
     in_place: bool,
     check_mode: bool,
+    diff_mode: bool,
 ) -> Result<bool> {
     use std::fs;
 
     let original = fs::read_to_string(path)?;
     let formatted = format_text(&original, config);
 
-    if check_mode {
+    if diff_mode {
+        if original != formatted {
+            if let Some(diff_output) = cmake_format::diff::generate_diff(&original, &formatted, &path.display().to_string()) {
+                cmake_format::diff::print_colored_diff(&diff_output);
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    } else if check_mode {
         if original != formatted {
             eprintln!("Would reformat: {}", path.display());
             Ok(true)

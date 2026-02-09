@@ -1,10 +1,13 @@
 mod cli;
 mod config;
-mod diff;
 
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    // Enable ANSI color support on Windows
+    #[cfg(windows)]
+    let _ = enable_ansi_support::enable_ansi_support();
+
     match cli::run() {
         Ok(code) => code,
         Err(e) => {
