@@ -1,0 +1,48 @@
+---
+source: tests/formatting_snapshot_tests.rs
+expression: output
+---
+# Remove mode input: legacy closers with arguments
+if(WIN32)
+	set(PLATFORM windows)
+else()
+	set(PLATFORM unix)
+endif()
+
+foreach(item ${LIST})
+	message(${item})
+endforeach()
+
+function(my_func ARG1 ARG2)
+	message(${ARG1})
+endfunction()
+
+macro(my_macro X Y)
+	set(${X} ${Y})
+endmacro()
+
+while(${COUNTER} LESS 10)
+	math(EXPR COUNTER "${COUNTER} + 1")
+endwhile()
+
+# Already empty closers stay empty
+if(UNIX)
+	set(A b)
+endif()
+
+# Nested blocks with legacy closers
+if(WIN32)
+	if(MSVC)
+		set(COMPILER msvc)
+	endif()
+	set(B c)
+endif()
+
+# elseif with arguments
+if(WIN32)
+	set(A windows)
+elseif()
+	set(A apple)
+else()
+	set(A other)
+endif()

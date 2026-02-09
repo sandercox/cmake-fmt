@@ -1,0 +1,48 @@
+---
+source: tests/formatting_snapshot_tests.rs
+expression: output
+---
+# Force mode input: modern empty closers
+if(WIN32)
+	set(PLATFORM windows)
+else(WIN32)
+	set(PLATFORM unix)
+endif(WIN32)
+
+foreach(item ${LIST})
+	message(${item})
+endforeach(item ${LIST})
+
+function(my_func ARG1 ARG2)
+	message(${ARG1})
+endfunction(my_func ARG1 ARG2)
+
+macro(my_macro X Y)
+	set(${X} ${Y})
+endmacro(my_macro X Y)
+
+while(${COUNTER} LESS 10)
+	math(EXPR COUNTER "${COUNTER} + 1")
+endwhile(${COUNTER} LESS 10)
+
+# Already has correct args (should keep them in force mode)
+if(APPLE)
+	set(A b)
+endif(APPLE)
+
+# Nested blocks with empty closers
+if(WIN32)
+	if(MSVC)
+		set(COMPILER msvc)
+	endif(MSVC)
+	set(B c)
+endif(WIN32)
+
+# elseif chain
+if(WIN32)
+	set(A windows)
+elseif(WIN32)
+	set(A apple)
+else(WIN32)
+	set(A other)
+endif(WIN32)

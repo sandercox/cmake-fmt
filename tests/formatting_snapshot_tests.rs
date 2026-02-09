@@ -1,5 +1,5 @@
 use cmake_format::cst::parse_text;
-use cmake_format::formatter::{format_text, CommandCase, FormatConfig};
+use cmake_format::formatter::{format_text, ClosingStyle, CommandCase, FormatConfig};
 
 // ============================================================================
 // SNAPSHOT TESTS
@@ -162,9 +162,9 @@ endif()
 "#;
     let output = format_text(input, &config);
 
-    // Verify 4 levels of indentation (2 spaces per level = 8 spaces)
-    assert!(output.contains("        set(DEEPLY_NESTED true)"),
-        "Expected 8 spaces for 4-level nesting");
+    // Verify 4 levels of indentation (1 tab per level = 4 tabs)
+    assert!(output.contains("\t\t\t\tset(DEEPLY_NESTED true)"),
+        "Expected 4 tabs for 4-level nesting");
 }
 
 #[test]
@@ -186,6 +186,7 @@ fn test_error_recovery_fixture() {
 fn test_config_indent_width_4() {
     let config = FormatConfig {
         indent_width: 4,
+        use_tabs: false,
         ..FormatConfig::default()
     };
     let input = "if(FOO)\nset(BAR baz)\nendif()\n";
@@ -241,4 +242,76 @@ fn test_config_line_length_120() {
 
     // At minimum, the output should be valid and not panic
     assert!(!output.is_empty());
+}
+
+// ============================================================================
+// BLOCK CLOSER MODE TESTS
+// ============================================================================
+
+#[test]
+fn test_block_closer_keep_mode() {
+    let config = FormatConfig::default(); // Keep is default
+    let input = std::fs::read_to_string("tests/format_fixtures/block_closer_keep.cmake").unwrap();
+    let output = format_text(&input, &config);
+    insta::assert_snapshot!("block_closer_keep", output);
+}
+
+#[test]
+fn test_block_closer_remove_mode() {
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Remove,
+        ..FormatConfig::default()
+    };
+    let input =
+        std::fs::read_to_string("tests/format_fixtures/block_closer_remove.cmake").unwrap();
+    let output = format_text(&input, &config);
+    insta::assert_snapshot!("block_closer_remove", output);
+}
+
+#[test]
+fn test_block_closer_force_mode() {
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        ..FormatConfig::default()
+    };
+    let input =
+        std::fs::read_to_string("tests/format_fixtures/block_closer_force.cmake").unwrap();
+    let output = format_text(&input, &config);
+    insta::assert_snapshot!("block_closer_force", output);
+}
+
+#[test]
+fn test_block_closer_idempotency() {
+    let fixtures = [
+        (
+            "keep",
+            ClosingStyle::Keep,
+            "tests/format_fixtures/block_closer_keep.cmake",
+        ),
+        (
+            "remove",
+            ClosingStyle::Remove,
+            "tests/format_fixtures/block_closer_remove.cmake",
+        ),
+        (
+            "force",
+            ClosingStyle::Force,
+            "tests/format_fixtures/block_closer_force.cmake",
+        ),
+    ];
+
+    for (mode_name, style, fixture_path) in &fixtures {
+        let config = FormatConfig {
+            closing_style: *style,
+            ..FormatConfig::default()
+        };
+        let input = std::fs::read_to_string(fixture_path).unwrap();
+        let once = format_text(&input, &config);
+        let twice = format_text(&once, &config);
+        assert_eq!(
+            once, twice,
+            "Idempotency failed for block closer {} mode on {}",
+            mode_name, fixture_path
+        );
+    }
 }

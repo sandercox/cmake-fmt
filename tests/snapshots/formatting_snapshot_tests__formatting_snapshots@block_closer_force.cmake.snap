@@ -1,0 +1,49 @@
+---
+source: tests/formatting_snapshot_tests.rs
+expression: output
+input_file: tests/format_fixtures/block_closer_force.cmake
+---
+# Force mode input: modern empty closers
+if(WIN32)
+	set(PLATFORM windows)
+else()
+	set(PLATFORM unix)
+endif()
+
+foreach(item ${LIST})
+	message(${item})
+endforeach()
+
+function(my_func ARG1 ARG2)
+	message(${ARG1})
+endfunction()
+
+macro(my_macro X Y)
+	set(${X} ${Y})
+endmacro()
+
+while(${COUNTER} LESS 10)
+	math(EXPR COUNTER "${COUNTER} + 1")
+endwhile()
+
+# Already has correct args (should keep them in force mode)
+if(APPLE)
+	set(A b)
+endif(APPLE)
+
+# Nested blocks with empty closers
+if(WIN32)
+	if(MSVC)
+		set(COMPILER msvc)
+	endif()
+	set(B c)
+endif()
+
+# elseif chain
+if(WIN32)
+	set(A windows)
+elseif(APPLE)
+	set(A apple)
+else()
+	set(A other)
+endif()
