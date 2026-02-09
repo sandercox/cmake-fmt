@@ -22,14 +22,6 @@ impl<'a> FormatContext<'a> {
         }
     }
 
-    /// Create a new context with increased indentation
-    fn indent(&self) -> Self {
-        Self {
-            config: self.config,
-            indent_level: self.indent_level + 1,
-        }
-    }
-
     /// Get the indentation string for the current level
     fn indent_str(&self) -> String {
         let count = self.indent_level * self.config.indent_width;

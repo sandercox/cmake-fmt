@@ -1,4 +1,3 @@
-use crate::cst::ArgumentList;
 use crate::syntax_kind::SyntaxKind;
 use crate::SyntaxNode;
 use rowan::NodeOrToken;
@@ -79,14 +78,3 @@ pub fn extract_trailing_comment(node: &SyntaxNode) -> Option<String> {
     None
 }
 
-/// Check if an argument list contains inline comments
-pub fn has_inline_comments(arg_list: &ArgumentList) -> bool {
-    for child in arg_list.syntax().children_with_tokens() {
-        if let NodeOrToken::Token(token) = child {
-            if matches!(token.kind(), SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT) {
-                return true;
-            }
-        }
-    }
-    false
-}
