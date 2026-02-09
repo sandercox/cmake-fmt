@@ -1,0 +1,103 @@
+# ============================================================================
+# BRACKET ARGUMENT EDGE CASES
+# ============================================================================
+# Tests atomic token preservation for bracket arguments.
+# Content must be preserved byte-for-byte (no evaluation, no escape processing).
+
+# ----------------------------------------------------------------------------
+# Basic Bracket Arguments (Different Equals Counts)
+# ----------------------------------------------------------------------------
+
+# Zero equals (most common)
+message([[simple bracket arg]])
+
+# One equal (allows ]] inside)
+message([=[contains ]] inside]=])
+
+# Two equals (allows ]=] inside)
+message([==[contains ]=] inside]==])
+
+# Empty bracket arg
+message([[]])
+
+# ----------------------------------------------------------------------------
+# Multiline Bracket Arguments with Preserved Content
+# ----------------------------------------------------------------------------
+
+# Help text with preserved indentation
+set(HELP [[
+Usage: myapp [options]
+  --help     Show help
+  --version  Show version
+]])
+
+# Bracket arg with embedded CMake-like syntax (NOT evaluated)
+set(SCRIPT [=[
+if(${VAR})
+  message("not evaluated")
+endif()
+]=])
+
+# Script with special characters
+set(BASH_SCRIPT [[
+#!/bin/bash
+echo "Hello $USER"
+cd $HOME
+]])
+
+# ----------------------------------------------------------------------------
+# Bracket Arguments in Various Positions
+# ----------------------------------------------------------------------------
+
+# As only argument
+message([[only arg]])
+
+# Mixed with regular args
+set(X [[bracket]] regular_arg)
+
+# Multiple bracket args
+set(MULTI [[first]] [[second]] [[third]])
+
+# Bracket arg after regular args
+set(LIST a b c [[bracket at end]])
+
+# ----------------------------------------------------------------------------
+# Bracket Arguments with Special Characters
+# ----------------------------------------------------------------------------
+
+# Tab character (literal tab preserved)
+message([=[tab	here and special {chars}]=])
+
+# Literal newline inside (on same line - \n as two chars)
+message([[line1\nline2]])
+
+# Actual newlines (multiline)
+message([[line1
+line2
+line3]])
+
+# Mixed special chars: quotes, braces, dollar signs
+set(SPECIAL [[
+"quoted" ${not_expanded} $<not:expanded>
+{braces} [nested[brackets]]
+]])
+
+# Unicode characters (UTF-8 preserved)
+message([[Русский 中文 العربية]])
+
+# ----------------------------------------------------------------------------
+# Edge Cases
+# ----------------------------------------------------------------------------
+
+# Empty multiline bracket arg
+set(EMPTY [[
+
+]])
+
+# Bracket arg with only whitespace
+message([[
+   ]])
+
+# Bracket arg starting with newline (CMake ignores first newline during eval, but we preserve it)
+set(CONTENT [[
+actual content]])

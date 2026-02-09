@@ -1,0 +1,86 @@
+---
+source: tests/formatting_snapshot_tests.rs
+expression: output
+input_file: tests/format_fixtures/comment_edge_cases.cmake
+---
+# ============================================================================
+# COMMENT EDGE CASES
+# ============================================================================
+# Tests comment preservation in unusual positions.
+# ----------------------------------------------------------------------------
+# Comments Between Arguments
+# ----------------------------------------------------------------------------
+# Comment forces multiline layout
+set(LIST
+    a
+    # comment between args
+    b
+)
+
+# Multiple comments between arguments
+set(MULTI
+    first
+    # comment 1
+    # comment 2
+    second
+)
+
+# ----------------------------------------------------------------------------
+# Comments on Commands
+# ----------------------------------------------------------------------------
+# Multiple comments before a command
+# First comment
+# Second comment
+# Third comment
+set(X y)
+
+# Trailing comment on block opener
+if(WIN32) # platform check
+	set(A a)
+endif()
+
+# Comment immediately after closing paren (no space)
+message(hello) # attached comment
+
+# ----------------------------------------------------------------------------
+# Comments Between Commands
+# ----------------------------------------------------------------------------
+# Comment on blank line between commands
+set(A a)
+
+# standalone comment
+set(B b)
+
+# Multiple standalone comments
+set(FIRST first)
+
+# Block of comments
+# describing the next
+# command in detail
+set(SECOND second)
+
+# ----------------------------------------------------------------------------
+# Bracket Comments
+# ----------------------------------------------------------------------------
+# Bracket comment on single line
+#[[bracket comment]]
+# Bracket comment spanning multiple lines
+#[=[
+Multi-line bracket comment
+with ]] inside
+]=]
+# Bracket comment between commands
+set(A a)
+
+#[[inline bracket comment]]
+set(B b)
+
+# Nested bracket markers (but bracket comments don't nest - matched by = count)
+#[==[
+This has ]=] inside but won't close until =
+]==]
+# ----------------------------------------------------------------------------
+# EOF Comment Test (CRITICAL: file ends here with no trailing newline)
+# ----------------------------------------------------------------------------
+set(LAST_COMMAND value)
+# This comment is at EOF with no newline
