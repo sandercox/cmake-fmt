@@ -30,6 +30,14 @@ fn render_doc(doc: RcDoc<'static, ()>, config: &FormatConfig) -> String {
     let result = String::from_utf8(output)
         .expect("formatted output should be valid UTF-8");
 
+    // Strip trailing whitespace from each line (the pretty crate can produce
+    // indentation on otherwise-blank lines when nest() wraps line() breaks)
+    let result: String = result
+        .lines()
+        .map(|line| line.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n");
+
     // Trim the result and ensure proper ending
     let trimmed = result.trim();
 

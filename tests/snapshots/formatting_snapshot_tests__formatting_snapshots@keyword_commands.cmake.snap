@@ -43,7 +43,7 @@ target_sources(
 )
 add_library(mylib STATIC src/core.cpp src/utils.cpp src/parser.cpp)
 install(
-  
+
   TARGETS
     mylib
   ARCHIVE
