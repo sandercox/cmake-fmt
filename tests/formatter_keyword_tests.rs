@@ -996,3 +996,63 @@ fn test_mode_commands_backward_compat() {
         assert!(result.contains(input.split('(').next().unwrap()));
     }
 }
+
+// ============================================================================
+// CUSTOM COMMAND FORMATTING TESTS
+// ============================================================================
+
+#[test]
+fn test_custom_command_fits_one_line() {
+    let input = "GenerateTestExecutionGitlabCI(OUTPUT file.yml PLATFORM Linux)";
+    let result = format_text(input, &default_config());
+    // Should stay on one line when it fits
+    assert_eq!(result, "GenerateTestExecutionGitlabCI(OUTPUT file.yml PLATFORM Linux)\n");
+}
+
+#[test]
+fn test_custom_command_breaks_all_args() {
+    let input = "GenerateTestExecutionGitlabCI(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/run-ci-tests.yml PLATFORM ${CI_PLATFORM} ${CI_ARCHITECTURE})";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // Should break with ALL args on new lines (no args on opening line)
+    assert!(result.contains("GenerateTestExecutionGitlabCI(\n"));
+    assert!(result.contains("\tOUTPUT\n"));
+    assert!(result.contains("\t${CMAKE_CURRENT_SOURCE_DIR}/run-ci-tests.yml\n"));
+    assert!(result.contains("\tPLATFORM\n"));
+    assert!(result.contains("\t${CI_PLATFORM}\n"));
+    assert!(result.contains("\t${CI_ARCHITECTURE}\n"));
+    assert!(result.ends_with(")\n"));
+    // Should NOT have args on same line as command name
+    assert!(!result.contains("GenerateTestExecutionGitlabCI(OUTPUT"));
+}
+
+#[test]
+fn test_custom_function_short_args() {
+    let input = "my_custom_function(arg1 arg2 arg3)";
+    let result = format_text(input, &default_config());
+    // Short custom command stays on one line
+    assert_eq!(result, "my_custom_function(arg1 arg2 arg3)\n");
+}
+
+#[test]
+fn test_custom_macro_long_args() {
+    let input = "my_custom_macro(very_long_argument_name_one very_long_argument_name_two very_long_argument_name_three very_long_argument_name_four)";
+    let result = format_text(input, &default_config());
+    // Long custom command breaks with all args indented
+    assert!(result.contains("my_custom_macro(\n"));
+    assert!(result.contains("\tvery_long_argument_name_one\n"));
+    assert!(result.contains("\tvery_long_argument_name_two\n"));
+    assert!(result.contains("\tvery_long_argument_name_three\n"));
+    assert!(result.contains("\tvery_long_argument_name_four\n"));
+}
+
+#[test]
+fn test_builtin_command_keeps_first_arg_inline() {
+    let input = "set(MY_VARIABLE value1 value2 value3 value4 value5 value6 value7 value8 value9 value10)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // Builtin command should keep first arg on same line when breaking (current behavior)
+    assert!(result.contains("set(MY_VARIABLE"));
+    // But not all on one line (too long)
+    assert!(result.contains("\n\t"));
+}
