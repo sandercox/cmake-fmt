@@ -307,8 +307,16 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'
                             docs.push(RcDoc::text(format!("{}{}", indent_str, comment_text)));
                             docs.push(RcDoc::hardline());
                             blank_line_count = 0;
+                        } else {
+                            // Handled comment (leading/trailing of a command): it occupies
+                            // a line, so its structural newlines shouldn't count as blank
+                            // lines. Reset to 0 only if no blank line was already detected;
+                            // if blank_line_count >= 2, a real blank line preceded this
+                            // comment block and should be preserved.
+                            if blank_line_count < 2 {
+                                blank_line_count = 0;
+                            }
                         }
-                        // Don't reset blank_line_count for handled comments - they're part of leading comments
                     }
                     SyntaxKind::NEWLINE => {
                         blank_line_count += 1;

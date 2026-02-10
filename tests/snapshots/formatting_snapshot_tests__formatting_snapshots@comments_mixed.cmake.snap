@@ -15,11 +15,9 @@ set(OTHER_VAR other) # another trailing
 
 # Before if block
 if(WIN32)
-
 	# Inside if block
 	set(A b)
 else() # trailing on else
-
 	# Inside else block
 	set(C d)
 endif() # end comment

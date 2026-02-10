@@ -47,7 +47,6 @@ message(hello) # attached comment
 # ----------------------------------------------------------------------------
 # Comment on blank line between commands
 set(A a)
-
 # standalone comment
 set(B b)
 
@@ -71,7 +70,6 @@ with ]] inside
 ]=]
 # Bracket comment between commands
 set(A a)
-
 #[[inline bracket comment]]
 set(B b)
 
