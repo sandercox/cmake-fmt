@@ -1077,3 +1077,76 @@ fn test_builtin_command_keeps_first_arg_inline() {
     // But not all on one line (too long)
     assert!(result.contains("\n\t"));
 }
+
+// ============================================================================
+// KWFMT-02 BEHAVIOR TESTS
+// ============================================================================
+
+#[test]
+fn test_keyword_break_values_per_line() {
+    // KWFMT-02: When keyword commands auto-break, values appear one-per-line
+    let input = "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 PRIVATE lib6 lib7 lib8 lib9)";
+    let result = format_text(input, &default_config());
+
+    // Verify keywords are on their own line
+    assert!(result.contains("\tPUBLIC\n"));
+    assert!(result.contains("\tPRIVATE\n"));
+
+    // Verify values are one-per-line underneath at deeper indent
+    assert!(result.contains("\t\tlib1\n"));
+    assert!(result.contains("\t\tlib2\n"));
+    assert!(result.contains("\t\tlib5\n"));
+    assert!(result.contains("\t\tlib6\n"));
+    assert!(result.contains("\t\tlib9\n"));
+
+    // Verify idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "KWFMT-02 formatting must be idempotent");
+}
+
+// ============================================================================
+// PAIR VALUE KEYWORD TESTS (KWFMT-03)
+// ============================================================================
+
+#[test]
+fn test_set_source_files_properties_short() {
+    let input = "set_source_files_properties(f.cpp PROPERTIES GENERATED TRUE)";
+    let result = format_text(input, &default_config());
+    // Short enough to stay on one line
+    assert_eq!(result, "set_source_files_properties(f.cpp PROPERTIES GENERATED TRUE)\n");
+}
+
+#[test]
+fn test_set_source_files_properties_pairs() {
+    let input = "set_source_files_properties(file1.cpp file2.cpp PROPERTIES COMPILE_FLAGS \"-O2\" HEADER_FILE_ONLY TRUE GENERATED TRUE)";
+    let result = format_text(input, &default_config());
+    // Should break with PROPERTIES pairs
+    assert!(result.contains("\tPROPERTIES\n"));
+    assert!(result.contains("\t\tCOMPILE_FLAGS \"-O2\"\n"));
+    assert!(result.contains("\t\tHEADER_FILE_ONLY TRUE\n"));
+    assert!(result.contains("\t\tGENERATED TRUE\n"));
+}
+
+#[test]
+fn test_set_target_properties_pairs() {
+    let input = "set_target_properties(mylib PROPERTIES VERSION 1.0 SOVERSION 1 OUTPUT_NAME \"mylib\")";
+    let result = format_text(input, &default_config());
+    // Should break with PROPERTIES pairs
+    assert!(result.contains("\tPROPERTIES\n"));
+    assert!(result.contains("\t\tVERSION 1.0\n"));
+    assert!(result.contains("\t\tSOVERSION 1\n"));
+    assert!(result.contains("\t\tOUTPUT_NAME \"mylib\"\n"));
+}
+
+#[test]
+fn test_set_source_files_properties_idempotency() {
+    let inputs = vec![
+        "set_source_files_properties(file1.cpp PROPERTIES COMPILE_FLAGS \"-O2\" HEADER_FILE_ONLY TRUE)",
+        "set_target_properties(mylib PROPERTIES VERSION 1.0 SOVERSION 1)",
+    ];
+    for input in inputs {
+        let pass1 = format_text(input, &default_config());
+        let pass2 = format_text(&pass1, &default_config());
+        assert_eq!(pass1, pass2, "Idempotency failed for: {}", input);
+    }
+}

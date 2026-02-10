@@ -404,6 +404,76 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(section.args[0].clone()));
                 }
 
+                // PairValue keywords: format as key-value pairs
+                Some(KeywordType::PairValue) => {
+                    // Add separator before the keyword
+                    if is_first_arg {
+                        is_first_arg = false;
+                        // First keyword in command: drop to next line when multiline
+                        if signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.clone()));
+                        } else {
+                            docs.push(RcDoc::flat_alt(
+                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                                RcDoc::nil(),
+                            ));
+                        }
+                    } else if signals.force_multiline {
+                        docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(keyword_indent.clone()));
+                    } else {
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                            RcDoc::space(),
+                        ));
+                    }
+                    docs.push(RcDoc::text(keyword.clone()));
+
+                    // Format values as key-value pairs
+                    if !section.args.is_empty() {
+                        let pairs: Vec<_> = section.args.chunks(2).collect();
+                        let use_per_line = section.values_on_new_line
+                            || !section.comments.is_empty()
+                            || !section.blank_lines.is_empty();
+
+                        if use_per_line || signals.force_multiline {
+                            // Per-line pairs
+                            for chunk in pairs {
+                                if signals.force_multiline {
+                                    docs.push(RcDoc::hardline());
+                                    docs.push(RcDoc::text(value_indent.clone()));
+                                } else {
+                                    docs.push(RcDoc::flat_alt(
+                                        RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                        RcDoc::space(),
+                                    ));
+                                }
+                                // key
+                                docs.push(RcDoc::text(chunk[0].clone()));
+                                // value (if present — odd number of args means last key has no value)
+                                if chunk.len() > 1 {
+                                    docs.push(RcDoc::space());
+                                    docs.push(RcDoc::text(chunk[1].clone()));
+                                }
+                            }
+                        } else {
+                            // Auto-layout: flat_alt pairs inherit from outer group
+                            for chunk in pairs {
+                                docs.push(RcDoc::flat_alt(
+                                    RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                    RcDoc::space(),
+                                ));
+                                docs.push(RcDoc::text(chunk[0].clone()));
+                                if chunk.len() > 1 {
+                                    docs.push(RcDoc::space());
+                                    docs.push(RcDoc::text(chunk[1].clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // MultiValue or SingleValue with >1 arg in force_multiline mode: vertical layout
                 _ => {
                     // Standard vertical keyword formatting

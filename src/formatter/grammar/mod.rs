@@ -16,6 +16,9 @@ pub enum KeywordType {
     SingleValue,
     /// Multi-value keyword (consumes multiple values, e.g., COMPONENTS, TARGETS)
     MultiValue,
+    /// Pair-value keyword: consumes alternating key/value pairs
+    /// e.g., PROPERTIES prop1 value1 prop2 value2
+    PairValue,
 }
 
 /// Grammar definition for a CMake command

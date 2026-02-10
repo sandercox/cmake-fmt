@@ -337,7 +337,17 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
 
     // set_target_properties
     grammar!("set_target_properties",
-        "PROPERTIES" => MultiValue,
+        "PROPERTIES" => PairValue,
+    );
+
+    // set_source_files_properties
+    grammar!("set_source_files_properties",
+        "PROPERTIES" => PairValue,
+    );
+
+    // set_tests_properties
+    grammar!("set_tests_properties",
+        "PROPERTIES" => PairValue,
     );
 
     // add_test
@@ -604,6 +614,18 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
             ("NO_SOURCE_PERMISSIONS", Flag),
             ("FILE_PERMISSIONS", MultiValue),
             ("ESCAPE_QUOTES", Flag),
+        ]));
+
+        modes.insert("GENERATE".to_string(), CommandGrammar::from_keywords(&[
+            ("GENERATE", Flag),
+            ("OUTPUT", SingleValue),
+            ("INPUT", SingleValue),
+            ("CONTENT", SingleValue),
+            ("CONDITION", SingleValue),
+            ("TARGET", SingleValue),
+            ("NEWLINE_STYLE", SingleValue),
+            ("NO_SOURCE_PERMISSIONS", Flag),
+            ("FILE_PERMISSIONS", MultiValue),
         ]));
 
         grammars.insert("file".to_string(), Grammar::Modes { modes });
