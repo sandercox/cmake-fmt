@@ -89,11 +89,18 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         "REUSE_FROM" => SingleValue,
     );
 
-    // add_library - REMOVED: type keywords (STATIC/SHARED/MODULE) are positional, not section keywords
-    // Falls back to simple formatting which was working correctly
+    // add_library
+    grammar!("add_library",
+        "STATIC" => Flag, "SHARED" => Flag, "MODULE" => Flag,
+        "OBJECT" => Flag, "INTERFACE" => Flag, "IMPORTED" => Flag,
+        "ALIAS" => Flag, "EXCLUDE_FROM_ALL" => Flag,
+    );
 
-    // add_executable - REMOVED: type keywords (WIN32/MACOSX_BUNDLE) are positional, not section keywords
-    // Falls back to simple formatting which was working correctly
+    // add_executable
+    grammar!("add_executable",
+        "WIN32" => Flag, "MACOSX_BUNDLE" => Flag,
+        "EXCLUDE_FROM_ALL" => Flag, "IMPORTED" => Flag, "ALIAS" => Flag,
+    );
 
     // find_package
     grammar!("find_package",
@@ -272,6 +279,29 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         "JOB_POOL" => SingleValue,
         "ALL" => Flag,
         "BYPRODUCTS" => MultiValue,
+    );
+
+    // execute_process
+    grammar!("execute_process",
+        "COMMAND" => MultiValue,
+        "WORKING_DIRECTORY" => SingleValue,
+        "TIMEOUT" => SingleValue,
+        "RESULT_VARIABLE" => SingleValue,
+        "RESULTS_VARIABLE" => SingleValue,
+        "OUTPUT_VARIABLE" => SingleValue,
+        "ERROR_VARIABLE" => SingleValue,
+        "INPUT_FILE" => SingleValue,
+        "OUTPUT_FILE" => SingleValue,
+        "ERROR_FILE" => SingleValue,
+        "OUTPUT_STRIP_TRAILING_WHITESPACE" => Flag,
+        "ERROR_STRIP_TRAILING_WHITESPACE" => Flag,
+        "OUTPUT_QUIET" => Flag,
+        "ERROR_QUIET" => Flag,
+        "ECHO_OUTPUT_VARIABLE" => Flag,
+        "ECHO_ERROR_VARIABLE" => Flag,
+        "COMMAND_ECHO" => SingleValue,
+        "ENCODING" => SingleValue,
+        "COMMAND_ERROR_IS_FATAL" => SingleValue,
     );
 
     // set_property

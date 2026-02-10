@@ -17,10 +17,7 @@ input_file: tests/format_fixtures/generator_expr_edge_cases.cmake
 set(FLAGS $<$<CONFIG:Debug>:-g>)
 
 # Double nested with AND (depth=3)
-target_compile_options(app
-	PRIVATE
-		$<$<AND:$<BOOL:${VAR}>,$<CONFIG:Debug>>:-g>
-)
+target_compile_options(app PRIVATE $<$<AND:$<BOOL:${VAR}>,$<CONFIG:Debug>>:-g>)
 
 # Triple nested with OR (depth=4)
 set(COMPLEX_FLAGS

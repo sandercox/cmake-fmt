@@ -69,15 +69,20 @@ pub fn apply_decisions(original: &str, decisions: &[(DiffHunk, UserChoice)]) -> 
                     String::new()
                 };
 
-                // Insert "# cmake-fmt: off" before the region
-                lines.insert(start, format!("{}# cmake-fmt: off", indent));
-                offset += 1;
-
-                // Insert "# cmake-fmt: on" after the region
-                let end_pos = start + 1 + hunk.old_count;
-                if end_pos <= lines.len() {
-                    lines.insert(end_pos, format!("{}# cmake-fmt: on", indent));
+                if hunk.old_count == 1 {
+                    // Single line: use skip directive
+                    lines.insert(start, format!("{}# cmake-fmt: skip", indent));
                     offset += 1;
+                } else {
+                    // Multiple lines: use off/on pair
+                    lines.insert(start, format!("{}# cmake-fmt: off", indent));
+                    offset += 1;
+
+                    let end_pos = start + 1 + hunk.old_count;
+                    if end_pos <= lines.len() {
+                        lines.insert(end_pos, format!("{}# cmake-fmt: on", indent));
+                        offset += 1;
+                    }
                 }
             }
             UserChoice::Reject | UserChoice::Quit | UserChoice::Help => {

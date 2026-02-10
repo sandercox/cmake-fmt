@@ -96,8 +96,8 @@ fn test_case_mixed_commands() {
         ..default_config()
     };
     let result = format_text(input, &config);
-    // find_package formats vertically as it's keyword-aware
-    assert_eq!(result, "set(A b)\nmessage(C d)\nfind_package(E\n)\n");
+    // find_package with single arg fits on one line
+    assert_eq!(result, "set(A b)\nmessage(C d)\nfind_package(E)\n");
 }
 
 #[test]
@@ -109,8 +109,8 @@ fn test_case_only_affects_command_names() {
     };
     let result = format_text(input, &config);
     // PUBLIC should NOT be uppercased, only the command name
-    // Command formats vertically for consistency
-    assert_eq!(result, "TARGET_LINK_LIBRARIES(myapp\n\tPUBLIC\n\t\tfmt\n)\n");
+    // Short command fits on one line
+    assert_eq!(result, "TARGET_LINK_LIBRARIES(myapp PUBLIC fmt)\n");
 }
 
 // ============================================================================

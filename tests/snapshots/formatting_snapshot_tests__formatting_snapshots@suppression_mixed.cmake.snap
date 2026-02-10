@@ -3,10 +3,8 @@ source: tests/formatting_snapshot_tests.rs
 expression: output
 input_file: tests/format_fixtures/suppression_mixed.cmake
 ---
-cmake_minimum_required(VERSION 3.14
-)
-project(TestProject
-)
+cmake_minimum_required(VERSION 3.14)
+project(TestProject)
 
 # Normal section
 set(A value)

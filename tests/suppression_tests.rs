@@ -142,10 +142,10 @@ target_link_libraries(  formatted    PUBLIC   baz  )
     assert!(output.contains("target_link_libraries(  mylib    PUBLIC   foo   bar  )"),
         "Skipped keyword command should preserve original formatting");
 
-    // Next keyword command should be formatted (with grammar-driven vertical layout)
+    // Next keyword command should be formatted (short command fits on one line)
     assert!(!output.contains("target_link_libraries(  formatted    PUBLIC   baz  )"),
         "Non-skipped keyword command should not preserve ugly formatting");
-    assert!(output.contains("target_link_libraries(formatted\n\tPUBLIC\n\t\tbaz\n)"),
+    assert!(output.contains("target_link_libraries(formatted PUBLIC baz)"),
         "Non-skipped keyword command should be formatted normally");
 }
 

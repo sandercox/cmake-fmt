@@ -3,8 +3,7 @@ source: tests/formatting_snapshot_tests.rs
 expression: output
 input_file: tests/format_fixtures/suppression_block.cmake
 ---
-cmake_minimum_required(VERSION 3.14
-)
+cmake_minimum_required(VERSION 3.14)
 
 set(FORMATTED_VAR value)
 

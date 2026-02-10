@@ -193,7 +193,14 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'
                             // Emit the command itself as raw text
                             let raw_text = child_node.text().to_string();
                             let indent_str = indent_string(current_indent, ctx.config);
-                            docs.push(RcDoc::text(format!("{}{}", indent_str, raw_text.trim())));
+                            let mut raw_doc = RcDoc::text(format!("{}{}", indent_str, raw_text.trim()));
+
+                            // Preserve trailing comment (not part of command node)
+                            if let Some(trailing_comment) = comments::extract_trailing_comment(&child_node) {
+                                raw_doc = raw_doc.append(RcDoc::space()).append(RcDoc::text(trailing_comment));
+                            }
+
+                            docs.push(raw_doc);
                             docs.push(RcDoc::hardline());
                             blank_line_count = 0;
                             continue;

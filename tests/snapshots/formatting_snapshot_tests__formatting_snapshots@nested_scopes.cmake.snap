@@ -3,19 +3,14 @@ source: tests/formatting_snapshot_tests.rs
 expression: output
 input_file: tests/format_fixtures/nested_scopes.cmake
 ---
-cmake_minimum_required(VERSION 3.20
-)
-project(Nested
-)
+cmake_minimum_required(VERSION 3.20)
+project(Nested)
 
 if(WIN32)
 	set(PLATFORM windows)
 	if(MSVC)
 		set(COMPILER msvc)
-		target_compile_options(myapp
-			PRIVATE
-				/W4
-		)
+		target_compile_options(myapp PRIVATE /W4)
 	else()
 		set(COMPILER other)
 	endif()

@@ -18,8 +18,7 @@ target_include_directories(mylib
 		${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_compile_definitions(myapp
-	PRIVATE
-		$<$<BOOL:${ENABLE_FEATURE}>:FEATURE_ENABLED>
+	PRIVATE $<$<BOOL:${ENABLE_FEATURE}>:FEATURE_ENABLED>
 )
 set(FLAGS
 	$<$<AND:$<BOOL:${VAR}>,$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>>:-g>

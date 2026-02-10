@@ -4,38 +4,24 @@ expression: output
 input_file: tests/format_fixtures/keyword_commands.cmake
 ---
 target_link_libraries(myapp
-	PUBLIC
-		fmt::fmt
-		spdlog::spdlog
-	PRIVATE
-		Threads::Threads
-		Boost::filesystem
+	PUBLIC fmt::fmt spdlog::spdlog
+	PRIVATE Threads::Threads Boost::filesystem
 )
 target_include_directories(mylib
-	PUBLIC
-		${CMAKE_CURRENT_SOURCE_DIR}/include
-		${CMAKE_CURRENT_SOURCE_DIR}/include2
-	PRIVATE
-		${CMAKE_CURRENT_SOURCE_DIR}/src
+	PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/include2
+	PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_compile_definitions(myapp
-	PRIVATE
-		$<$<CONFIG:Debug>:DEBUG_MODE>
-	PUBLIC
-		VERSION="${PROJECT_VERSION}"
+	PRIVATE $<$<CONFIG:Debug>:DEBUG_MODE>
+	PUBLIC VERSION="${PROJECT_VERSION}"
 )
 target_sources(mylib
-	PRIVATE
-		src/a.cpp
-		src/b.cpp
-		src/c.cpp
-	PUBLIC
-		include/mylib/header.h
-		include/mylib/types.h
+	PRIVATE src/a.cpp src/b.cpp src/c.cpp
+	PUBLIC include/mylib/header.h include/mylib/types.h
 )
 add_library(mylib STATIC src/core.cpp src/utils.cpp src/parser.cpp)
-install(TARGETS
-		mylib
+install(
+	TARGETS mylib
 	ARCHIVE
 	DESTINATION lib
 	LIBRARY
@@ -43,7 +29,4 @@ install(TARGETS
 	RUNTIME
 	DESTINATION bin
 )
-target_link_libraries(small
-	PRIVATE
-		lib1
-)
+target_link_libraries(small PRIVATE lib1)

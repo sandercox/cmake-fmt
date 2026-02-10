@@ -121,9 +121,8 @@ fn test_apply_suppress() {
     let decisions = vec![(hunks[0].clone(), UserChoice::Suppress)];
     let result = apply_decisions(original, &decisions);
 
-    // Should have original line wrapped with suppression markers
-    assert!(result.contains("# cmake-fmt: off"), "Should contain off marker");
-    assert!(result.contains("# cmake-fmt: on"), "Should contain on marker");
+    // Single-line hunk uses skip directive instead of off/on pair
+    assert!(result.contains("# cmake-fmt: skip"), "Should contain skip marker");
     assert!(result.contains("set(FOO   bar)"), "Should preserve original line");
 }
 
@@ -165,9 +164,8 @@ fn test_apply_suppress_preserves_indent() {
     let decisions = vec![(hunks[0].clone(), UserChoice::Suppress)];
     let result = apply_decisions(original, &decisions);
 
-    // Suppression markers should match indentation
-    assert!(result.contains("    # cmake-fmt: off"), "Off marker should be indented");
-    assert!(result.contains("    # cmake-fmt: on"), "On marker should be indented");
+    // Single-line hunk: skip marker should match indentation
+    assert!(result.contains("    # cmake-fmt: skip"), "Skip marker should be indented");
 }
 
 #[test]

@@ -13,19 +13,17 @@ fn test_target_link_libraries_keywords() {
     let input = "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 PRIVATE lib6 lib7 lib8)";
     let result = format_text(input, &default_config());
     // Should break because line is too long
-    assert!(result.contains("PUBLIC\n"));
-    assert!(result.contains("PRIVATE\n"));
-    // Check indentation: keyword at 1 level (tab), values at 2 levels (2 tabs)
-    assert!(result.contains("\tPUBLIC\n"));
-    assert!(result.contains("\t\tlib1\n"));
+    // Values inline with keywords when they fit (sub-group flat-first)
+    assert!(result.contains("\tPUBLIC lib1 lib2 lib3 lib4 lib5\n"));
+    assert!(result.contains("\tPRIVATE lib6 lib7 lib8\n"));
 }
 
 #[test]
 fn test_target_link_libraries_short_fits_one_line() {
     let input = "target_link_libraries(myapp PRIVATE lib1)";
     let result = format_text(input, &default_config());
-    // With grammar-driven formatting, keyword-aware commands always format vertically for idempotency
-    assert_eq!(result, "target_link_libraries(myapp\n\tPRIVATE\n\t\tlib1\n)\n");
+    // Short command fits on one line — flat rendering
+    assert_eq!(result, "target_link_libraries(myapp PRIVATE lib1)\n");
 }
 
 #[test]
@@ -44,17 +42,18 @@ fn test_target_include_directories_keywords() {
 fn test_target_sources_keywords() {
     let input = "target_sources(mylib PRIVATE src/a.cpp src/b.cpp src/c.cpp src/d.cpp PUBLIC include/header.h)";
     let result = format_text(input, &default_config());
-    // Should break
-    assert!(result.contains("PRIVATE\n"));
-    assert!(result.contains("PUBLIC\n"));
+    // Should break with values inline with keywords when they fit
+    assert!(result.contains("\tPRIVATE src/a.cpp src/b.cpp src/c.cpp src/d.cpp\n"));
+    assert!(result.contains("\tPUBLIC include/header.h\n"));
 }
 
 #[test]
 fn test_add_library_keyword() {
     let input = "add_library(mylib STATIC src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp src/f.cpp src/g.cpp)";
     let result = format_text(input, &default_config());
-    // Should break
-    assert!(result.contains("STATIC\n"));
+    // STATIC groups with target name on first line, sources break to separate lines
+    assert!(result.contains("mylib STATIC\n"));
+    assert!(result.contains("\tsrc/a.cpp\n"));
 }
 
 #[test]
@@ -70,11 +69,12 @@ fn test_install_keywords() {
     let input = "install(TARGETS mylib ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)";
     let result = format_text(input, &default_config());
     // Should break due to length
-    assert!(result.contains("TARGETS\n"));
+    // TARGETS has short value inline with keyword
+    assert!(result.contains("TARGETS mylib\n"));
     assert!(result.contains("ARCHIVE\n"));
     // DESTINATION is SingleValue, so it keeps value inline: "DESTINATION lib"
-    assert!(result.contains("DESTINATION"));
-    assert!(result.contains("lib"));
+    assert!(result.contains("DESTINATION lib"));
+    assert!(result.contains("DESTINATION bin"));
 }
 
 #[test]
@@ -101,27 +101,27 @@ fn test_keyword_aware_with_generator_expr() {
     // Generator expressions should be atomic (never break internally)
     assert!(result.contains("$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"));
     assert!(result.contains("$<INSTALL_INTERFACE:include>"));
-    // Should break due to length
+    // PUBLIC breaks because genexprs are long; PRIVATE has single value inline
     assert!(result.contains("PUBLIC\n"));
-    assert!(result.contains("PRIVATE\n"));
+    assert!(result.contains("PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src\n"));
 }
 
 #[test]
 fn test_target_compile_options_keywords() {
     let input = "target_compile_options(mylib PRIVATE -Wall -Wextra -Wpedantic -Werror PUBLIC -fPIC)";
     let result = format_text(input, &default_config());
-    // Should break
-    assert!(result.contains("PRIVATE\n"));
-    assert!(result.contains("PUBLIC\n"));
+    // Should break with values inline with keywords when they fit
+    assert!(result.contains("\tPRIVATE -Wall -Wextra -Wpedantic -Werror\n"));
+    assert!(result.contains("\tPUBLIC -fPIC\n"));
 }
 
 #[test]
 fn test_target_compile_definitions_keywords() {
     let input = "target_compile_definitions(mylib PUBLIC MY_LIB_VERSION=1 MY_LIB_DEBUG PRIVATE INTERNAL_BUILD)";
     let result = format_text(input, &default_config());
-    // Should break
-    assert!(result.contains("PUBLIC\n"));
-    assert!(result.contains("PRIVATE\n"));
+    // Should break with values inline with keywords when they fit
+    assert!(result.contains("\tPUBLIC MY_LIB_VERSION=1 MY_LIB_DEBUG\n"));
+    assert!(result.contains("\tPRIVATE INTERNAL_BUILD\n"));
 }
 
 // ============================================================================
@@ -203,11 +203,11 @@ fn test_blank_line_between_sections() {
     let input = "cmake_minimum_required(VERSION 3.20)\n\nadd_library(mylib src/a.cpp)\n";
     let result = format_text(input, &default_config());
     // Should preserve blank line between sections
-    // cmake_minimum_required formats vertically now, so: command-line1, command-line2, blank, add_library-line
+    // Both commands are short and stay single-line: cmake_min_req, blank, add_library
     let lines: Vec<&str> = result.lines().collect();
-    assert_eq!(lines.len(), 4);
+    assert_eq!(lines.len(), 3);
     // Verify blank line is preserved
-    assert_eq!(lines[2], "");
+    assert_eq!(lines[1], "");
 }
 
 #[test]
@@ -275,9 +275,8 @@ fn test_keyword_aware_with_comment_inside_if() {
     let result = format_text(input, &default_config());
     // Comment should be indented at if-block level
     assert!(result.contains("\t# Windows-specific libraries\n"));
-    // Command formats vertically for consistency
-    assert!(result.contains("\ttarget_link_libraries(myapp\n"));
-    assert!(result.contains("\t\tPRIVATE\n"));
+    // Short command fits on one line (inside if block, indented)
+    assert!(result.contains("\ttarget_link_libraries(myapp PRIVATE kernel32 user32)\n"));
 }
 
 #[test]
@@ -335,17 +334,10 @@ fn test_interface_keyword() {
 fn test_mixed_keywords_proper_indentation() {
     let input = "target_link_libraries(myapp PUBLIC lib1 lib2 PRIVATE lib3 lib4 INTERFACE lib5 lib6)";
     let result = format_text(input, &default_config());
-    // Should break with all three keyword sections
-    assert!(result.contains("PUBLIC\n"));
-    assert!(result.contains("PRIVATE\n"));
-    assert!(result.contains("INTERFACE\n"));
-    // Verify indentation levels: keywords at 1 tab, values at 2 tabs
-    assert!(result.contains("\tPUBLIC\n"));
-    assert!(result.contains("\tPRIVATE\n"));
-    assert!(result.contains("\tINTERFACE\n"));
-    assert!(result.contains("\t\tlib1\n"));
-    assert!(result.contains("\t\tlib3\n"));
-    assert!(result.contains("\t\tlib5\n"));
+    // Should break with all three keyword sections, values inline with keywords
+    assert!(result.contains("\tPUBLIC lib1 lib2\n"));
+    assert!(result.contains("\tPRIVATE lib3 lib4\n"));
+    assert!(result.contains("\tINTERFACE lib5 lib6\n"));
 }
 
 #[test]
@@ -417,8 +409,7 @@ fn test_keyword_arglist_multiline_stays_multiline() {
     let input = "target_link_libraries(myapp\n  PRIVATE\n    lib1\n)\n";
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
-    // Even though this is short enough to fit on one line,
-    // user chose multiline, so it should stay multiline
+    // User chose multiline, so values stay on separate lines
     assert!(result.contains("PRIVATE\n"));
     assert!(result.contains("lib1\n"));
     // Should NOT be collapsed to: target_link_libraries(myapp PRIVATE lib1)
@@ -481,8 +472,8 @@ fn test_flag_grouping_find_package() {
     let input = "find_package(Boost\n    REQUIRED\n    QUIET\n    CONFIG\n    COMPONENTS\n        filesystem\n        system\n)";
     let result = format_text(input, &default_config());
     // Flags should group together
-    assert!(result.contains("REQUIRED") && result.contains("QUIET"));
-    // COMPONENTS should be on its own line with values below
+    assert!(result.contains("REQUIRED") && result.contains("QUIET") && result.contains("CONFIG"));
+    // Multiline input: COMPONENTS values stay on separate lines
     assert!(result.contains("COMPONENTS\n"));
 }
 
@@ -490,28 +481,26 @@ fn test_flag_grouping_find_package() {
 fn test_flag_grouping_short_fits_one_line() {
     let input = "find_package(Boost REQUIRED QUIET)";
     let result = format_text(input, &default_config());
-    // Flags group inline, but command formats vertically for consistency
-    assert_eq!(result, "find_package(Boost\n\tREQUIRED QUIET\n)\n");
+    // Short command with flags fits on one line — flat rendering
+    assert_eq!(result, "find_package(Boost REQUIRED QUIET)\n");
 }
 
 #[test]
 fn test_single_value_inline_short() {
-    // DESTINATION is SingleValue so stays inline, TARGETS is MultiValue so breaks vertically
+    // Short command fits on one line — flat rendering
     let input = "install(TARGETS mylib DESTINATION lib)";
     let result = format_text(input, &default_config());
-    assert_eq!(result, "install(TARGETS\n\t\tmylib\n\tDESTINATION lib\n)\n");
+    assert_eq!(result, "install(TARGETS mylib DESTINATION lib)\n");
 }
 
 #[test]
 fn test_multi_value_one_per_line() {
     let input = "target_sources(mylib PRIVATE src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp src/f.cpp src/g.cpp)";
     let result = format_text(input, &default_config());
-    // Should break with each source on its own line
-    assert!(result.contains("PRIVATE\n"));
-    // Count that source files are on separate lines
-    let lines: Vec<&str> = result.lines().collect();
-    let source_lines = lines.iter().filter(|l| l.trim().ends_with(".cpp")).count();
-    assert!(source_lines >= 5, "Expected 5+ source files on separate lines, got {}", source_lines);
+    // Short value list fits inline with keyword (sub-group flat-first)
+    assert!(result.contains("\tPRIVATE src/a.cpp src/b.cpp"));
+    // All source files should be present
+    assert!(result.contains("src/g.cpp"));
 }
 
 #[test]
@@ -554,9 +543,8 @@ fn test_force_break_keywords_false_short_stays_inline() {
     let config = default_config(); // force_break_keywords = false by default
     let input = "find_package(Boost REQUIRED)";
     let result = format_text(input, &config);
-    // With grammar-driven formatting, keyword-aware commands always format consistently
-    // for idempotency, regardless of force_break_keywords config
-    assert_eq!(result, "find_package(Boost\n\tREQUIRED\n)\n");
+    // Short command fits on one line — flat rendering
+    assert_eq!(result, "find_package(Boost REQUIRED)\n");
 }
 
 #[test]
@@ -627,8 +615,8 @@ fn test_install_targets_mode_formatting() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
 
-    // Should format with TARGETS as multi-value, RUNTIME/LIBRARY/ARCHIVE as flags
-    assert!(result.contains("TARGETS\n"));
+    // Should format with TARGETS as multi-value (short value inline), RUNTIME/LIBRARY/ARCHIVE as flags
+    assert!(result.contains("TARGETS mylib\n"));
     assert!(result.contains("RUNTIME"));
     assert!(result.contains("LIBRARY"));
     assert!(result.contains("ARCHIVE"));
@@ -641,11 +629,8 @@ fn test_install_files_mode_formatting() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
 
-    // Should format with FILES as multi-value section
-    assert!(result.contains("FILES\n"));
-    assert!(result.contains("readme.txt"));
-    assert!(result.contains("license.txt"));
-    assert!(result.contains("DESTINATION"));
+    // Short command fits on one line — flat rendering
+    assert_eq!(result, "install(FILES readme.txt license.txt DESTINATION share/doc)\n");
 }
 
 #[test]
@@ -654,12 +639,8 @@ fn test_install_directory_mode_formatting() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
 
-    // Should format with DIRECTORY as multi-value, FILES_MATCHING as flag, PATTERN as single-value
-    assert!(result.contains("DIRECTORY\n"));
-    assert!(result.contains("include/"));
-    assert!(result.contains("DESTINATION"));
-    assert!(result.contains("FILES_MATCHING"));
-    assert!(result.contains("PATTERN"));
+    // Short command fits on one line — flat rendering
+    assert_eq!(result, "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")\n");
 }
 
 #[test]
