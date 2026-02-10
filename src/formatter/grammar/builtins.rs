@@ -89,26 +89,11 @@ pub fn builtin_grammars() -> HashMap<String, CommandGrammar> {
         "REUSE_FROM" => SingleValue,
     );
 
-    // add_library
-    grammar!("add_library",
-        "STATIC" => Flag,
-        "SHARED" => Flag,
-        "MODULE" => Flag,
-        "OBJECT" => Flag,
-        "IMPORTED" => Flag,
-        "INTERFACE" => Flag,
-        "ALIAS" => Flag,
-        "EXCLUDE_FROM_ALL" => Flag,
-    );
+    // add_library - REMOVED: type keywords (STATIC/SHARED/MODULE) are positional, not section keywords
+    // Falls back to simple formatting which was working correctly
 
-    // add_executable
-    grammar!("add_executable",
-        "WIN32" => Flag,
-        "MACOSX_BUNDLE" => Flag,
-        "IMPORTED" => Flag,
-        "ALIAS" => Flag,
-        "EXCLUDE_FROM_ALL" => Flag,
-    );
+    // add_executable - REMOVED: type keywords (WIN32/MACOSX_BUNDLE) are positional, not section keywords
+    // Falls back to simple formatting which was working correctly
 
     // find_package
     grammar!("find_package",

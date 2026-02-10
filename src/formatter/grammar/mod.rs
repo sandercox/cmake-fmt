@@ -41,9 +41,9 @@ impl CommandGrammar {
         Self { keywords: map }
     }
 
-    /// Get the type of a keyword (case-insensitive lookup)
+    /// Get the type of a keyword (case-sensitive lookup - CMake keywords are case-sensitive)
     pub fn keyword_type(&self, keyword: &str) -> Option<KeywordType> {
-        self.keywords.get(&keyword.to_uppercase()).copied()
+        self.keywords.get(keyword).copied()
     }
 }
 

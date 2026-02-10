@@ -5,23 +5,12 @@ use rowan::NodeOrToken;
 
 use super::config::FormatConfig;
 use super::cst_to_doc::detect_argument_formatting_signals;
+use super::grammar::{CommandGrammar, KeywordType};
 
 /// Check if a command name requires keyword-aware formatting
 pub fn is_keyword_aware_command(name: &str) -> bool {
-    matches!(
-        name.to_lowercase().as_str(),
-        "target_link_libraries"
-            | "target_sources"
-            | "target_compile_options"
-            | "target_include_directories"
-            | "target_compile_definitions"
-            | "add_library"
-            | "add_executable"
-            | "install"
-            | "set_target_properties"
-            | "set_property"
-            | "get_property"
-    )
+    use super::grammar::GrammarRegistry;
+    GrammarRegistry::global().get(&name.to_lowercase()).is_some()
 }
 
 /// Check if a text token is a CMake keyword (case-sensitive)
@@ -96,16 +85,22 @@ pub struct KeywordSection {
     pub comments: Vec<(usize, String)>,
     /// Blank line positions: indices after which a blank line appears
     pub blank_lines: Vec<usize>,
+    /// The type of the keyword (if known from grammar)
+    pub keyword_type: Option<KeywordType>,
 }
 
-/// Parse an argument list into keyword sections
-pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
+/// Parse an argument list into keyword sections with optional grammar guidance
+pub fn parse_keyword_sections_with_grammar(
+    arg_list: &ArgumentList,
+    grammar: Option<&CommandGrammar>
+) -> Vec<KeywordSection> {
     let mut sections = Vec::new();
     let mut current_section = KeywordSection {
         keyword: None,
         args: Vec::new(),
         comments: Vec::new(),
         blank_lines: Vec::new(),
+        keyword_type: None,
     };
 
     let mut consecutive_newlines = 0;
@@ -129,7 +124,18 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
                     consecutive_newlines = 0;
 
                     // Check if this argument is a keyword
-                    if is_cmake_keyword(&text) {
+                    let is_kw = if let Some(g) = grammar {
+                        // Use grammar to determine if this is a keyword
+                        g.keyword_type(&text).is_some()
+                    } else {
+                        // Fall back to hardcoded keyword check
+                        is_cmake_keyword(&text)
+                    };
+
+                    if is_kw {
+                        // Get the keyword type from grammar if available
+                        let kw_type = grammar.and_then(|g| g.keyword_type(&text));
+
                         // Start a new section
                         if !current_section.args.is_empty() || current_section.keyword.is_some() {
                             sections.push(current_section);
@@ -139,6 +145,7 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
                             args: Vec::new(),
                             comments: Vec::new(),
                             blank_lines: Vec::new(),
+                            keyword_type: kw_type,
                         };
                         saw_separator = true;
                     } else if !saw_separator && !current_section.args.is_empty() {
@@ -192,6 +199,12 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
     sections
 }
 
+/// Parse an argument list into keyword sections (backward compatibility wrapper)
+#[allow(dead_code)]
+pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
+    parse_keyword_sections_with_grammar(arg_list, None)
+}
+
 /// Format arguments for a keyword-aware command
 pub fn format_keyword_aware_args(
     arg_list: &ArgumentList,
@@ -204,7 +217,12 @@ pub fn format_keyword_aware_args(
     }
 
     // Detect formatting signals from the argument list
-    let signals = detect_argument_formatting_signals(arg_list);
+    let mut signals = detect_argument_formatting_signals(arg_list);
+
+    // Override with force_break_keywords config option
+    if config.force_break_keywords {
+        signals.force_multiline = true;
+    }
 
     // Check if we have any actual keywords (not just pre-keyword args)
     let has_keywords = sections.iter().any(|s| s.keyword.is_some());
@@ -235,29 +253,109 @@ pub fn format_keyword_aware_args(
         }
 
         if let Some(keyword) = &section.keyword {
-            // Keyword: ARGL-03 first arg stays on same line as command
-            if is_first_arg {
-                // First keyword is right after `(` — no separator
-                is_first_arg = false;
-            } else if signals.force_multiline {
-                docs.push(RcDoc::hardline());
-                docs.push(RcDoc::text(keyword_indent.clone()));
-            } else {
-                docs.push(RcDoc::flat_alt(
-                    RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
-                    RcDoc::space(),
-                ));
-            }
-            docs.push(RcDoc::text(keyword.clone()));
+            // Handle different keyword types
+            match section.keyword_type {
+                // Flag keywords: group consecutive flags together
+                Some(KeywordType::Flag) => {
+                    // Flags have no values, so section.args should be empty
+                    // Add separator before the flag keyword
+                    if is_first_arg {
+                        is_first_arg = false;
+                    } else if signals.force_multiline {
+                        // In force_multiline, start flags on new line if not grouped with previous flag
+                        if !matches!(sections.get(i.saturating_sub(1)), Some(prev) if prev.keyword_type == Some(KeywordType::Flag)) {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.clone()));
+                        } else {
+                            // Group with previous flag: just a space
+                            docs.push(RcDoc::space());
+                        }
+                    } else {
+                        // In auto-layout, flags can group or break
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                            RcDoc::space(),
+                        ));
+                    }
+                    docs.push(RcDoc::text(keyword.clone()));
+                }
 
-            // Values under the keyword with explicit indentation
-            if !section.args.is_empty() {
-                let mut comment_iter = section.comments.iter().peekable();
+                // SingleValue keywords: keep value inline when possible
+                Some(KeywordType::SingleValue) if section.args.len() == 1 && !signals.force_multiline => {
+                    // Add separator before the keyword
+                    if is_first_arg {
+                        is_first_arg = false;
+                    } else {
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                            RcDoc::space(),
+                        ));
+                    }
+                    docs.push(RcDoc::text(keyword.clone()));
+                    // Add the single value inline
+                    docs.push(RcDoc::space());
+                    docs.push(RcDoc::text(section.args[0].clone()));
+                }
 
-                for (arg_idx, arg) in section.args.iter().enumerate() {
-                    // Emit comments before this argument
-                    while let Some((pos, comment)) = comment_iter.peek() {
-                        if *pos == arg_idx {
+                // MultiValue or SingleValue in force_multiline mode: vertical layout
+                _ => {
+                    // Standard vertical keyword formatting
+                    if is_first_arg {
+                        is_first_arg = false;
+                    } else if signals.force_multiline {
+                        docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(keyword_indent.clone()));
+                    } else {
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                            RcDoc::space(),
+                        ));
+                    }
+                    docs.push(RcDoc::text(keyword.clone()));
+
+                    // Values under the keyword with explicit indentation
+                    if !section.args.is_empty() {
+                        let mut comment_iter = section.comments.iter().peekable();
+
+                        for (arg_idx, arg) in section.args.iter().enumerate() {
+                            // Emit comments before this argument
+                            while let Some((pos, comment)) = comment_iter.peek() {
+                                if *pos == arg_idx {
+                                    if signals.force_multiline {
+                                        docs.push(RcDoc::hardline());
+                                        docs.push(RcDoc::text(value_indent.clone()));
+                                    } else {
+                                        docs.push(RcDoc::flat_alt(
+                                            RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                            RcDoc::space(),
+                                        ));
+                                    }
+                                    docs.push(RcDoc::text(comment.clone()));
+                                    comment_iter.next();
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            // Check for blank line before this argument
+                            if section.blank_lines.contains(&arg_idx) && signals.force_multiline {
+                                docs.push(RcDoc::hardline());
+                            }
+
+                            if signals.force_multiline {
+                                docs.push(RcDoc::hardline());
+                                docs.push(RcDoc::text(value_indent.clone()));
+                            } else {
+                                docs.push(RcDoc::flat_alt(
+                                    RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                    RcDoc::space(),
+                                ));
+                            }
+                            docs.push(RcDoc::text(arg.clone()));
+                        }
+
+                        // Emit trailing comments (after last argument)
+                        while let Some((_, comment)) = comment_iter.next() {
                             if signals.force_multiline {
                                 docs.push(RcDoc::hardline());
                                 docs.push(RcDoc::text(value_indent.clone()));
@@ -268,41 +366,8 @@ pub fn format_keyword_aware_args(
                                 ));
                             }
                             docs.push(RcDoc::text(comment.clone()));
-                            comment_iter.next();
-                        } else {
-                            break;
                         }
                     }
-
-                    // Check for blank line before this argument
-                    if section.blank_lines.contains(&arg_idx) && signals.force_multiline {
-                        docs.push(RcDoc::hardline());
-                    }
-
-                    if signals.force_multiline {
-                        docs.push(RcDoc::hardline());
-                        docs.push(RcDoc::text(value_indent.clone()));
-                    } else {
-                        docs.push(RcDoc::flat_alt(
-                            RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
-                            RcDoc::space(),
-                        ));
-                    }
-                    docs.push(RcDoc::text(arg.clone()));
-                }
-
-                // Emit trailing comments (after last argument)
-                while let Some((_, comment)) = comment_iter.next() {
-                    if signals.force_multiline {
-                        docs.push(RcDoc::hardline());
-                        docs.push(RcDoc::text(value_indent.clone()));
-                    } else {
-                        docs.push(RcDoc::flat_alt(
-                            RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
-                            RcDoc::space(),
-                        ));
-                    }
-                    docs.push(RcDoc::text(comment.clone()));
                 }
             }
         } else {

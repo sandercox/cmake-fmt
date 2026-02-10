@@ -11,6 +11,7 @@ use super::config::{ClosingStyle, CommandCase, FormatConfig, UserCommandCase};
 use super::cmake_rules;
 use super::comments;
 use super::suppression::{parse_directive, line_number_at_offset, SuppressionTracker, SuppressionWarning};
+use super::grammar::GrammarRegistry;
 
 /// Signals detected in argument list that affect formatting
 pub(crate) struct ArgumentFormatSignals {
@@ -372,13 +373,13 @@ fn format_command(
     let name_lower = name.to_lowercase();
     let formatted_name = if builtins::is_builtin_command(&name_lower) {
         match ctx.config.command_case {
-            CommandCase::Lowercase => name_lower,
+            CommandCase::Lowercase => name_lower.clone(),
             CommandCase::Uppercase => name.to_uppercase(),
             CommandCase::Leave => name.clone(),
         }
     } else {
         match ctx.config.user_command_case {
-            UserCommandCase::Lowercase => name_lower,
+            UserCommandCase::Lowercase => name_lower.clone(),
             UserCommandCase::Uppercase => name.to_uppercase(),
             UserCommandCase::Leave => name.clone(),
             UserCommandCase::Infer => {
@@ -403,8 +404,9 @@ fn format_command(
                 ClosingStyle::Leave => {
                     // Leave mode: format normally, ignore closer_context
                     if let Some(arg_list) = cmd.argument_list() {
-                        if cmake_rules::is_keyword_aware_command(&name) {
-                            let sections = cmake_rules::parse_keyword_sections(&arg_list);
+                        let grammar = GrammarRegistry::global().get(&name_lower);
+                        if grammar.is_some() || cmake_rules::is_keyword_aware_command(&name) {
+                            let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, grammar);
                             cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
                         } else {
                             format_argument_list(&arg_list, ctx)
@@ -431,8 +433,9 @@ fn format_command(
         // Not a closer/mid-block command: format normally
         if let Some(arg_list) = cmd.argument_list() {
             // Check if this command should use keyword-aware formatting
-            if cmake_rules::is_keyword_aware_command(&name) {
-                let sections = cmake_rules::parse_keyword_sections(&arg_list);
+            let grammar = GrammarRegistry::global().get(&name_lower);
+            if grammar.is_some() || cmake_rules::is_keyword_aware_command(&name) {
+                let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, grammar);
                 cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
             } else {
                 format_argument_list(&arg_list, ctx)
