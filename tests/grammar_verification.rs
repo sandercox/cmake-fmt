@@ -3,7 +3,8 @@ use cmake_fmt::formatter::{GrammarRegistry, KeywordType, FormatConfig};
 #[test]
 fn test_target_link_libraries_grammar() {
     let registry = GrammarRegistry::global();
-    let grammar = registry.get("target_link_libraries").expect("target_link_libraries should have grammar");
+    let grammar = registry.resolve_grammar("target_link_libraries", None)
+        .expect("target_link_libraries should have grammar");
 
     assert_eq!(grammar.keyword_type("PUBLIC"), Some(KeywordType::MultiValue));
     assert_eq!(grammar.keyword_type("PRIVATE"), Some(KeywordType::MultiValue));
@@ -13,7 +14,8 @@ fn test_target_link_libraries_grammar() {
 #[test]
 fn test_find_package_grammar() {
     let registry = GrammarRegistry::global();
-    let grammar = registry.get("find_package").expect("find_package should have grammar");
+    let grammar = registry.resolve_grammar("find_package", None)
+        .expect("find_package should have grammar");
 
     assert_eq!(grammar.keyword_type("REQUIRED"), Some(KeywordType::Flag));
     assert_eq!(grammar.keyword_type("QUIET"), Some(KeywordType::Flag));

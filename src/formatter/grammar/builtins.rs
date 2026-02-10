@@ -1,10 +1,10 @@
-use super::{CommandGrammar, KeywordType};
+use super::{CommandGrammar, Grammar, KeywordType};
 use std::collections::HashMap;
 
 use KeywordType::*;
 
 /// Returns grammar definitions for all keyword-aware CMake builtin commands
-pub fn builtin_grammars() -> HashMap<String, CommandGrammar> {
+pub fn builtin_grammars() -> HashMap<String, Grammar> {
     let mut grammars = HashMap::new();
 
     // Helper macro to reduce boilerplate
@@ -13,7 +13,7 @@ pub fn builtin_grammars() -> HashMap<String, CommandGrammar> {
             let keywords = vec![
                 $(($kw, $ty),)*
             ];
-            grammars.insert($cmd.to_string(), CommandGrammar::from_keywords(&keywords));
+            grammars.insert($cmd.to_string(), Grammar::Simple(CommandGrammar::from_keywords(&keywords)));
         }};
     }
 
@@ -268,10 +268,10 @@ pub fn builtin_grammars() -> HashMap<String, CommandGrammar> {
     );
 
     // Commands with positional-only arguments (empty grammar, but recognized)
-    grammars.insert("add_dependencies".to_string(), CommandGrammar::new());
-    grammars.insert("add_compile_definitions".to_string(), CommandGrammar::new());
-    grammars.insert("add_compile_options".to_string(), CommandGrammar::new());
-    grammars.insert("add_link_options".to_string(), CommandGrammar::new());
+    grammars.insert("add_dependencies".to_string(), Grammar::Simple(CommandGrammar::new()));
+    grammars.insert("add_compile_definitions".to_string(), Grammar::Simple(CommandGrammar::new()));
+    grammars.insert("add_compile_options".to_string(), Grammar::Simple(CommandGrammar::new()));
+    grammars.insert("add_link_options".to_string(), Grammar::Simple(CommandGrammar::new()));
 
     grammars
 }

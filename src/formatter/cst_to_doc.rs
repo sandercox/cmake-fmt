@@ -404,7 +404,12 @@ fn format_command(
                 ClosingStyle::Leave => {
                     // Leave mode: format normally, ignore closer_context
                     if let Some(arg_list) = cmd.argument_list() {
-                        let grammar = GrammarRegistry::global().get(&name_lower);
+                        let grammar_enum = GrammarRegistry::global().get(&name_lower);
+                        // Resolve multi-mode grammar
+                        let first_keyword = grammar_enum.as_ref()
+                            .filter(|g| g.is_multi_mode())
+                            .and_then(|_| detect_mode_keyword(&arg_list));
+                        let grammar = grammar_enum.and_then(|g| g.resolve(first_keyword.as_deref()));
                         if grammar.is_some() || cmake_rules::is_keyword_aware_command(&name) {
                             let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, grammar);
                             cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
@@ -433,7 +438,12 @@ fn format_command(
         // Not a closer/mid-block command: format normally
         if let Some(arg_list) = cmd.argument_list() {
             // Check if this command should use keyword-aware formatting
-            let grammar = GrammarRegistry::global().get(&name_lower);
+            let grammar_enum = GrammarRegistry::global().get(&name_lower);
+            // Resolve multi-mode grammar
+            let first_keyword = grammar_enum.as_ref()
+                .filter(|g| g.is_multi_mode())
+                .and_then(|_| detect_mode_keyword(&arg_list));
+            let grammar = grammar_enum.and_then(|g| g.resolve(first_keyword.as_deref()));
             if grammar.is_some() || cmake_rules::is_keyword_aware_command(&name) {
                 let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, grammar);
                 cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
@@ -695,6 +705,37 @@ pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
         }
     }
     args
+}
+
+/// Detect the mode keyword for multi-mode commands
+/// Returns the first unquoted argument, or None if the first arg is a variable reference
+fn detect_mode_keyword(arg_list: &ArgumentList) -> Option<String> {
+    for child in arg_list.syntax().children_with_tokens() {
+        if let NodeOrToken::Token(token) = child {
+            match token.kind() {
+                SyntaxKind::UNQUOTED_ARGUMENT => {
+                    // First unquoted argument is the mode keyword
+                    return Some(token.text().to_string());
+                }
+                SyntaxKind::VARIABLE_REF
+                | SyntaxKind::ENV_VAR_REF
+                | SyntaxKind::CACHE_VAR_REF
+                | SyntaxKind::GENERATOR_EXPR => {
+                    // Variable reference in mode position - fallback to simple formatting
+                    return None;
+                }
+                SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
+                    // Skip whitespace and comments
+                    continue;
+                }
+                _ => {
+                    // Other token types (quoted args, etc.) shouldn't be mode keywords
+                    continue;
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Build an indentation string for the given level, respecting tabs/spaces config

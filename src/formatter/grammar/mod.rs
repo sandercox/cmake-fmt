@@ -19,6 +19,35 @@ pub enum KeywordType {
 
 /// Grammar definition for a CMake command
 #[derive(Debug, Clone)]
+pub enum Grammar {
+    /// Single-mode command (e.g., find_package, target_link_libraries)
+    Simple(CommandGrammar),
+    /// Multi-mode command where first keyword selects the grammar
+    /// e.g., install(TARGETS ...) vs install(FILES ...)
+    Modes {
+        modes: HashMap<String, CommandGrammar>,
+    },
+}
+
+impl Grammar {
+    /// Resolve the grammar based on the first keyword (for multi-mode commands)
+    pub fn resolve(&self, first_keyword: Option<&str>) -> Option<&CommandGrammar> {
+        match self {
+            Grammar::Simple(grammar) => Some(grammar),
+            Grammar::Modes { modes } => {
+                first_keyword.and_then(|kw| modes.get(kw))
+            }
+        }
+    }
+
+    /// Check if this is a multi-mode command
+    pub fn is_multi_mode(&self) -> bool {
+        matches!(self, Grammar::Modes { .. })
+    }
+}
+
+/// Grammar definition for a CMake command
+#[derive(Debug, Clone)]
 pub struct CommandGrammar {
     /// Map of keyword name (UPPERCASE) to its type
     pub keywords: HashMap<String, KeywordType>,

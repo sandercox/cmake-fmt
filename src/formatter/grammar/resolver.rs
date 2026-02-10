@@ -1,10 +1,10 @@
-use super::{builtin_grammars, CommandGrammar, KeywordType};
+use super::{builtin_grammars, CommandGrammar, Grammar, KeywordType};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
 /// Registry for command grammar lookup
 pub struct GrammarRegistry {
-    grammars: HashMap<String, CommandGrammar>,
+    grammars: HashMap<String, Grammar>,
 }
 
 impl GrammarRegistry {
@@ -18,15 +18,12 @@ impl GrammarRegistry {
     }
 
     /// Get the grammar for a command by name (case-insensitive)
-    pub fn get(&self, command_name: &str) -> Option<&CommandGrammar> {
+    pub fn get(&self, command_name: &str) -> Option<&Grammar> {
         self.grammars.get(&command_name.to_lowercase())
     }
 
-    /// Get the type of a keyword for a command (convenience method)
-    ///
-    /// Returns None if the command has no grammar or the keyword is not recognized
-    pub fn keyword_type(&self, command_name: &str, keyword: &str) -> Option<KeywordType> {
-        self.get(command_name)
-            .and_then(|grammar| grammar.keyword_type(keyword))
+    /// Resolve grammar to CommandGrammar based on first keyword (for multi-mode commands)
+    pub fn resolve_grammar(&self, command_name: &str, first_keyword: Option<&str>) -> Option<&CommandGrammar> {
+        self.get(command_name)?.resolve(first_keyword)
     }
 }
