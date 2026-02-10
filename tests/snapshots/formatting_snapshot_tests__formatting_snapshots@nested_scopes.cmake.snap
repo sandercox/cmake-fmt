@@ -33,7 +33,7 @@ function(my_function ARG1 ARG2)
 endfunction()
 
 macro(my_macro ARG)
-	set(${ARG} _FOUND TRUE)
+	set(${ARG}_FOUND TRUE)
 endmacro()
 
 while(CONDITION)

@@ -458,7 +458,7 @@ pub(crate) fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> Arg
 
 /// Format an argument list with intelligent line breaking
 fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'static, ()> {
-    let args: Vec<_> = arg_list.arguments().collect();
+    let args = collect_logical_args(arg_list);
 
     if args.is_empty() {
         return RcDoc::nil();
@@ -472,8 +472,7 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
     if !signals.force_multiline {
         if args.len() == 1 {
             // Single argument: simple case
-            let text = args[0].text().to_string();
-            return RcDoc::text(text);
+            return RcDoc::text(args[0].clone());
         }
 
         // Use explicit text indentation via flat_alt instead of nest()
@@ -481,17 +480,16 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
         let base_indent = indent_string(ctx.indent_level, ctx.config);
         let inner_indent = indent_string(ctx.indent_level + 1, ctx.config);
 
-        let first_text = args[0].text().to_string();
+        let first_text = args[0].clone();
         let mut rest_docs = Vec::new();
 
-        for (_i, arg) in args.iter().enumerate().skip(1) {
+        for arg in args.iter().skip(1) {
             // flat_alt: broken → newline + indent text, flat → space
             rest_docs.push(RcDoc::flat_alt(
                 RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
                 RcDoc::space(),
             ));
-            let text = arg.text().to_string();
-            rest_docs.push(RcDoc::text(text));
+            rest_docs.push(RcDoc::text(arg.clone()));
         }
 
         // Closing paren position: broken → newline + base indent, flat → nothing
@@ -519,6 +517,7 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
     let mut rest_docs = Vec::new();
     let mut consecutive_newline_count = 0;
     let mut seen_first_arg = false;
+    let mut saw_separator = true; // tracks whitespace between tokens for adjacency
 
     for child in arg_list.syntax().children_with_tokens() {
         match child {
@@ -533,7 +532,11 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
                     | SyntaxKind::GENERATOR_EXPR => {
                         let text = token.text().to_string();
 
-                        if !seen_first_arg {
+                        if !saw_separator && seen_first_arg {
+                            // Adjacent to previous token (no whitespace) — merge
+                            // e.g. ${VAR}/suffix is two tokens but one logical argument
+                            rest_docs.push(RcDoc::text(text));
+                        } else if !seen_first_arg {
                             // First argument: no indent, no break before
                             first_arg_doc = Some(RcDoc::text(text));
                             seen_first_arg = true;
@@ -553,6 +556,7 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
                             rest_docs.push(RcDoc::text(inner_indent.clone()));
                             rest_docs.push(RcDoc::text(text));
                         }
+                        saw_separator = false;
                         consecutive_newline_count = 0;
                     }
                     SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
@@ -571,22 +575,24 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
 
                         rest_docs.push(RcDoc::text(inner_indent.clone()));
                         rest_docs.push(RcDoc::text(text));
+                        saw_separator = true;
                         consecutive_newline_count = 0;
                     }
                     SyntaxKind::NEWLINE => {
+                        saw_separator = true;
                         consecutive_newline_count += 1;
                     }
                     SyntaxKind::WHITESPACE | SyntaxKind::LPAREN | SyntaxKind::RPAREN => {
-                        // Skip - whitespace is formatter's job, parens are handled by format_command
+                        saw_separator = true;
                     }
                     _ => {
-                        // Reset state for other tokens
+                        saw_separator = true;
                         consecutive_newline_count = 0;
                     }
                 }
             }
             NodeOrToken::Node(_) => {
-                // Nested nodes - skip for now
+                saw_separator = true;
                 consecutive_newline_count = 0;
             }
         }
@@ -608,6 +614,44 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
         // No arguments at all
         RcDoc::nil()
     }
+}
+
+/// Collect logical arguments from an argument list, merging adjacent tokens
+/// (no whitespace between them) into single strings.
+/// For example, `${CMAKE_CURRENT_SOURCE_DIR}` + `/src` (two CST tokens)
+/// becomes one logical argument `${CMAKE_CURRENT_SOURCE_DIR}/src`.
+pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    let mut saw_separator = true;
+
+    for child in arg_list.syntax().children_with_tokens() {
+        if let NodeOrToken::Token(token) = child {
+            match token.kind() {
+                SyntaxKind::UNQUOTED_ARGUMENT
+                | SyntaxKind::QUOTED_ARGUMENT
+                | SyntaxKind::BRACKET_ARGUMENT
+                | SyntaxKind::VARIABLE_REF
+                | SyntaxKind::ENV_VAR_REF
+                | SyntaxKind::CACHE_VAR_REF
+                | SyntaxKind::GENERATOR_EXPR => {
+                    let text = token.text();
+                    if !saw_separator && !args.is_empty() {
+                        args.last_mut().unwrap().push_str(text);
+                    } else {
+                        args.push(text.to_string());
+                    }
+                    saw_separator = false;
+                }
+                SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE => {
+                    saw_separator = true;
+                }
+                _ => {
+                    saw_separator = true;
+                }
+            }
+        }
+    }
+    args
 }
 
 /// Build an indentation string for the given level, respecting tabs/spaces config

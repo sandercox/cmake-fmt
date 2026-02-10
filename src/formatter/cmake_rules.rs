@@ -109,6 +109,7 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
     };
 
     let mut consecutive_newlines = 0;
+    let mut saw_separator = true; // tracks whitespace for adjacent token merging
 
     // Iterate through all tokens in the argument list
     for child in arg_list.syntax().children_with_tokens() {
@@ -139,20 +140,28 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
                             comments: Vec::new(),
                             blank_lines: Vec::new(),
                         };
+                        saw_separator = true;
+                    } else if !saw_separator && !current_section.args.is_empty() {
+                        // Adjacent to previous token (no whitespace) — merge
+                        // e.g. ${VAR}/suffix is two tokens but one logical argument
+                        current_section.args.last_mut().unwrap().push_str(&text);
                     } else {
                         // Add as argument to current section
                         current_section.args.push(text);
                     }
+                    saw_separator = false;
                 }
                 // Track comments
                 SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
                     consecutive_newlines = 0;
+                    saw_separator = true;
                     // Position is after the current arg count
                     let position = current_section.args.len();
                     current_section.comments.push((position, text));
                 }
                 // Track newlines for blank line detection
                 SyntaxKind::NEWLINE => {
+                    saw_separator = true;
                     consecutive_newlines += 1;
                     if consecutive_newlines >= 2 {
                         // Blank line detected - record position after last arg
@@ -162,9 +171,12 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
                         }
                     }
                 }
-                // Whitespace doesn't reset newline counter
-                SyntaxKind::WHITESPACE => {}
+                // Whitespace doesn't reset newline counter but marks separation
+                SyntaxKind::WHITESPACE => {
+                    saw_separator = true;
+                }
                 _ => {
+                    saw_separator = true;
                     consecutive_newlines = 0;
                 }
             }
@@ -184,6 +196,7 @@ pub fn format_keyword_aware_args(
     arg_list: &ArgumentList,
     sections: Vec<KeywordSection>,
     config: &FormatConfig,
+    indent_level: usize,
 ) -> RcDoc<'static, ()> {
     if sections.is_empty() {
         return RcDoc::nil();
@@ -197,8 +210,13 @@ pub fn format_keyword_aware_args(
 
     if !has_keywords {
         // No keywords found, fall back to simple formatting
-        return format_simple_args(&sections, config, signals.force_multiline);
+        return format_simple_args(&sections, config, signals.force_multiline, indent_level);
     }
+
+    // Explicit indentation strings for correct tab/space handling at any nesting depth
+    let base_indent = super::cst_to_doc::indent_string(indent_level, config);
+    let keyword_indent = super::cst_to_doc::indent_string(indent_level + 1, config);
+    let value_indent = super::cst_to_doc::indent_string(indent_level + 2, config);
 
     // Build keyword-aware Doc structure
     // ARGL-03: first arg should stay on same line as command (no separator before it)
@@ -216,19 +234,21 @@ pub fn format_keyword_aware_args(
         }
 
         if let Some(keyword) = &section.keyword {
-            // Keyword on its own line at 1 indent level
-            // Use hardline if force_multiline, otherwise line()
+            // Keyword on its own line with explicit indentation
             if signals.force_multiline {
                 docs.push(RcDoc::hardline());
+                docs.push(RcDoc::text(keyword_indent.clone()));
             } else {
-                docs.push(RcDoc::line());
+                docs.push(RcDoc::flat_alt(
+                    RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                    RcDoc::space(),
+                ));
             }
             docs.push(RcDoc::text(keyword.clone()));
             is_first_arg = false;
 
-            // Values under the keyword at 2 indent levels (extra nest)
+            // Values under the keyword with explicit indentation
             if !section.args.is_empty() {
-                let mut value_docs = Vec::new();
                 let mut comment_iter = section.comments.iter().peekable();
 
                 for (arg_idx, arg) in section.args.iter().enumerate() {
@@ -236,11 +256,15 @@ pub fn format_keyword_aware_args(
                     while let Some((pos, comment)) = comment_iter.peek() {
                         if *pos == arg_idx {
                             if signals.force_multiline {
-                                value_docs.push(RcDoc::hardline());
+                                docs.push(RcDoc::hardline());
+                                docs.push(RcDoc::text(value_indent.clone()));
                             } else {
-                                value_docs.push(RcDoc::line());
+                                docs.push(RcDoc::flat_alt(
+                                    RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                    RcDoc::space(),
+                                ));
                             }
-                            value_docs.push(RcDoc::text(comment.clone()));
+                            docs.push(RcDoc::text(comment.clone()));
                             comment_iter.next();
                         } else {
                             break;
@@ -249,45 +273,52 @@ pub fn format_keyword_aware_args(
 
                     // Check for blank line before this argument
                     if section.blank_lines.contains(&arg_idx) && signals.force_multiline {
-                        value_docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::hardline());
                     }
 
                     if signals.force_multiline {
-                        value_docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(value_indent.clone()));
                     } else {
-                        value_docs.push(RcDoc::line());
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                            RcDoc::space(),
+                        ));
                     }
-                    value_docs.push(RcDoc::text(arg.clone()));
+                    docs.push(RcDoc::text(arg.clone()));
                 }
 
                 // Emit trailing comments (after last argument)
                 while let Some((_, comment)) = comment_iter.next() {
                     if signals.force_multiline {
-                        value_docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(value_indent.clone()));
                     } else {
-                        value_docs.push(RcDoc::line());
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                            RcDoc::space(),
+                        ));
                     }
-                    value_docs.push(RcDoc::text(comment.clone()));
+                    docs.push(RcDoc::text(comment.clone()));
                 }
-
-                docs.push(
-                    RcDoc::concat(value_docs)
-                        .nest(config.indent_width as isize)
-                );
             }
         } else {
             // Pre-keyword arguments (e.g., target name)
             // ARGL-03: first arg stays on same line as command
-            for (j, arg) in section.args.iter().enumerate() {
+            for (_j, arg) in section.args.iter().enumerate() {
                 if is_first_arg {
                     // First arg: no separator
                     is_first_arg = false;
                 } else {
-                    // Other args: add separator
+                    // Other args: add separator with explicit indentation
                     if signals.force_multiline {
                         docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(keyword_indent.clone()));
                     } else {
-                        docs.push(RcDoc::line());
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                            RcDoc::space(),
+                        ));
                     }
                 }
                 docs.push(RcDoc::text(arg.clone()));
@@ -295,23 +326,38 @@ pub fn format_keyword_aware_args(
         }
     }
 
-    // Add soft line at the end
-    docs.push(RcDoc::line_());
+    // Closing paren position: base indent
+    if signals.force_multiline {
+        docs.push(RcDoc::hardline());
+        docs.push(RcDoc::text(base_indent));
+    } else {
+        docs.push(RcDoc::flat_alt(
+            RcDoc::hardline().append(RcDoc::text(base_indent)),
+            RcDoc::nil(),
+        ));
+    }
 
-    // If force_multiline, don't wrap in group
-    let nested = RcDoc::concat(docs).nest(config.indent_width as isize);
+    let combined = RcDoc::concat(docs);
 
     if signals.force_multiline {
-        nested
+        combined
     } else {
-        nested.group()
+        combined.group()
     }
 }
 
 /// Format arguments without keyword awareness (simple line breaking)
-fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_multiline: bool) -> RcDoc<'static, ()> {
-    let mut docs = vec![RcDoc::line_()];
+fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_multiline: bool, indent_level: usize) -> RcDoc<'static, ()> {
+    let base_indent = super::cst_to_doc::indent_string(indent_level, config);
+    let inner_indent = super::cst_to_doc::indent_string(indent_level + 1, config);
+
+    let mut docs = Vec::new();
     let mut is_first_arg = true;
+
+    // In flat mode (auto-layout), start with nothing before first arg
+    if !force_multiline {
+        docs.push(RcDoc::flat_alt(RcDoc::nil(), RcDoc::nil()));
+    }
 
     // Collect all args and comments from all sections
     for section in sections {
@@ -323,8 +369,12 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
                 if *pos == arg_idx {
                     if force_multiline {
                         docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(inner_indent.clone()));
                     } else {
-                        docs.push(RcDoc::line());
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
+                            RcDoc::space(),
+                        ));
                     }
                     docs.push(RcDoc::text(comment.clone()));
                     comment_iter.next();
@@ -344,8 +394,12 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
             if !is_first_arg {
                 if force_multiline {
                     docs.push(RcDoc::hardline());
+                    docs.push(RcDoc::text(inner_indent.clone()));
                 } else {
-                    docs.push(RcDoc::line());
+                    docs.push(RcDoc::flat_alt(
+                        RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
+                        RcDoc::space(),
+                    ));
                 }
             }
             docs.push(RcDoc::text(arg.clone()));
@@ -356,21 +410,34 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
         while let Some((_, comment)) = comment_iter.next() {
             if force_multiline {
                 docs.push(RcDoc::hardline());
+                docs.push(RcDoc::text(inner_indent.clone()));
             } else {
-                docs.push(RcDoc::line());
+                docs.push(RcDoc::flat_alt(
+                    RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
+                    RcDoc::space(),
+                ));
             }
             docs.push(RcDoc::text(comment.clone()));
             is_first_arg = false;
         }
     }
 
-    docs.push(RcDoc::line_());
+    // Closing paren position
+    if force_multiline {
+        docs.push(RcDoc::hardline());
+        docs.push(RcDoc::text(base_indent));
+    } else {
+        docs.push(RcDoc::flat_alt(
+            RcDoc::hardline().append(RcDoc::text(base_indent)),
+            RcDoc::nil(),
+        ));
+    }
 
-    let nested = RcDoc::concat(docs).nest(config.indent_width as isize);
+    let combined = RcDoc::concat(docs);
 
     if force_multiline {
-        nested
+        combined
     } else {
-        nested.group()
+        combined.group()
     }
 }

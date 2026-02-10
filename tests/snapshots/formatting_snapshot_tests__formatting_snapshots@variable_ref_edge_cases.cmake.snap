@@ -36,10 +36,10 @@ set(INCLUDE_DIR ${${PROJECT_NAME}_${COMPONENT}_INCLUDE_DIR})
 # Adjacent Variable References
 # ----------------------------------------------------------------------------
 # Adjacent refs with no space (concatenation)
-set(COMBINED ${A} ${B} ${C})
+set(COMBINED ${A}${B}${C})
 
 # Mixed adjacent: variable, env, generator expr
-set(MIXED ${A} $ENV{B} $<CONFIG:Debug>)
+set(MIXED ${A}$ENV{B}$<CONFIG:Debug>)
 
 # Multiple adjacent in quoted string
 message("${PREFIX}_${MIDDLE}_${SUFFIX}_done")
