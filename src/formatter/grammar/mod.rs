@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 pub mod builtins;
 pub mod resolver;
+pub mod user_scanner;
 
 pub use self::builtins::*;
 pub use self::resolver::*;
