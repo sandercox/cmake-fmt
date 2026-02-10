@@ -1,4 +1,4 @@
-// CMake builtin command registry (based on CMake 3.31)
+// CMake builtin command registry (based on CMake 4.2.3)
 //
 // Update this list when new CMake versions add commands.
 // Source: https://cmake.org/cmake/help/latest/manual/cmake-commands.7.html

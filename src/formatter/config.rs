@@ -21,6 +21,8 @@ pub struct FormatConfig {
     pub line_ending: LineEnding,
     /// Block closer argument handling (default: Remove)
     pub closing_style: ClosingStyle,
+    /// Force keyword-aware commands to use multiline layout regardless of line length (default: false)
+    pub force_break_keywords: bool,
 }
 
 impl Default for FormatConfig {
@@ -34,6 +36,7 @@ impl Default for FormatConfig {
             max_blank_lines: 1,
             line_ending: LineEnding::Auto,
             closing_style: ClosingStyle::Remove,
+            force_break_keywords: false,
         }
     }
 }
