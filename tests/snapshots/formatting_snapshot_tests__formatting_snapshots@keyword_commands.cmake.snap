@@ -34,8 +34,7 @@ target_sources(mylib
 		include/mylib/types.h
 )
 add_library(mylib STATIC src/core.cpp src/utils.cpp src/parser.cpp)
-install(
-	TARGETS
+install(TARGETS
 		mylib
 	ARCHIVE
 	DESTINATION

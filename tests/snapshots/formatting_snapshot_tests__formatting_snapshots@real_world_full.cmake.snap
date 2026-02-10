@@ -52,8 +52,7 @@ target_compile_options(realworld
 target_link_libraries(realworld PUBLIC fmt::fmt PRIVATE Threads::Threads)
 
 # Install rules
-install(
-	TARGETS
+install(TARGETS
 		realworld
 	ARCHIVE
 	DESTINATION
@@ -66,4 +65,4 @@ install(
 		bin
 )
 
-install( DIRECTORY include/ DESTINATION include)
+install(DIRECTORY include/ DESTINATION include)

@@ -234,8 +234,11 @@ pub fn format_keyword_aware_args(
         }
 
         if let Some(keyword) = &section.keyword {
-            // Keyword on its own line with explicit indentation
-            if signals.force_multiline {
+            // Keyword: ARGL-03 first arg stays on same line as command
+            if is_first_arg {
+                // First keyword is right after `(` — no separator
+                is_first_arg = false;
+            } else if signals.force_multiline {
                 docs.push(RcDoc::hardline());
                 docs.push(RcDoc::text(keyword_indent.clone()));
             } else {
@@ -245,7 +248,6 @@ pub fn format_keyword_aware_args(
                 ));
             }
             docs.push(RcDoc::text(keyword.clone()));
-            is_first_arg = false;
 
             // Values under the keyword with explicit indentation
             if !section.args.is_empty() {
