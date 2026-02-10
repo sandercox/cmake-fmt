@@ -1,10 +1,13 @@
+use std::collections::HashMap;
+
 use crate::cst::{ArgumentList, CSTRoot, CommandInvocation};
 use crate::syntax_kind::SyntaxKind;
 use crate::SyntaxNode;
 use pretty::RcDoc;
 use rowan::NodeOrToken;
 
-use super::config::{ClosingStyle, CommandCase, FormatConfig};
+use super::builtins;
+use super::config::{ClosingStyle, CommandCase, FormatConfig, UserCommandCase};
 use super::cmake_rules;
 use super::comments;
 use super::suppression::{parse_directive, line_number_at_offset, SuppressionTracker, SuppressionWarning};
@@ -32,13 +35,15 @@ struct CloserContext {
 struct FormatContext<'a> {
     config: &'a FormatConfig,
     indent_level: usize,
+    user_defs: &'a HashMap<String, String>,
 }
 
 impl<'a> FormatContext<'a> {
-    fn new(config: &'a FormatConfig) -> Self {
+    fn new(config: &'a FormatConfig, user_defs: &'a HashMap<String, String>) -> Self {
         Self {
             config,
             indent_level: 0,
+            user_defs,
         }
     }
 
@@ -54,8 +59,13 @@ impl<'a> FormatContext<'a> {
 }
 
 /// Entry point: convert CST to Doc IR
-pub fn format_cst(cst: &CSTRoot, config: &FormatConfig, source: &str) -> (RcDoc<'static, ()>, Vec<SuppressionWarning>) {
-    let ctx = FormatContext::new(config);
+pub fn format_cst(
+    cst: &CSTRoot,
+    config: &FormatConfig,
+    source: &str,
+    user_defs: &HashMap<String, String>,
+) -> (RcDoc<'static, ()>, Vec<SuppressionWarning>) {
+    let ctx = FormatContext::new(config, user_defs);
     format_file(&cst.root, &ctx, source)
 }
 
@@ -247,6 +257,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'
                             let cmd_ctx = FormatContext {
                                 config: ctx.config,
                                 indent_level: cmd_indent,
+                                user_defs: ctx.user_defs,
                             };
 
                             // Format and emit command
@@ -361,10 +372,23 @@ fn format_command(
 
     // Get command name and apply casing
     let name = cmd.name_text().unwrap_or_else(|| "unknown".to_string());
-    let formatted_name = match ctx.config.command_case {
-        CommandCase::Lowercase => name.to_lowercase(),
-        CommandCase::Uppercase => name.to_uppercase(),
-        CommandCase::Leave => name.clone(),
+    let name_lower = name.to_lowercase();
+    let formatted_name = if builtins::is_builtin_command(&name_lower) {
+        match ctx.config.command_case {
+            CommandCase::Lowercase => name_lower,
+            CommandCase::Uppercase => name.to_uppercase(),
+            CommandCase::Leave => name.clone(),
+        }
+    } else {
+        match ctx.config.user_command_case {
+            UserCommandCase::Lowercase => name_lower,
+            UserCommandCase::Uppercase => name.to_uppercase(),
+            UserCommandCase::Leave => name.clone(),
+            UserCommandCase::Infer => {
+                // Look up from function()/macro() definitions; if not found, leave as-is
+                ctx.user_defs.get(&name_lower).cloned().unwrap_or(name.clone())
+            }
+        }
     };
 
     // Handle block closers and mid-block commands based on closing_style

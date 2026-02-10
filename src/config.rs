@@ -156,6 +156,15 @@ fn apply_style_overrides(config: &mut FormatConfig, style: &str) {
                     _ => eprintln!("Warning: Invalid value for line_ending (expected auto, lf, or crlf): {}", value),
                 }
             }
+            "user_command_case" => {
+                match value {
+                    "lowercase" => config.user_command_case = cmake_fmt::formatter::UserCommandCase::Lowercase,
+                    "uppercase" => config.user_command_case = cmake_fmt::formatter::UserCommandCase::Uppercase,
+                    "leave" => config.user_command_case = cmake_fmt::formatter::UserCommandCase::Leave,
+                    "infer" => config.user_command_case = cmake_fmt::formatter::UserCommandCase::Infer,
+                    _ => eprintln!("Warning: Invalid value for user_command_case (expected lowercase, uppercase, leave, or infer): {}", value),
+                }
+            }
             "closing_style" => {
                 match value {
                     "leave" => config.closing_style = cmake_fmt::formatter::ClosingStyle::Leave,

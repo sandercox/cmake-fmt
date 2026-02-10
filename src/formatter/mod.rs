@@ -1,10 +1,12 @@
 pub mod config;
+mod builtins;
 mod cst_to_doc;
 mod cmake_rules;
 mod comments;
 mod suppression;
+mod user_commands;
 
-pub use config::{ClosingStyle, CommandCase, FormatConfig, LineEnding};
+pub use config::{ClosingStyle, CommandCase, FormatConfig, LineEnding, UserCommandCase};
 pub use suppression::SuppressionWarning;
 
 use crate::cst::parse_text;
@@ -56,7 +58,8 @@ pub fn format_text_with_diagnostics(input: &str, config: &FormatConfig) -> (Stri
     };
 
     let cst = parse_text(parse_input);
-    let (doc, warnings) = cst_to_doc::format_cst(&cst, config, parse_input);
+    let user_defs = user_commands::scan_user_command_definitions(&cst.root);
+    let (doc, warnings) = cst_to_doc::format_cst(&cst, config, parse_input, &user_defs);
     let mut result = render_doc(doc, config);
 
     // Apply CRLF if needed

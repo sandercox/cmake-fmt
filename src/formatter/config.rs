@@ -10,8 +10,10 @@ pub struct FormatConfig {
     pub indent_width: usize,
     /// Use tabs instead of spaces for indentation (default: true)
     pub use_tabs: bool,
-    /// Command name casing transformation (default: Lowercase)
+    /// Builtin command name casing transformation (default: Lowercase)
     pub command_case: CommandCase,
+    /// User-defined command name casing (default: Infer)
+    pub user_command_case: UserCommandCase,
 
     /// Maximum consecutive blank lines allowed (default: 1)
     pub max_blank_lines: usize,
@@ -28,6 +30,7 @@ impl Default for FormatConfig {
             indent_width: 4,
             use_tabs: true,
             command_case: CommandCase::Lowercase,
+            user_command_case: UserCommandCase::Infer,
             max_blank_lines: 1,
             line_ending: LineEnding::Auto,
             closing_style: ClosingStyle::Remove,
@@ -58,6 +61,20 @@ pub enum CommandCase {
     Uppercase,
     /// Leave original casing unchanged
     Leave,
+}
+
+/// User-defined command name casing options
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UserCommandCase {
+    /// Convert to lowercase
+    Lowercase,
+    /// Convert to uppercase
+    Uppercase,
+    /// Leave original casing unchanged
+    Leave,
+    /// Infer casing from function()/macro() definitions; if not found, leave as-is
+    Infer,
 }
 
 /// Block closer argument handling options

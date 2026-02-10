@@ -1,4 +1,4 @@
-use cmake_fmt::formatter::{CommandCase, FormatConfig};
+use cmake_fmt::formatter::{CommandCase, FormatConfig, UserCommandCase};
 use cmake_fmt::formatter::format_text;
 
 // Helper to create default config
@@ -587,5 +587,112 @@ fn test_arglist_idempotency() {
         let twice = format_text(&once, &config);
         assert_eq!(once, twice,
             "Formatting should be idempotent for input: {}", input);
+    }
+}
+
+// ============================================================================
+// USER COMMAND CASING TESTS
+// ============================================================================
+
+#[test]
+fn test_builtin_lowercased_user_left_alone_default() {
+    // Default config: command_case=Lowercase, user_command_case=Infer
+    let input = "SET(X y)\nMyCmd(z)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    // SET is builtin -> lowercased; MyCmd is unknown user -> left as-is (infer, no def found)
+    assert_eq!(result, "set(X y)\nMyCmd(z)\n");
+}
+
+#[test]
+fn test_infer_with_function_definition() {
+    let input = "function(MyHelper arg)\nmessage(${arg})\nendfunction()\nmyhelper(foo)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    // myhelper() call should be inferred as MyHelper from the definition
+    assert!(result.contains("MyHelper(foo)"),
+        "Should infer MyHelper casing from definition, got: {}", result);
+}
+
+#[test]
+fn test_infer_with_macro_definition() {
+    let input = "macro(GenerateCI target)\nadd_test(NAME ${target})\nendmacro()\ngenerateci(mytest)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert!(result.contains("GenerateCI(mytest)"),
+        "Should infer GenerateCI casing from macro definition, got: {}", result);
+}
+
+#[test]
+fn test_infer_without_definition_leaves_as_is() {
+    let input = "SomeExternalCommand(arg1 arg2)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, "SomeExternalCommand(arg1 arg2)\n");
+}
+
+#[test]
+fn test_user_command_case_explicit_lowercase() {
+    let input = "MyCmd(z)\n";
+    let config = FormatConfig {
+        user_command_case: UserCommandCase::Lowercase,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert_eq!(result, "mycmd(z)\n");
+}
+
+#[test]
+fn test_user_command_case_explicit_uppercase() {
+    let input = "MyCmd(z)\n";
+    let config = FormatConfig {
+        user_command_case: UserCommandCase::Uppercase,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert_eq!(result, "MYCMD(z)\n");
+}
+
+#[test]
+fn test_user_command_case_leave() {
+    let input = "function(MyHelper)\nendfunction()\nmyhelper(foo)\n";
+    let config = FormatConfig {
+        user_command_case: UserCommandCase::Leave,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    // Even though definition says MyHelper, Leave mode keeps original casing
+    assert!(result.contains("myhelper(foo)"),
+        "Leave mode should keep original casing, got: {}", result);
+}
+
+#[test]
+fn test_builtin_uppercase_user_infer() {
+    let input = "function(MyHelper)\nendfunction()\nset(X y)\nmyhelper(foo)\n";
+    let config = FormatConfig {
+        command_case: CommandCase::Uppercase,
+        user_command_case: UserCommandCase::Infer,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    // Builtins uppercased, user command inferred
+    assert!(result.contains("SET(X y)"), "Builtins should be uppercase, got: {}", result);
+    assert!(result.contains("MyHelper(foo)"), "User commands should be inferred, got: {}", result);
+}
+
+#[test]
+fn test_user_command_casing_idempotency() {
+    let inputs = vec![
+        "SET(X y)\nMyCmd(z)\n",
+        "function(MyHelper arg)\nendfunction()\nmyhelper(foo)\n",
+        "macro(GenCI t)\nendmacro()\ngenci(x)\n",
+    ];
+
+    let config = default_config();
+    for input in inputs {
+        let once = format_text(input, &config);
+        let twice = format_text(&once, &config);
+        assert_eq!(once, twice,
+            "User command casing should be idempotent for input: {}", input);
     }
 }
