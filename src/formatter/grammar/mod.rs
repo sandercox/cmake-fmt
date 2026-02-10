@@ -5,7 +5,7 @@ pub mod resolver;
 pub mod user_scanner;
 
 pub use self::builtins::*;
-pub use self::resolver::*;
+pub use self::resolver::{clear_project_scan_cache, get_project_user_commands, GrammarRegistry};
 
 /// Classification of CMake command keywords
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

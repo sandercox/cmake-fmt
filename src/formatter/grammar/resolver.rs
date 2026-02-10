@@ -1,6 +1,7 @@
-use super::{builtin_grammars, CommandGrammar, Grammar, KeywordType};
+use super::{builtin_grammars, user_scanner, CommandGrammar, Grammar};
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 /// Registry for command grammar lookup
 pub struct GrammarRegistry {
@@ -25,5 +26,42 @@ impl GrammarRegistry {
     /// Resolve grammar to CommandGrammar based on first keyword (for multi-mode commands)
     pub fn resolve_grammar(&self, command_name: &str, first_keyword: Option<&str>) -> Option<&CommandGrammar> {
         self.get(command_name)?.resolve(first_keyword)
+    }
+}
+
+/// Cache for project-wide user command scans
+static PROJECT_SCAN_CACHE: OnceLock<Mutex<HashMap<PathBuf, HashMap<String, String>>>> = OnceLock::new();
+
+/// Get project-wide user command definitions with caching
+///
+/// Determines the project root from the file's parent directory,
+/// scans all CMake files in the project tree (respecting .gitignore),
+/// and caches the results per project root.
+pub fn get_project_user_commands(file_path: &Path) -> HashMap<String, String> {
+    // Determine project root from the file's parent directory
+    let start_dir = file_path.parent().unwrap_or(file_path);
+    let project_root = user_scanner::find_project_root(start_dir);
+
+    // Get or init cache
+    let cache = PROJECT_SCAN_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache_lock = cache.lock().unwrap();
+
+    // Return cached if available
+    if let Some(cached) = cache_lock.get(&project_root) {
+        return cached.clone();
+    }
+
+    // Scan and cache
+    let user_defs = user_scanner::scan_project_commands(&project_root);
+    cache_lock.insert(project_root, user_defs.clone());
+    user_defs
+}
+
+/// Clear the project scan cache (for testing purposes)
+pub fn clear_project_scan_cache() {
+    if let Some(cache) = PROJECT_SCAN_CACHE.get() {
+        if let Ok(mut cache_lock) = cache.lock() {
+            cache_lock.clear();
+        }
     }
 }
