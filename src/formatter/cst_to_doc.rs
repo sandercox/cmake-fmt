@@ -96,10 +96,10 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'
     for child in node.children_with_tokens() {
         if let NodeOrToken::Node(child_node) = &child {
             if child_node.kind() == SyntaxKind::COMMAND_INVOCATION {
-                for comment in comments::extract_leading_comments(child_node) {
+                for lc in comments::extract_leading_comments(child_node) {
                     // Don't mark as handled if it's a trailing comment
-                    if !trailing_comments.contains(&comment) {
-                        handled_comments.insert(comment);
+                    if !trailing_comments.contains(&lc.text) {
+                        handled_comments.insert(lc.text);
                     }
                 }
             }
@@ -118,11 +118,11 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'
                         // Process directives in leading comments
                         // We need to find the actual comment position by searching backwards in source
                         let cmd_start: usize = child_node.text_range().start().into();
-                        for comment in &leading_comments {
-                            if let Some(directive) = parse_directive(comment) {
+                        for lc in &leading_comments {
+                            if let Some(directive) = parse_directive(&lc.text) {
                                 // Find comment position by searching backwards from command
                                 let comment_offset = source[..cmd_start]
-                                    .rfind(comment)
+                                    .rfind(&lc.text[..])
                                     .unwrap_or(cmd_start);
                                 let line = line_number_at_offset(source, comment_offset);
                                 tracker.process_directive(directive, line);
@@ -137,9 +137,14 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'
                             tracker.clear_skip();
                         }
 
+                        // Check if any leading comments will actually be emitted
+                        let has_emittable_leading = leading_comments.iter()
+                            .any(|lc| !trailing_comments.contains(&lc.text));
+
                         // Emit accumulated blank lines before command/comments
-                        // But only if not first content
-                        if blank_line_count >= 2 && !docs.is_empty() {
+                        // When leading comments exist, blank_line_before handles all gaps
+                        // (including before the first comment), so skip blank_line_count.
+                        if blank_line_count >= 2 && !docs.is_empty() && !has_emittable_leading {
                             let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, ctx.config.max_blank_lines);
                             for _ in 0..blank_lines_to_emit {
                                 docs.push(RcDoc::hardline());
@@ -154,18 +159,24 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'
                             if !is_suppressed {
                                 // Skip mode: emit formatted leading comments
                                 let indent_str = indent_string(current_indent, ctx.config);
-                                for comment in &leading_comments {
-                                    if !trailing_comments.contains(comment) {
-                                        docs.push(RcDoc::text(format!("{}{}", indent_str, comment)));
+                                for lc in &leading_comments {
+                                    if !trailing_comments.contains(&lc.text) {
+                                        if lc.blank_line_before && !docs.is_empty() {
+                                            docs.push(RcDoc::hardline());
+                                        }
+                                        docs.push(RcDoc::text(format!("{}{}", indent_str, lc.text)));
                                         docs.push(RcDoc::hardline());
                                     }
                                 }
                             } else {
                                 // Suppressed region: emit raw leading comments
                                 let indent_str = indent_string(current_indent, ctx.config);
-                                for comment in &leading_comments {
-                                    if !trailing_comments.contains(comment) {
-                                        docs.push(RcDoc::text(format!("{}{}", indent_str, comment)));
+                                for lc in &leading_comments {
+                                    if !trailing_comments.contains(&lc.text) {
+                                        if lc.blank_line_before && !docs.is_empty() {
+                                            docs.push(RcDoc::hardline());
+                                        }
+                                        docs.push(RcDoc::text(format!("{}{}", indent_str, lc.text)));
                                         docs.push(RcDoc::hardline());
                                     }
                                 }
@@ -182,10 +193,13 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'
 
                         // Normal formatting path: emit leading comments (skip if already handled as trailing)
                         let indent_str = indent_string(current_indent, ctx.config);
-                        for comment in &leading_comments {
+                        for lc in &leading_comments {
                             // Only emit if not already handled as a trailing comment
-                            if !trailing_comments.contains(comment) {
-                                docs.push(RcDoc::text(format!("{}{}", indent_str, comment)));
+                            if !trailing_comments.contains(&lc.text) {
+                                if lc.blank_line_before && !docs.is_empty() {
+                                    docs.push(RcDoc::hardline());
+                                }
+                                docs.push(RcDoc::text(format!("{}{}", indent_str, lc.text)));
                                 docs.push(RcDoc::hardline());
                             }
                         }

@@ -7,9 +7,11 @@ input_file: tests/format_fixtures/comment_edge_cases.cmake
 # COMMENT EDGE CASES
 # ============================================================================
 # Tests comment preservation in unusual positions.
+
 # ----------------------------------------------------------------------------
 # Comments Between Arguments
 # ----------------------------------------------------------------------------
+
 # Comment forces multiline layout
 set(LIST
 	a
@@ -28,6 +30,7 @@ set(MULTI
 # ----------------------------------------------------------------------------
 # Comments on Commands
 # ----------------------------------------------------------------------------
+
 # Multiple comments before a command
 # First comment
 # Second comment
@@ -45,6 +48,7 @@ message(hello) # attached comment
 # ----------------------------------------------------------------------------
 # Comments Between Commands
 # ----------------------------------------------------------------------------
+
 # Comment on blank line between commands
 set(A a)
 # standalone comment
@@ -61,13 +65,16 @@ set(SECOND second)
 # ----------------------------------------------------------------------------
 # Bracket Comments
 # ----------------------------------------------------------------------------
+
 # Bracket comment on single line
 #[[bracket comment]]
+
 # Bracket comment spanning multiple lines
 #[=[
 Multi-line bracket comment
 with ]] inside
 ]=]
+
 # Bracket comment between commands
 set(A a)
 #[[inline bracket comment]]
@@ -77,6 +84,7 @@ set(B b)
 #[==[
 This has ]=] inside but won't close until =
 ]==]
+
 # ----------------------------------------------------------------------------
 # EOF Comment Test (CRITICAL: file ends here with no trailing newline)
 # ----------------------------------------------------------------------------

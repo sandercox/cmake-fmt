@@ -8,9 +8,11 @@ input_file: tests/format_fixtures/variable_ref_edge_cases.cmake
 # ============================================================================
 # Tests atomic token preservation for nested and complex variable references.
 # Lexer depth-tracks ${...} nesting - these are single tokens.
+
 # ----------------------------------------------------------------------------
 # Basic Variable References
 # ----------------------------------------------------------------------------
+
 # Simple variable reference
 set(OUTPUT ${MY_VAR})
 
@@ -23,6 +25,7 @@ set(CACHED $CACHE{MY_CACHE_VAR})
 # ----------------------------------------------------------------------------
 # Nested Variable References
 # ----------------------------------------------------------------------------
+
 # Nested 2 levels
 set(COMPUTED ${PREFIX_${SUFFIX}})
 
@@ -35,6 +38,7 @@ set(INCLUDE_DIR ${${PROJECT_NAME}_${COMPONENT}_INCLUDE_DIR})
 # ----------------------------------------------------------------------------
 # Adjacent Variable References
 # ----------------------------------------------------------------------------
+
 # Adjacent refs with no space (concatenation)
 set(COMBINED ${A}${B}${C})
 
@@ -47,6 +51,7 @@ message("${PREFIX}_${MIDDLE}_${SUFFIX}_done")
 # ----------------------------------------------------------------------------
 # Variable References Inside Other Constructs
 # ----------------------------------------------------------------------------
+
 # Variable ref inside generator expression
 target_compile_options(app PRIVATE $<$<BOOL:${MY_VAR}>:value>)
 
@@ -59,6 +64,7 @@ set(FULL_PATH "${BASE_DIR}/${SUBDIR}/${FILENAME}")
 # ----------------------------------------------------------------------------
 # Edge Cases
 # ----------------------------------------------------------------------------
+
 # Empty-looking variable (valid CMake syntax)
 set(EMPTY ${})
 

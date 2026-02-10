@@ -8,9 +8,11 @@ input_file: tests/format_fixtures/bracket_arg_edge_cases.cmake
 # ============================================================================
 # Tests atomic token preservation for bracket arguments.
 # Content must be preserved byte-for-byte (no evaluation, no escape processing).
+
 # ----------------------------------------------------------------------------
 # Basic Bracket Arguments (Different Equals Counts)
 # ----------------------------------------------------------------------------
+
 # Zero equals (most common)
 message([[simple bracket arg]])
 
@@ -26,6 +28,7 @@ message([[]])
 # ----------------------------------------------------------------------------
 # Multiline Bracket Arguments with Preserved Content
 # ----------------------------------------------------------------------------
+
 # Help text with preserved indentation
 set(HELP
 	[[
@@ -52,6 +55,7 @@ cd $HOME
 # ----------------------------------------------------------------------------
 # Bracket Arguments in Various Positions
 # ----------------------------------------------------------------------------
+
 # As only argument
 message([[only arg]])
 
@@ -67,6 +71,7 @@ set(LIST a b c [[bracket at end]])
 # ----------------------------------------------------------------------------
 # Bracket Arguments with Special Characters
 # ----------------------------------------------------------------------------
+
 # Tab character (literal tab preserved)
 message([=[tab	here and special {chars}]=])
 
@@ -92,6 +97,7 @@ message([[Русский 中文 العربية]])
 # ----------------------------------------------------------------------------
 # Edge Cases
 # ----------------------------------------------------------------------------
+
 # Empty multiline bracket arg
 set(EMPTY [[
 

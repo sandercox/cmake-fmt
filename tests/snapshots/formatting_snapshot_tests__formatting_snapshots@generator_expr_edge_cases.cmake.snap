@@ -8,9 +8,11 @@ input_file: tests/format_fixtures/generator_expr_edge_cases.cmake
 # ============================================================================
 # Tests atomic token preservation for complex generator expressions.
 # These must NEVER break across lines - they are lexed as single tokens.
+
 # ----------------------------------------------------------------------------
 # Simple and Nested Generator Expressions
 # ----------------------------------------------------------------------------
+
 # Simple nested (depth=2)
 set(FLAGS $<$<CONFIG:Debug>:-g>)
 
@@ -34,6 +36,7 @@ target_compile_options(myapp
 # ----------------------------------------------------------------------------
 # Generator Expressions with Special Content
 # ----------------------------------------------------------------------------
+
 # Semicolons inside (list separator - preserved in generator expr)
 set(LIST_ITEMS $<$<BOOL:${USE_IT}>:a;b;c>)
 
@@ -45,6 +48,7 @@ set(MULTI_COND
 # ----------------------------------------------------------------------------
 # Generator Expressions as Arguments
 # ----------------------------------------------------------------------------
+
 # As only argument
 set(X $<BOOL:${FLAG}>)
 
@@ -57,6 +61,7 @@ set(PREFIXED "prefix_$<CONFIG:Debug>_suffix")
 # ----------------------------------------------------------------------------
 # Common Generator Expression Types
 # ----------------------------------------------------------------------------
+
 # BUILD_INTERFACE / INSTALL_INTERFACE pattern
 target_include_directories(mylib
 	PUBLIC
