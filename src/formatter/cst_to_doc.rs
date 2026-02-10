@@ -575,7 +575,9 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
     // If no multiline signals, use auto-layout (flat_alt + group)
     // ARGL-03: For builtin commands, first arg stays on same line when broken
     // For custom commands, ALL args break to new lines when broken
-    if !signals.force_multiline {
+    // Guard: if args > 200, skip auto-layout to avoid deep RcDoc::concat trees
+    // (a 200+ arg command will never fit on one line anyway)
+    if !signals.force_multiline && args.len() <= 200 {
         if args.len() == 1 {
             // Single argument: simple case
             return RcDoc::text(args[0].clone());
@@ -647,15 +649,18 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
         }
     }
 
-    // Force multiline: walk tokens and build Doc IR with hardlines
+    // Force multiline: walk tokens and build output
     // Use explicit text indentation instead of nest() for correct tab/space handling
     let base_indent = indent_string(ctx.indent_level, ctx.config);
     let inner_indent = indent_string(ctx.indent_level + 1, ctx.config);
 
     // Strategy: For builtin commands (ARGL-03), first arg not indented, rest indented
     // For custom commands, ALL args indented (including first)
-    let mut first_arg_doc: Option<RcDoc<'static, ()>> = None;
-    let mut rest_docs = Vec::new();
+    //
+    // Build directly as a String to avoid deeply-nested RcDoc::concat trees
+    // that overflow the stack on Drop for commands with 1000+ arguments.
+    let mut first_arg: Option<String> = None;
+    let mut rest_parts = String::new();
     let mut consecutive_newline_count = 0;
     let mut seen_first_arg = false;
     let mut saw_separator = true; // tracks whitespace between tokens for adjacency
@@ -671,58 +676,57 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
                     | SyntaxKind::ENV_VAR_REF
                     | SyntaxKind::CACHE_VAR_REF
                     | SyntaxKind::GENERATOR_EXPR => {
-                        let text = token.text().to_string();
+                        let text = token.text();
 
                         if !saw_separator && seen_first_arg {
                             // Adjacent to previous token (no whitespace) — merge
-                            // e.g. ${VAR}/suffix is two tokens but one logical argument
-                            rest_docs.push(RcDoc::text(text));
+                            rest_parts.push_str(text);
                         } else if !seen_first_arg {
                             if is_custom_command {
-                                // Custom command: first arg gets hardline + indent (like subsequent args)
-                                rest_docs.push(RcDoc::hardline());
-                                rest_docs.push(RcDoc::text(inner_indent.clone()));
-                                rest_docs.push(RcDoc::text(text));
+                                // Custom command: first arg gets newline + indent
+                                rest_parts.push('\n');
+                                rest_parts.push_str(&inner_indent);
+                                rest_parts.push_str(text);
                             } else {
                                 // Builtin command: first argument no indent, no break before
-                                first_arg_doc = Some(RcDoc::text(text));
+                                first_arg = Some(text.to_string());
                             }
                             seen_first_arg = true;
                         } else {
-                            // Subsequent arguments: hardline + explicit indent
-                            rest_docs.push(RcDoc::hardline());
+                            // Subsequent arguments: newline + indent
+                            rest_parts.push('\n');
 
-                            // If there were blank lines before this arg, emit extra hardlines
+                            // If there were blank lines before this arg, emit extra newlines
                             if consecutive_newline_count >= 2 {
                                 let blank_lines = consecutive_newline_count - 1;
                                 let blank_lines_to_emit = std::cmp::min(blank_lines, ctx.config.max_blank_lines);
                                 for _ in 0..blank_lines_to_emit {
-                                    rest_docs.push(RcDoc::hardline());
+                                    rest_parts.push('\n');
                                 }
                             }
 
-                            rest_docs.push(RcDoc::text(inner_indent.clone()));
-                            rest_docs.push(RcDoc::text(text));
+                            rest_parts.push_str(&inner_indent);
+                            rest_parts.push_str(text);
                         }
                         saw_separator = false;
                         consecutive_newline_count = 0;
                     }
                     SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
                         // Comments at same indent level as arguments
-                        let text = token.text().to_string();
-                        rest_docs.push(RcDoc::hardline());
+                        let text = token.text();
+                        rest_parts.push('\n');
 
-                        // If there were blank lines before this comment, emit extra hardlines
+                        // If there were blank lines before this comment, emit extra newlines
                         if consecutive_newline_count >= 2 {
                             let blank_lines = consecutive_newline_count - 1;
                             let blank_lines_to_emit = std::cmp::min(blank_lines, ctx.config.max_blank_lines);
                             for _ in 0..blank_lines_to_emit {
-                                rest_docs.push(RcDoc::hardline());
+                                rest_parts.push('\n');
                             }
                         }
 
-                        rest_docs.push(RcDoc::text(inner_indent.clone()));
-                        rest_docs.push(RcDoc::text(text));
+                        rest_parts.push_str(&inner_indent);
+                        rest_parts.push_str(text);
                         saw_separator = true;
                         consecutive_newline_count = 0;
                     }
@@ -746,32 +750,25 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
         }
     }
 
-    // Build final Doc IR
+    // Build final Doc IR from pre-rendered string
+    // Using RcDoc::text with pre-rendered content avoids deeply-nested concat trees
     if is_custom_command {
-        // Custom command: all args in rest_docs (including first)
-        if !rest_docs.is_empty() {
-            RcDoc::concat(rest_docs)
-                .append(RcDoc::hardline())
-                .append(RcDoc::text(base_indent))
+        if !rest_parts.is_empty() {
+            RcDoc::text(rest_parts)
+                .append(RcDoc::text(format!("\n{}", base_indent)))
         } else {
-            // No arguments at all
             RcDoc::nil()
         }
     } else {
-        // Builtin command: first arg separate, rest in rest_docs
-        if let Some(first) = first_arg_doc {
-            // We have a first arg
-            if !rest_docs.is_empty() {
-                // First arg + rest with explicit indentation + closing paren indent
-                first
-                    .append(RcDoc::concat(rest_docs))
-                    .append(RcDoc::hardline())
-                    .append(RcDoc::text(base_indent))
+        if let Some(first) = first_arg {
+            if !rest_parts.is_empty() {
+                RcDoc::text(first)
+                    .append(RcDoc::text(rest_parts))
+                    .append(RcDoc::text(format!("\n{}", base_indent)))
             } else {
-                first
+                RcDoc::text(first)
             }
         } else {
-            // No arguments at all
             RcDoc::nil()
         }
     }
