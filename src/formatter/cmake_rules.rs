@@ -145,11 +145,12 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
                         // Adjacent to previous token (no whitespace) — merge
                         // e.g. ${VAR}/suffix is two tokens but one logical argument
                         current_section.args.last_mut().unwrap().push_str(&text);
+                        saw_separator = false;
                     } else {
                         // Add as argument to current section
                         current_section.args.push(text);
+                        saw_separator = false;
                     }
-                    saw_separator = false;
                 }
                 // Track comments
                 SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {

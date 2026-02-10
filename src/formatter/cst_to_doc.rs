@@ -14,9 +14,6 @@ use super::suppression::{parse_directive, line_number_at_offset, SuppressionTrac
 
 /// Signals detected in argument list that affect formatting
 pub(crate) struct ArgumentFormatSignals {
-    pub(crate) has_comments: bool,
-    pub(crate) has_blank_lines: bool,
-    pub(crate) has_newlines: bool,
     pub(crate) force_multiline: bool,
 }
 
@@ -495,9 +492,6 @@ pub(crate) fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> Arg
     let force_multiline = has_comments || has_blank_lines || has_newlines;
 
     ArgumentFormatSignals {
-        has_comments,
-        has_blank_lines,
-        has_newlines,
         force_multiline,
     }
 }
