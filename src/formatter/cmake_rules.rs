@@ -581,14 +581,29 @@ pub fn format_keyword_aware_args(
                 }
             }
         } else {
-            // Pre-keyword arguments (e.g., target name)
-            // ARGL-03: first arg stays on same line as command
+            // Pre-keyword arguments (e.g., target name, or file list)
+            // ARGL-03 refined: first arg stays inline only when it's a single
+            // pre-keyword arg (e.g., target name). When there are multiple
+            // pre-keyword args (a file list), all go on separate lines.
+            let is_list = section.args.len() > 1;
             for (_j, arg) in section.args.iter().enumerate() {
-                if is_first_arg {
-                    // First arg: no separator
+                if is_first_arg && !is_list {
+                    // Single pre-keyword arg: keep inline with command
                     is_first_arg = false;
+                } else if is_first_arg {
+                    // First arg of a list: treat like subsequent args
+                    is_first_arg = false;
+                    if signals.force_multiline {
+                        docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(keyword_indent.clone()));
+                    } else {
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                            RcDoc::nil(),
+                        ));
+                    }
                 } else {
-                    // Other args: add separator with explicit indentation
+                    // Subsequent args: add separator with explicit indentation
                     if signals.force_multiline {
                         docs.push(RcDoc::hardline());
                         docs.push(RcDoc::text(keyword_indent.clone()));
