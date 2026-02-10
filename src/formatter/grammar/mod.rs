@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+pub mod argparse_extractor;
 pub mod builtins;
 pub mod resolver;
 pub mod user_scanner;
