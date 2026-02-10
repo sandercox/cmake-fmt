@@ -3,7 +3,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use cmake_fmt::formatter::{format_text, FormatConfig};
+use cmake_fmt::formatter::{format_text_with_diagnostics, FormatConfig, SuppressionWarning};
 
 /// Format CMake files
 #[derive(Parser)]
@@ -32,6 +32,13 @@ pub struct Cli {
     /// Override config inline (e.g., "indent_width=4,max_line_length=100")
     #[arg(long)]
     pub style: Option<String>,
+}
+
+/// Print suppression warnings to stderr
+fn print_warnings(warnings: &[SuppressionWarning], file_label: &str) {
+    for warning in warnings {
+        eprintln!("{}: {}", file_label, warning);
+    }
 }
 
 /// Run the CLI application
@@ -118,7 +125,8 @@ fn process_stdin(config: &FormatConfig, check_mode: bool, diff_mode: bool) -> Re
     let mut input = String::new();
     stdin().lock().read_to_string(&mut input)?;
 
-    let formatted = format_text(&input, config);
+    let (formatted, warnings) = format_text_with_diagnostics(&input, config);
+    print_warnings(&warnings, "stdin");
 
     if diff_mode {
         if input != formatted {
@@ -191,7 +199,8 @@ fn process_files(
                 // If default mode (stdout), write the formatted content
                 if let Some(ref mut handle) = stdout_handle {
                     let content = std::fs::read_to_string(file)?;
-                    let formatted = format_text(&content, config);
+                    let (formatted, warnings) = format_text_with_diagnostics(&content, config);
+                    print_warnings(&warnings, &file.display().to_string());
                     write!(handle, "{}", formatted)?;
                 }
             }
@@ -224,8 +233,14 @@ fn process_file(
 ) -> Result<bool> {
     use std::fs;
 
+    // In stdout mode (no flags set), don't process here - it's handled by process_files
+    if !in_place && !check_mode && !diff_mode {
+        return Ok(false);
+    }
+
     let original = fs::read_to_string(path)?;
-    let formatted = format_text(&original, config);
+    let (formatted, warnings) = format_text_with_diagnostics(&original, config);
+    print_warnings(&warnings, &path.display().to_string());
 
     if diff_mode {
         if original != formatted {
