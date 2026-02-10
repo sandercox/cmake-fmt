@@ -1,5 +1,6 @@
 pub mod config;
 mod builtins;
+pub mod grammar;
 mod cst_to_doc;
 mod cmake_rules;
 mod comments;
@@ -7,6 +8,7 @@ mod suppression;
 mod user_commands;
 
 pub use config::{ClosingStyle, CommandCase, FormatConfig, LineEnding, UserCommandCase};
+pub use grammar::{CommandGrammar, GrammarRegistry, KeywordType};
 pub use suppression::SuppressionWarning;
 
 use crate::cst::parse_text;
