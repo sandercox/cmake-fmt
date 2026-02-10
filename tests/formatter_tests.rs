@@ -698,3 +698,62 @@ fn test_user_command_casing_idempotency() {
             "User command casing should be idempotent for input: {}", input);
     }
 }
+
+// ============================================================================
+// LARGE FILE REGRESSION TESTS (Stack Overflow Fix)
+// ============================================================================
+
+#[test]
+fn test_large_file_no_stack_overflow() {
+    // Generate a file with 2000 commands
+    let mut commands = vec!["cmake_minimum_required(VERSION 3.10)".to_string()];
+    for i in 0..2000 {
+        commands.push(format!("set(VAR_{} value_{})", i, i));
+    }
+    let input = commands.join("\n") + "\n";
+
+    let config = default_config();
+    let result = format_text(&input, &config);
+
+    // Verify result is not empty
+    assert!(!result.is_empty(), "Result should not be empty");
+
+    // Verify first and last commands are present
+    assert!(result.contains("cmake_minimum_required(VERSION 3.10)"),
+        "First command should be present");
+    assert!(result.contains("set(VAR_1999 value_1999)"),
+        "Last command should be present");
+
+    // Verify idempotency
+    let result2 = format_text(&result, &config);
+    assert_eq!(result, result2,
+        "Formatting should be idempotent for large files");
+}
+
+#[test]
+fn test_very_large_file_no_stack_overflow() {
+    // Generate a file with 5000 commands (mix of types)
+    let mut commands = vec!["cmake_minimum_required(VERSION 3.10)".to_string()];
+    for i in 0..5000 {
+        match i % 3 {
+            0 => commands.push(format!("set(VAR_{} value_{})", i, i)),
+            1 => commands.push(format!("message(STATUS \"Message {}\")", i)),
+            _ => {
+                commands.push(format!("if(VAR_{})", i));
+                commands.push(format!("    set(INNER_{} val)", i));
+                commands.push("endif()".to_string());
+            }
+        }
+    }
+    let input = commands.join("\n") + "\n";
+
+    let config = default_config();
+    let result = format_text(&input, &config);
+
+    // Verify it completes without panic
+    assert!(!result.is_empty(), "Result should not be empty");
+
+    // Verify output ends with newline
+    assert!(result.ends_with('\n'),
+        "Output should end with newline");
+}
