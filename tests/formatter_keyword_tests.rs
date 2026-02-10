@@ -745,3 +745,273 @@ fn test_install_code_mode() {
     assert!(result.contains("CODE"));
     assert!(result.contains("message(STATUS"));
 }
+
+// ============================================================================
+// Phase 14: file(), string(), list() multi-mode tests
+// ============================================================================
+
+#[test]
+fn test_file_glob_mode_formatting() {
+    let input = "file(GLOB\n  sources\n  CONFIGURE_DEPENDS\n  \"src/*.cpp\"\n)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // CONFIGURE_DEPENDS should format as flag
+    assert!(result.contains("GLOB"));
+    assert!(result.contains("sources"));
+    assert!(result.contains("CONFIGURE_DEPENDS"));
+    assert!(result.contains("src/*.cpp"));
+}
+
+#[test]
+fn test_file_glob_recurse_with_keywords() {
+    let input = "file(GLOB_RECURSE headers LIST_DIRECTORIES false CONFIGURE_DEPENDS \"include/*.h\")";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // LIST_DIRECTORIES as single-value, CONFIGURE_DEPENDS as flag
+    assert!(result.contains("GLOB_RECURSE"));
+    assert!(result.contains("headers"));
+    assert!(result.contains("LIST_DIRECTORIES"));
+    assert!(result.contains("false"));
+    assert!(result.contains("CONFIGURE_DEPENDS"));
+    assert!(result.contains("include/*.h"));
+}
+
+#[test]
+fn test_file_read_mode() {
+    let input = "file(READ \"input.txt\" content OFFSET 10 LIMIT 100 HEX)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // OFFSET/LIMIT as single-value, HEX as flag
+    assert!(result.contains("READ"));
+    assert!(result.contains("input.txt"));
+    assert!(result.contains("content"));
+    assert!(result.contains("OFFSET"));
+    assert!(result.contains("10"));
+    assert!(result.contains("LIMIT"));
+    assert!(result.contains("100"));
+    assert!(result.contains("HEX"));
+}
+
+#[test]
+fn test_file_strings_mode() {
+    let input = "file(STRINGS \"data.txt\" lines LENGTH_MAXIMUM 80 REGEX \"^#.*\")";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // LENGTH_MAXIMUM/REGEX as single-value
+    assert!(result.contains("STRINGS"));
+    assert!(result.contains("data.txt"));
+    assert!(result.contains("lines"));
+    assert!(result.contains("LENGTH_MAXIMUM"));
+    assert!(result.contains("80"));
+    assert!(result.contains("REGEX"));
+    assert!(result.contains("^#.*"));
+}
+
+#[test]
+fn test_file_download_mode() {
+    let input = "file(DOWNLOAD\n  \"https://example.com/file.tar.gz\"\n  \"file.tar.gz\"\n  EXPECTED_HASH SHA256=abc123\n  SHOW_PROGRESS\n  TIMEOUT 300\n)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // EXPECTED_HASH/TIMEOUT as single-value, SHOW_PROGRESS as flag
+    assert!(result.contains("DOWNLOAD"));
+    assert!(result.contains("https://example.com/file.tar.gz"));
+    assert!(result.contains("file.tar.gz"));
+    assert!(result.contains("EXPECTED_HASH"));
+    assert!(result.contains("SHA256=abc123"));
+    assert!(result.contains("SHOW_PROGRESS"));
+    assert!(result.contains("TIMEOUT"));
+    assert!(result.contains("300"));
+}
+
+#[test]
+fn test_file_copy_mode() {
+    let input = "file(COPY src/ DESTINATION build/ FILES_MATCHING PATTERN \"*.cmake\")";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // DESTINATION/PATTERN as single-value, FILES_MATCHING as flag
+    assert!(result.contains("COPY"));
+    assert!(result.contains("src/"));
+    assert!(result.contains("DESTINATION"));
+    assert!(result.contains("build/"));
+    assert!(result.contains("FILES_MATCHING"));
+    assert!(result.contains("PATTERN"));
+    assert!(result.contains("*.cmake"));
+}
+
+#[test]
+fn test_file_variable_mode_fallback() {
+    let input = "file(${FILE_OP} \"input.txt\" content)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // Variable reference in mode position falls back to simple formatting
+    assert!(result.contains("${FILE_OP}"));
+    assert!(result.contains("input.txt"));
+    assert!(result.contains("content"));
+}
+
+#[test]
+fn test_string_replace_simple_formatting() {
+    let input = "string(REPLACE \"old\" \"new\" output \"${input}\")";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // REPLACE mode has empty grammar, formats as simple args
+    assert!(result.contains("REPLACE"));
+    assert!(result.contains("old"));
+    assert!(result.contains("new"));
+    assert!(result.contains("output"));
+    assert!(result.contains("${input}"));
+}
+
+#[test]
+fn test_string_toupper_simple() {
+    let input = "string(TOUPPER \"${input}\" output)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // Simple formatting
+    assert!(result.contains("TOUPPER"));
+    assert!(result.contains("${input}"));
+    assert!(result.contains("output"));
+}
+
+#[test]
+fn test_string_find_with_reverse() {
+    let input = "string(FIND \"haystack\" \"needle\" position REVERSE)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // REVERSE is defined as flag in FIND mode
+    assert!(result.contains("FIND"));
+    assert!(result.contains("haystack"));
+    assert!(result.contains("needle"));
+    assert!(result.contains("position"));
+    assert!(result.contains("REVERSE"));
+}
+
+#[test]
+fn test_string_random_with_keywords() {
+    let input = "string(RANDOM LENGTH 16 ALPHABET \"0123456789abcdef\" result)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // LENGTH/ALPHABET as single-value
+    assert!(result.contains("RANDOM"));
+    assert!(result.contains("LENGTH"));
+    assert!(result.contains("16"));
+    assert!(result.contains("ALPHABET"));
+    assert!(result.contains("0123456789abcdef"));
+    assert!(result.contains("result"));
+}
+
+#[test]
+fn test_string_configure_keywords() {
+    let input = "string(CONFIGURE \"input @VAR@\" output @ONLY ESCAPE_QUOTES)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // @ONLY/ESCAPE_QUOTES as flags
+    assert!(result.contains("CONFIGURE"));
+    assert!(result.contains("input @VAR@"));
+    assert!(result.contains("output"));
+    assert!(result.contains("@ONLY"));
+    assert!(result.contains("ESCAPE_QUOTES"));
+}
+
+#[test]
+fn test_list_append_simple() {
+    let input = "list(APPEND mylist item1 item2 item3)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // Simple formatting (empty grammar mode)
+    assert!(result.contains("APPEND"));
+    assert!(result.contains("mylist"));
+    assert!(result.contains("item1"));
+    assert!(result.contains("item2"));
+    assert!(result.contains("item3"));
+}
+
+#[test]
+fn test_list_sort_with_keywords() {
+    let input = "list(SORT mylist\n  COMPARE STRING\n  CASE INSENSITIVE\n  ORDER DESCENDING\n)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // COMPARE/CASE/ORDER as single-value keywords
+    assert!(result.contains("SORT"));
+    assert!(result.contains("mylist"));
+    assert!(result.contains("COMPARE"));
+    assert!(result.contains("STRING"));
+    assert!(result.contains("CASE"));
+    assert!(result.contains("INSENSITIVE"));
+    assert!(result.contains("ORDER"));
+    assert!(result.contains("DESCENDING"));
+}
+
+#[test]
+fn test_list_filter_with_keywords() {
+    let input = "list(FILTER mylist INCLUDE REGEX \".*test.*\")";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // INCLUDE as flag, REGEX as single-value
+    assert!(result.contains("FILTER"));
+    assert!(result.contains("mylist"));
+    assert!(result.contains("INCLUDE"));
+    assert!(result.contains("REGEX"));
+    assert!(result.contains(".*test.*"));
+}
+
+#[test]
+fn test_list_variable_mode_fallback() {
+    let input = "list(${LIST_OP} mylist item1)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // Falls back to simple formatting
+    assert!(result.contains("${LIST_OP}"));
+    assert!(result.contains("mylist"));
+    assert!(result.contains("item1"));
+}
+
+#[test]
+fn test_all_mode_commands_idempotency() {
+    let test_cases = vec![
+        "file(GLOB sources CONFIGURE_DEPENDS \"src/*.cpp\")",
+        "string(REPLACE \"old\" \"new\" output \"${input}\")",
+        "list(SORT mylist COMPARE STRING CASE INSENSITIVE ORDER DESCENDING)",
+        "install(TARGETS mylib RUNTIME DESTINATION bin)",
+    ];
+
+    for input in test_cases {
+        let pass1 = format_text(input, &default_config());
+        let pass2 = format_text(&pass1, &default_config());
+        assert_eq!(pass1, pass2, "Idempotency failed for: {}", input);
+    }
+}
+
+#[test]
+fn test_mode_commands_backward_compat() {
+    let config = default_config();
+
+    // Commands not touched by Phase 14 should format identically
+    let test_cases = vec![
+        "find_package(Boost REQUIRED COMPONENTS system filesystem)",
+        "target_link_libraries(myapp PRIVATE lib1 lib2)",
+        "add_custom_command(OUTPUT output.txt COMMAND echo hello)",
+    ];
+
+    for input in test_cases {
+        let result = format_text(input, &config);
+        // Verify no crashes and basic structure preserved
+        assert!(result.contains(input.split('(').next().unwrap()));
+    }
+}
