@@ -5,18 +5,18 @@ use std::path::{Path, PathBuf};
 
 /// Find a config file by walking up the directory tree
 ///
-/// Searches for `.cmake-format.toml` first, then `.cmake-format.yaml`
+/// Searches for `.cmake-fmt.toml` first, then `.cmake-fmt.yaml`
 /// Returns the first config file found, or None if no config file exists
 pub fn find_config_file(start_dir: &Path) -> Option<PathBuf> {
     for ancestor in start_dir.ancestors() {
         // Check for TOML config first
-        let toml_path = ancestor.join(".cmake-format.toml");
+        let toml_path = ancestor.join(".cmake-fmt.toml");
         if toml_path.exists() && toml_path.is_file() {
             return Some(toml_path);
         }
 
         // Check for YAML config
-        let yaml_path = ancestor.join(".cmake-format.yaml");
+        let yaml_path = ancestor.join(".cmake-fmt.yaml");
         if yaml_path.exists() && yaml_path.is_file() {
             return Some(yaml_path);
         }
