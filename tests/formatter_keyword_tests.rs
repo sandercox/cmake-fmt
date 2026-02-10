@@ -13,9 +13,12 @@ fn test_target_link_libraries_keywords() {
     let input = "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 PRIVATE lib6 lib7 lib8)";
     let result = format_text(input, &default_config());
     // Should break because line is too long
-    // Values inline with keywords when they fit (sub-group flat-first)
-    assert!(result.contains("\tPUBLIC lib1 lib2 lib3 lib4 lib5\n"));
-    assert!(result.contains("\tPRIVATE lib6 lib7 lib8\n"));
+    // When broken, keywords on own line, values one-per-line underneath
+    assert!(result.contains("\tPUBLIC\n"));
+    assert!(result.contains("\t\tlib1\n"));
+    assert!(result.contains("\t\tlib2\n"));
+    assert!(result.contains("\tPRIVATE\n"));
+    assert!(result.contains("\t\tlib6\n"));
 }
 
 #[test]
@@ -42,9 +45,12 @@ fn test_target_include_directories_keywords() {
 fn test_target_sources_keywords() {
     let input = "target_sources(mylib PRIVATE src/a.cpp src/b.cpp src/c.cpp src/d.cpp PUBLIC include/header.h)";
     let result = format_text(input, &default_config());
-    // Should break with values inline with keywords when they fit
-    assert!(result.contains("\tPRIVATE src/a.cpp src/b.cpp src/c.cpp src/d.cpp\n"));
-    assert!(result.contains("\tPUBLIC include/header.h\n"));
+    // Should break with keywords on own line, values one-per-line underneath
+    assert!(result.contains("\tPRIVATE\n"));
+    assert!(result.contains("\t\tsrc/a.cpp\n"));
+    assert!(result.contains("\t\tsrc/d.cpp\n"));
+    assert!(result.contains("\tPUBLIC\n"));
+    assert!(result.contains("\t\tinclude/header.h\n"));
 }
 
 #[test]
@@ -69,8 +75,9 @@ fn test_install_keywords() {
     let input = "install(TARGETS mylib ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)";
     let result = format_text(input, &default_config());
     // Should break due to length
-    // TARGETS has short value inline with keyword
-    assert!(result.contains("TARGETS mylib\n"));
+    // When broken, keywords on own line with values underneath
+    assert!(result.contains("TARGETS\n"));
+    assert!(result.contains("\t\tmylib\n"));
     assert!(result.contains("ARCHIVE\n"));
     // DESTINATION is SingleValue, so it keeps value inline: "DESTINATION lib"
     assert!(result.contains("DESTINATION lib"));
@@ -101,27 +108,34 @@ fn test_keyword_aware_with_generator_expr() {
     // Generator expressions should be atomic (never break internally)
     assert!(result.contains("$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"));
     assert!(result.contains("$<INSTALL_INTERFACE:include>"));
-    // PUBLIC breaks because genexprs are long; PRIVATE has single value inline
+    // When command breaks, all keywords on own line with values one-per-line underneath
     assert!(result.contains("PUBLIC\n"));
-    assert!(result.contains("PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src\n"));
+    assert!(result.contains("PRIVATE\n"));
+    assert!(result.contains("\t\t${CMAKE_CURRENT_SOURCE_DIR}/src\n"));
 }
 
 #[test]
 fn test_target_compile_options_keywords() {
     let input = "target_compile_options(mylib PRIVATE -Wall -Wextra -Wpedantic -Werror PUBLIC -fPIC)";
     let result = format_text(input, &default_config());
-    // Should break with values inline with keywords when they fit
-    assert!(result.contains("\tPRIVATE -Wall -Wextra -Wpedantic -Werror\n"));
-    assert!(result.contains("\tPUBLIC -fPIC\n"));
+    // Should break with keywords on own line, values one-per-line underneath
+    assert!(result.contains("\tPRIVATE\n"));
+    assert!(result.contains("\t\t-Wall\n"));
+    assert!(result.contains("\t\t-Werror\n"));
+    assert!(result.contains("\tPUBLIC\n"));
+    assert!(result.contains("\t\t-fPIC\n"));
 }
 
 #[test]
 fn test_target_compile_definitions_keywords() {
     let input = "target_compile_definitions(mylib PUBLIC MY_LIB_VERSION=1 MY_LIB_DEBUG PRIVATE INTERNAL_BUILD)";
     let result = format_text(input, &default_config());
-    // Should break with values inline with keywords when they fit
-    assert!(result.contains("\tPUBLIC MY_LIB_VERSION=1 MY_LIB_DEBUG\n"));
-    assert!(result.contains("\tPRIVATE INTERNAL_BUILD\n"));
+    // Should break with keywords on own line, values one-per-line underneath
+    assert!(result.contains("\tPUBLIC\n"));
+    assert!(result.contains("\t\tMY_LIB_VERSION=1\n"));
+    assert!(result.contains("\t\tMY_LIB_DEBUG\n"));
+    assert!(result.contains("\tPRIVATE\n"));
+    assert!(result.contains("\t\tINTERNAL_BUILD\n"));
 }
 
 // ============================================================================
@@ -334,10 +348,16 @@ fn test_interface_keyword() {
 fn test_mixed_keywords_proper_indentation() {
     let input = "target_link_libraries(myapp PUBLIC lib1 lib2 PRIVATE lib3 lib4 INTERFACE lib5 lib6)";
     let result = format_text(input, &default_config());
-    // Should break with all three keyword sections, values inline with keywords
-    assert!(result.contains("\tPUBLIC lib1 lib2\n"));
-    assert!(result.contains("\tPRIVATE lib3 lib4\n"));
-    assert!(result.contains("\tINTERFACE lib5 lib6\n"));
+    // Should break with all three keyword sections, keywords on own line, values one-per-line
+    assert!(result.contains("\tPUBLIC\n"));
+    assert!(result.contains("\t\tlib1\n"));
+    assert!(result.contains("\t\tlib2\n"));
+    assert!(result.contains("\tPRIVATE\n"));
+    assert!(result.contains("\t\tlib3\n"));
+    assert!(result.contains("\t\tlib4\n"));
+    assert!(result.contains("\tINTERFACE\n"));
+    assert!(result.contains("\t\tlib5\n"));
+    assert!(result.contains("\t\tlib6\n"));
 }
 
 #[test]
@@ -497,10 +517,10 @@ fn test_single_value_inline_short() {
 fn test_multi_value_one_per_line() {
     let input = "target_sources(mylib PRIVATE src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp src/f.cpp src/g.cpp)";
     let result = format_text(input, &default_config());
-    // Short value list fits inline with keyword (sub-group flat-first)
-    assert!(result.contains("\tPRIVATE src/a.cpp src/b.cpp"));
-    // All source files should be present
-    assert!(result.contains("src/g.cpp"));
+    // When broken, keywords on own line, values one-per-line underneath
+    assert!(result.contains("\tPRIVATE\n"));
+    assert!(result.contains("\t\tsrc/a.cpp\n"));
+    assert!(result.contains("\t\tsrc/g.cpp\n"));
 }
 
 #[test]
@@ -615,8 +635,9 @@ fn test_install_targets_mode_formatting() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
 
-    // Should format with TARGETS as multi-value (short value inline), RUNTIME/LIBRARY/ARCHIVE as flags
-    assert!(result.contains("TARGETS mylib\n"));
+    // Should format with TARGETS breaking (keywords on own line, values underneath)
+    assert!(result.contains("TARGETS\n"));
+    assert!(result.contains("\t\tmylib\n"));
     assert!(result.contains("RUNTIME"));
     assert!(result.contains("LIBRARY"));
     assert!(result.contains("ARCHIVE"));

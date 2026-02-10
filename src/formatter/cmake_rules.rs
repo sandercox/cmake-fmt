@@ -365,16 +365,14 @@ pub fn format_keyword_aware_args(
                                 docs.push(RcDoc::text(comment.clone()));
                             }
                         } else {
-                            // Values on same line as keyword: sub-group lets pretty printer decide
-                            let mut value_docs = Vec::new();
+                            // Values on same line as keyword: flat_alt inherits from outer group
                             for arg in &section.args {
-                                value_docs.push(RcDoc::flat_alt(
+                                docs.push(RcDoc::flat_alt(
                                     RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
                                     RcDoc::space(),
                                 ));
-                                value_docs.push(RcDoc::text(arg.clone()));
+                                docs.push(RcDoc::text(arg.clone()));
                             }
-                            docs.push(RcDoc::concat(value_docs).group());
                         }
                     }
                 }
@@ -492,16 +490,14 @@ pub fn format_keyword_aware_args(
                                 docs.push(RcDoc::text(comment.clone()));
                             }
                         } else {
-                            // Values on same line as keyword: sub-group lets pretty printer decide
-                            let mut value_docs = Vec::new();
+                            // Values on same line as keyword: flat_alt inherits from outer group
                             for arg in &section.args {
-                                value_docs.push(RcDoc::flat_alt(
+                                docs.push(RcDoc::flat_alt(
                                     RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
                                     RcDoc::space(),
                                 ));
-                                value_docs.push(RcDoc::text(arg.clone()));
+                                docs.push(RcDoc::text(arg.clone()));
                             }
-                            docs.push(RcDoc::concat(value_docs).group());
                         }
                     }
                 }
