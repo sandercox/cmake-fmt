@@ -52,22 +52,23 @@ pub fn run() -> Result<ExitCode> {
 
     // Handle interactive mode first (if --interactive flag is set)
     if cli.interactive {
-        // TTY guard (INT-06): Check stdin and stderr are both terminals
-        if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
-            eprintln!("error: interactive mode requires a terminal (TTY)");
-            return Ok(ExitCode::FAILURE);
-        }
-
         // Determine if stdin input is specified
         let is_stdin = cli.files.is_empty() || (cli.files.len() == 1 && cli.files[0] == PathBuf::from("-"));
 
         // Validate exactly one file is provided (no stdin, no multi-file)
+        // Do this BEFORE TTY check so error messages are more specific
         if cli.files.is_empty() || is_stdin {
             eprintln!("error: interactive mode requires a file argument");
             return Ok(ExitCode::FAILURE);
         }
         if cli.files.len() > 1 {
             eprintln!("error: interactive mode supports one file at a time");
+            return Ok(ExitCode::FAILURE);
+        }
+
+        // TTY guard (INT-06): Check stdin and stderr are both terminals
+        if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+            eprintln!("error: interactive mode requires a terminal (TTY)");
             return Ok(ExitCode::FAILURE);
         }
 
