@@ -4,7 +4,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use cmake_fmt::formatter::{format_text_with_diagnostics, FormatConfig, SuppressionWarning};
+use cmake_fmt::formatter::{format_text_with_diagnostics, format_text_with_diagnostics_and_path, FormatConfig, SuppressionWarning};
 
 /// Format CMake files
 #[derive(Parser)]
@@ -239,7 +239,7 @@ fn process_files(
                 // If default mode (stdout), write the formatted content
                 if let Some(ref mut handle) = stdout_handle {
                     let content = std::fs::read_to_string(file)?;
-                    let (formatted, warnings) = format_text_with_diagnostics(&content, config);
+                    let (formatted, warnings) = format_text_with_diagnostics_and_path(&content, config, Some(file.as_path()));
                     print_warnings(&warnings, &file.display().to_string());
                     write!(handle, "{}", formatted)?;
                 }
@@ -279,7 +279,7 @@ fn process_file(
     }
 
     let original = fs::read_to_string(path)?;
-    let (formatted, warnings) = format_text_with_diagnostics(&original, config);
+    let (formatted, warnings) = format_text_with_diagnostics_and_path(&original, config, Some(path));
     print_warnings(&warnings, &path.display().to_string());
 
     if diff_mode {

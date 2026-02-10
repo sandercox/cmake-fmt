@@ -13,6 +13,7 @@ pub use suppression::SuppressionWarning;
 
 use crate::cst::parse_text;
 use pretty::RcDoc;
+use std::path::Path;
 
 /// Detect the line ending style used in the input text.
 ///
@@ -38,12 +39,17 @@ pub fn detect_line_ending(input: &str) -> LineEnding {
 /// # Arguments
 /// * `input` - The CMake source code to format
 /// * `config` - Formatting configuration
+/// * `file_path` - Optional file path for project-wide user command scanning
 ///
 /// # Returns
 /// A tuple of (formatted_code, warnings) where formatted_code is guaranteed
 /// to end with a single newline and warnings contains any suppression-related
 /// diagnostics
-pub fn format_text_with_diagnostics(input: &str, config: &FormatConfig) -> (String, Vec<SuppressionWarning>) {
+pub fn format_text_with_diagnostics_and_path(
+    input: &str,
+    config: &FormatConfig,
+    file_path: Option<&Path>,
+) -> (String, Vec<SuppressionWarning>) {
     // Resolve effective line ending
     let effective_line_ending = match config.line_ending {
         LineEnding::Auto => detect_line_ending(input),
@@ -60,7 +66,21 @@ pub fn format_text_with_diagnostics(input: &str, config: &FormatConfig) -> (Stri
     };
 
     let cst = parse_text(parse_input);
-    let user_defs = user_commands::scan_user_command_definitions(&cst.root);
+
+    // Get single-file user definitions
+    let single_file_defs = user_commands::scan_user_command_definitions(&cst.root);
+
+    // Merge with project-wide definitions if file_path is provided
+    let user_defs = if let Some(path) = file_path {
+        let mut merged = grammar::get_project_user_commands(path);
+        // Single-file definitions override project-wide (local wins)
+        merged.extend(single_file_defs);
+        merged
+    } else {
+        // Stdin case: use only single-file definitions
+        single_file_defs
+    };
+
     let (doc, warnings) = cst_to_doc::format_cst(&cst, config, parse_input, &user_defs);
     let mut result = render_doc(doc, config);
 
@@ -70,6 +90,20 @@ pub fn format_text_with_diagnostics(input: &str, config: &FormatConfig) -> (Stri
     }
 
     (result, warnings)
+}
+
+/// Format CMake code with the given configuration and return diagnostics
+///
+/// # Arguments
+/// * `input` - The CMake source code to format
+/// * `config` - Formatting configuration
+///
+/// # Returns
+/// A tuple of (formatted_code, warnings) where formatted_code is guaranteed
+/// to end with a single newline and warnings contains any suppression-related
+/// diagnostics
+pub fn format_text_with_diagnostics(input: &str, config: &FormatConfig) -> (String, Vec<SuppressionWarning>) {
+    format_text_with_diagnostics_and_path(input, config, None)
 }
 
 /// Format CMake code with the given configuration
