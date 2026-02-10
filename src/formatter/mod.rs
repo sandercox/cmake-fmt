@@ -2,8 +2,10 @@ pub mod config;
 mod cst_to_doc;
 mod cmake_rules;
 mod comments;
+mod suppression;
 
 pub use config::{ClosingStyle, CommandCase, FormatConfig, LineEnding};
+pub use suppression::SuppressionWarning;
 
 use crate::cst::parse_text;
 use pretty::RcDoc;
@@ -27,15 +29,17 @@ pub fn detect_line_ending(input: &str) -> LineEnding {
     }
 }
 
-/// Format CMake code with the given configuration
+/// Format CMake code with the given configuration and return diagnostics
 ///
 /// # Arguments
 /// * `input` - The CMake source code to format
 /// * `config` - Formatting configuration
 ///
 /// # Returns
-/// Formatted CMake code as a String, guaranteed to end with a single newline
-pub fn format_text(input: &str, config: &FormatConfig) -> String {
+/// A tuple of (formatted_code, warnings) where formatted_code is guaranteed
+/// to end with a single newline and warnings contains any suppression-related
+/// diagnostics
+pub fn format_text_with_diagnostics(input: &str, config: &FormatConfig) -> (String, Vec<SuppressionWarning>) {
     // Resolve effective line ending
     let effective_line_ending = match config.line_ending {
         LineEnding::Auto => detect_line_ending(input),
@@ -52,7 +56,7 @@ pub fn format_text(input: &str, config: &FormatConfig) -> String {
     };
 
     let cst = parse_text(parse_input);
-    let doc = cst_to_doc::format_cst(&cst, config);
+    let (doc, warnings) = cst_to_doc::format_cst(&cst, config, parse_input);
     let mut result = render_doc(doc, config);
 
     // Apply CRLF if needed
@@ -60,6 +64,19 @@ pub fn format_text(input: &str, config: &FormatConfig) -> String {
         result = result.replace('\n', "\r\n");
     }
 
+    (result, warnings)
+}
+
+/// Format CMake code with the given configuration
+///
+/// # Arguments
+/// * `input` - The CMake source code to format
+/// * `config` - Formatting configuration
+///
+/// # Returns
+/// Formatted CMake code as a String, guaranteed to end with a single newline
+pub fn format_text(input: &str, config: &FormatConfig) -> String {
+    let (result, _warnings) = format_text_with_diagnostics(input, config);
     result
 }
 

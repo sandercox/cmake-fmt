@@ -7,6 +7,7 @@ use rowan::NodeOrToken;
 use super::config::{ClosingStyle, CommandCase, FormatConfig};
 use super::cmake_rules;
 use super::comments;
+use super::suppression::{parse_directive, line_number_at_offset, SuppressionTracker, SuppressionWarning};
 
 /// Signals detected in argument list that affect formatting
 pub(crate) struct ArgumentFormatSignals {
@@ -53,9 +54,9 @@ impl<'a> FormatContext<'a> {
 }
 
 /// Entry point: convert CST to Doc IR
-pub fn format_cst(cst: &CSTRoot, config: &FormatConfig) -> RcDoc<'static, ()> {
+pub fn format_cst(cst: &CSTRoot, config: &FormatConfig, source: &str) -> (RcDoc<'static, ()>, Vec<SuppressionWarning>) {
     let ctx = FormatContext::new(config);
-    format_file(&cst.root, &ctx)
+    format_file(&cst.root, &ctx, source)
 }
 
 /// Collect all trailing comments in the file
@@ -74,11 +75,12 @@ fn collect_trailing_comments(node: &SyntaxNode) -> std::collections::HashSet<Str
 }
 
 /// Format the FILE node
-fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
+fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'static, ()>, Vec<SuppressionWarning>) {
     let mut docs = Vec::new();
     let mut current_indent: usize = 0;
     let mut blank_line_count = 0;
     let mut scope_stack: Vec<ScopeFrame> = Vec::new();
+    let mut tracker = SuppressionTracker::new();
 
     // First pass: collect all comments that will be handled as leading/trailing
     // Trailing comments take precedence over leading comments (to avoid duplication)
@@ -113,6 +115,22 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
                         // Check for leading comments FIRST
                         let leading_comments = comments::extract_leading_comments(&child_node);
 
+                        // Process directives in leading comments
+                        for comment in &leading_comments {
+                            if let Some(directive) = parse_directive(comment) {
+                                let line = line_number_at_offset(source, child_node.text_range().start().into());
+                                tracker.process_directive(directive, line);
+                            }
+                        }
+
+                        // Check if we should skip this command or if we're in a suppressed region
+                        let should_skip = tracker.should_skip_next();
+                        let is_suppressed = tracker.is_suppressed();
+
+                        if should_skip {
+                            tracker.clear_skip();
+                        }
+
                         // Emit accumulated blank lines before command/comments
                         // But only if not first content
                         if blank_line_count >= 2 && !docs.is_empty() {
@@ -122,7 +140,41 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
                             }
                         }
 
-                        // Emit leading comments (skip if already handled as trailing)
+                        if should_skip || is_suppressed {
+                            // Emit the command as raw text
+                            // For skip: the leading comments are formatted (outside suppression)
+                            // For suppressed: everything is raw
+
+                            if !is_suppressed {
+                                // Skip mode: emit formatted leading comments
+                                let indent_str = indent_string(current_indent, ctx.config);
+                                for comment in &leading_comments {
+                                    if !trailing_comments.contains(comment) {
+                                        docs.push(RcDoc::text(format!("{}{}", indent_str, comment)));
+                                        docs.push(RcDoc::hardline());
+                                    }
+                                }
+                            } else {
+                                // Suppressed region: emit raw leading comments
+                                let indent_str = indent_string(current_indent, ctx.config);
+                                for comment in &leading_comments {
+                                    if !trailing_comments.contains(comment) {
+                                        docs.push(RcDoc::text(format!("{}{}", indent_str, comment)));
+                                        docs.push(RcDoc::hardline());
+                                    }
+                                }
+                            }
+
+                            // Emit the command itself as raw text
+                            let raw_text = child_node.text().to_string();
+                            let indent_str = indent_string(current_indent, ctx.config);
+                            docs.push(RcDoc::text(format!("{}{}", indent_str, raw_text.trim())));
+                            docs.push(RcDoc::hardline());
+                            blank_line_count = 0;
+                            continue;
+                        }
+
+                        // Normal formatting path: emit leading comments (skip if already handled as trailing)
                         let indent_str = indent_string(current_indent, ctx.config);
                         for comment in &leading_comments {
                             // Only emit if not already handled as a trailing comment
@@ -229,6 +281,13 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
                     SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
                         // Only emit standalone comments (not already handled)
                         let comment_text = token.text().to_string();
+
+                        // Process directives in standalone comments
+                        if let Some(directive) = parse_directive(&comment_text) {
+                            let line = line_number_at_offset(source, token.text_range().start().into());
+                            tracker.process_directive(directive, line);
+                        }
+
                         if !handled_comments.contains(&comment_text) {
                             // Emit accumulated blank lines before standalone comment
                             // But only if not first content
@@ -258,7 +317,11 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext) -> RcDoc<'static, ()> {
         }
     }
 
-    RcDoc::concat(docs)
+    // Finalize suppression tracking and collect warnings
+    tracker.finalize();
+    let warnings = tracker.into_warnings();
+
+    (RcDoc::concat(docs), warnings)
 }
 
 /// Format a command invocation
@@ -285,7 +348,7 @@ fn format_command(
                 if let Some(arg_list) = cmd.argument_list() {
                     if cmake_rules::is_keyword_aware_command(&name) {
                         let sections = cmake_rules::parse_keyword_sections(&arg_list);
-                        cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config)
+                        cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
                     } else {
                         format_argument_list(&arg_list, ctx)
                     }
@@ -312,7 +375,7 @@ fn format_command(
             // Check if this command should use keyword-aware formatting
             if cmake_rules::is_keyword_aware_command(&name) {
                 let sections = cmake_rules::parse_keyword_sections(&arg_list);
-                cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config)
+                cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
             } else {
                 format_argument_list(&arg_list, ctx)
             }
@@ -389,7 +452,7 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
     // Detect formatting signals
     let signals = detect_argument_formatting_signals(arg_list);
 
-    // If no multiline signals, use auto-layout (soft lines + group)
+    // If no multiline signals, use auto-layout (flat_alt + group)
     // But follow ARGL-03: first arg should be on same line as command when broken
     if !signals.force_multiline {
         if args.len() == 1 {
@@ -398,33 +461,45 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
             return RcDoc::text(text);
         }
 
-        // Multiple arguments: first arg not nested, rest nested
-        // This ensures ARGL-03 even when auto-layout breaks
+        // Use explicit text indentation via flat_alt instead of nest()
+        // This correctly handles tabs and respects the command's nesting depth
+        let base_indent = indent_string(ctx.indent_level, ctx.config);
+        let inner_indent = indent_string(ctx.indent_level + 1, ctx.config);
+
         let first_text = args[0].text().to_string();
         let mut rest_docs = Vec::new();
 
-        for (i, arg) in args.iter().enumerate().skip(1) {
-            rest_docs.push(RcDoc::line());
+        for (_i, arg) in args.iter().enumerate().skip(1) {
+            // flat_alt: broken → newline + indent text, flat → space
+            rest_docs.push(RcDoc::flat_alt(
+                RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
+                RcDoc::space(),
+            ));
             let text = arg.text().to_string();
             rest_docs.push(RcDoc::text(text));
         }
 
-        rest_docs.push(RcDoc::line_()); // Soft line before closing paren
+        // Closing paren position: broken → newline + base indent, flat → nothing
+        rest_docs.push(RcDoc::flat_alt(
+            RcDoc::hardline().append(RcDoc::text(base_indent)),
+            RcDoc::nil(),
+        ));
 
-        // Build: first + grouped(nested(rest))
         // When flat: "first rest1 rest2"
-        // When broken: "first\n  rest1\n  rest2\n"
+        // When broken: "first\n<inner>rest1\n<inner>rest2\n<base>"
         return RcDoc::text(first_text)
             .append(
                 RcDoc::concat(rest_docs)
-                    .nest(ctx.config.indent_width as isize)
                     .group()
             );
     }
 
     // Force multiline: walk tokens and build Doc IR with hardlines
+    // Use explicit text indentation instead of nest() for correct tab/space handling
+    let base_indent = indent_string(ctx.indent_level, ctx.config);
+    let inner_indent = indent_string(ctx.indent_level + 1, ctx.config);
+
     // Strategy for ARGL-03: first arg not indented, rest indented
-    // Build first_arg_doc separately, then build rest_docs with nesting
     let mut first_arg_doc: Option<RcDoc<'static, ()>> = None;
     let mut rest_docs = Vec::new();
     let mut consecutive_newline_count = 0;
@@ -448,13 +523,11 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
                             first_arg_doc = Some(RcDoc::text(text));
                             seen_first_arg = true;
                         } else {
-                            // Subsequent arguments: add hardline before each
+                            // Subsequent arguments: hardline + explicit indent
                             rest_docs.push(RcDoc::hardline());
 
                             // If there were blank lines before this arg, emit extra hardlines
                             if consecutive_newline_count >= 2 {
-                                // consecutive_newline_count includes the line-ending newline
-                                // So 2 newlines = 1 blank line, 3 newlines = 2 blank lines, etc.
                                 let blank_lines = consecutive_newline_count - 1;
                                 let blank_lines_to_emit = std::cmp::min(blank_lines, ctx.config.max_blank_lines);
                                 for _ in 0..blank_lines_to_emit {
@@ -462,12 +535,13 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
                                 }
                             }
 
+                            rest_docs.push(RcDoc::text(inner_indent.clone()));
                             rest_docs.push(RcDoc::text(text));
                         }
                         consecutive_newline_count = 0;
                     }
                     SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
-                        // Comments always go in rest_docs (indented)
+                        // Comments at same indent level as arguments
                         let text = token.text().to_string();
                         rest_docs.push(RcDoc::hardline());
 
@@ -480,6 +554,7 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
                             }
                         }
 
+                        rest_docs.push(RcDoc::text(inner_indent.clone()));
                         rest_docs.push(RcDoc::text(text));
                         consecutive_newline_count = 0;
                     }
@@ -506,13 +581,12 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
     if let Some(first) = first_arg_doc {
         // We have a first arg
         if !rest_docs.is_empty() {
-            // First arg + nested rest + hardline before closing paren
+            // First arg + rest with explicit indentation + closing paren indent
             first
-                .append(RcDoc::concat(rest_docs).nest(ctx.config.indent_width as isize))
+                .append(RcDoc::concat(rest_docs))
                 .append(RcDoc::hardline())
+                .append(RcDoc::text(base_indent))
         } else {
-            // Only first arg - but since multiline was forced, there must be a newline somewhere
-            // This shouldn't happen in practice (if only 1 arg and no newlines, not forced multiline)
             first
         }
     } else {
@@ -522,7 +596,7 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
 }
 
 /// Build an indentation string for the given level, respecting tabs/spaces config
-fn indent_string(level: usize, config: &FormatConfig) -> String {
+pub(crate) fn indent_string(level: usize, config: &FormatConfig) -> String {
     if config.use_tabs {
         "\t".repeat(level)
     } else {
