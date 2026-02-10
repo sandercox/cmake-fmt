@@ -13,6 +13,9 @@ use super::comments;
 use super::suppression::{parse_directive, line_number_at_offset, SuppressionTracker, SuppressionWarning};
 use super::grammar::GrammarRegistry;
 
+// Import post-processing function from parent module
+use super::post_process_rendered_output;
+
 /// Signals detected in argument list that affect formatting
 pub(crate) struct ArgumentFormatSignals {
     pub(crate) force_multiline: bool,
@@ -56,15 +59,28 @@ impl<'a> FormatContext<'a> {
     }
 }
 
-/// Entry point: convert CST to Doc IR
+/// Entry point: convert CST to Doc IR and render to String
 pub fn format_cst(
     cst: &CSTRoot,
     config: &FormatConfig,
     source: &str,
     user_defs: &HashMap<String, String>,
-) -> (RcDoc<'static, ()>, Vec<SuppressionWarning>) {
+) -> (String, Vec<SuppressionWarning>) {
     let ctx = FormatContext::new(config, user_defs);
     format_file(&cst.root, &ctx, source)
+}
+
+/// Render a batch of docs to a String
+fn render_batch(docs: Vec<RcDoc<'static, ()>>, width: usize) -> String {
+    if docs.is_empty() {
+        return String::new();
+    }
+    let doc = RcDoc::concat(docs);
+    let mut output = Vec::new();
+    doc.render(width, &mut output)
+        .expect("rendering to Vec should not fail");
+    String::from_utf8(output)
+        .expect("formatted output should be valid UTF-8")
 }
 
 /// Collect all trailing comments in the file
@@ -83,12 +99,16 @@ fn collect_trailing_comments(node: &SyntaxNode) -> std::collections::HashSet<Str
 }
 
 /// Format the FILE node
-fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'static, ()>, Vec<SuppressionWarning>) {
+fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String, Vec<SuppressionWarning>) {
     let mut docs = Vec::new();
+    let mut batch_strings = Vec::new();
     let mut current_indent: usize = 0;
     let mut blank_line_count = 0;
     let mut scope_stack: Vec<ScopeFrame> = Vec::new();
     let mut tracker = SuppressionTracker::new();
+
+    // Batch size: render every 500 docs to prevent stack overflow
+    const BATCH_SIZE: usize = 500;
 
     // First pass: collect all comments that will be handled as leading/trailing
     // Trailing comments take precedence over leading comments (to avoid duplication)
@@ -276,6 +296,12 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'
                             docs.push(cmd_doc);
                             docs.push(RcDoc::hardline());
 
+                            // Check if we should render a batch to prevent deep nesting
+                            if docs.len() >= BATCH_SIZE {
+                                let batch = render_batch(std::mem::take(&mut docs), ctx.config.max_line_length);
+                                batch_strings.push(batch);
+                            }
+
                             // Handle block openers (indent and push scope after emitting)
                             if is_block_opener(&cmd_name) {
                                 current_indent += 1;
@@ -360,11 +386,21 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'
         }
     }
 
+    // Render any remaining docs in the final batch
+    if !docs.is_empty() {
+        let batch = render_batch(docs, ctx.config.max_line_length);
+        batch_strings.push(batch);
+    }
+
     // Finalize suppression tracking and collect warnings
     tracker.finalize();
     let warnings = tracker.into_warnings();
 
-    (RcDoc::concat(docs), warnings)
+    // Join all batch strings and apply post-processing
+    let result = batch_strings.join("");
+    let result = post_process_rendered_output(&result);
+
+    (result, warnings)
 }
 
 /// Format a command invocation

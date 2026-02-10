@@ -12,7 +12,6 @@ pub use grammar::{CommandGrammar, GrammarRegistry, KeywordType};
 pub use suppression::SuppressionWarning;
 
 use crate::cst::parse_text;
-use pretty::RcDoc;
 use std::path::Path;
 
 /// Detect the line ending style used in the input text.
@@ -81,8 +80,7 @@ pub fn format_text_with_diagnostics_and_path(
         single_file_defs
     };
 
-    let (doc, warnings) = cst_to_doc::format_cst(&cst, config, parse_input, &user_defs);
-    let mut result = render_doc(doc, config);
+    let (mut result, warnings) = cst_to_doc::format_cst(&cst, config, parse_input, &user_defs);
 
     // Apply CRLF if needed
     if effective_line_ending == LineEnding::CrLf && !result.is_empty() {
@@ -119,14 +117,8 @@ pub fn format_text(input: &str, config: &FormatConfig) -> String {
     result
 }
 
-/// Render a Doc to a String
-fn render_doc(doc: RcDoc<'static, ()>, config: &FormatConfig) -> String {
-    let mut output = Vec::new();
-    doc.render(config.max_line_length, &mut output)
-        .expect("rendering to Vec should not fail");
-    let result = String::from_utf8(output)
-        .expect("formatted output should be valid UTF-8");
-
+/// Post-process rendered output: strip trailing whitespace and normalize ending
+pub(crate) fn post_process_rendered_output(result: &str) -> String {
     // Strip trailing whitespace from each line (the pretty crate can produce
     // indentation on otherwise-blank lines when nest() wraps line() breaks)
     let result: String = result
