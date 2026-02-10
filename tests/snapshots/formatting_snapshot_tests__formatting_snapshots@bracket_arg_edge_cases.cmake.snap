@@ -28,7 +28,7 @@ message([[]])
 # ----------------------------------------------------------------------------
 # Help text with preserved indentation
 set(HELP
-    [[
+	[[
 Usage: myapp [options]
   --help     Show help
   --version  Show version
@@ -78,12 +78,12 @@ message([[line1
 line2
 line3]])
 
-# Mixed special chars: quotes, braces, dollar signs
+# Mixed special chars: quotes, braces, dollar signs (use [=[ to allow ]] inside)
 set(SPECIAL
-	[[
+	[=[
 "quoted" ${not_expanded} $<not:expanded>
 {braces} [nested[brackets]]
-    ]]
+]=]
 )
 
 # Unicode characters (UTF-8 preserved)

@@ -76,11 +76,11 @@ message([[line1
 line2
 line3]])
 
-# Mixed special chars: quotes, braces, dollar signs
-set(SPECIAL [[
+# Mixed special chars: quotes, braces, dollar signs (use [=[ to allow ]] inside)
+set(SPECIAL [=[
 "quoted" ${not_expanded} $<not:expanded>
 {braces} [nested[brackets]]
-]])
+]=])
 
 # Unicode characters (UTF-8 preserved)
 message([[Русский 中文 العربية]])
