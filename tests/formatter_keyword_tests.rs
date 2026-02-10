@@ -616,3 +616,132 @@ fn test_case_sensitive_keywords() {
     assert!(result.contains("I18n"));
     assert!(result.contains("CoreAddons"));
 }
+
+// ============================================================================
+// Phase 14: Per-Mode Command Formatting
+// ============================================================================
+
+#[test]
+fn test_install_targets_mode_formatting() {
+    let input = "install(TARGETS mylib RUNTIME DESTINATION bin LIBRARY DESTINATION lib ARCHIVE DESTINATION lib)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // Should format with TARGETS as multi-value, RUNTIME/LIBRARY/ARCHIVE as flags
+    assert!(result.contains("TARGETS\n"));
+    assert!(result.contains("RUNTIME"));
+    assert!(result.contains("LIBRARY"));
+    assert!(result.contains("ARCHIVE"));
+    assert!(result.contains("DESTINATION"));
+}
+
+#[test]
+fn test_install_files_mode_formatting() {
+    let input = "install(FILES readme.txt license.txt DESTINATION share/doc)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // Should format with FILES as multi-value section
+    assert!(result.contains("FILES\n"));
+    assert!(result.contains("readme.txt"));
+    assert!(result.contains("license.txt"));
+    assert!(result.contains("DESTINATION"));
+}
+
+#[test]
+fn test_install_directory_mode_formatting() {
+    let input = "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // Should format with DIRECTORY as multi-value, FILES_MATCHING as flag, PATTERN as single-value
+    assert!(result.contains("DIRECTORY\n"));
+    assert!(result.contains("include/"));
+    assert!(result.contains("DESTINATION"));
+    assert!(result.contains("FILES_MATCHING"));
+    assert!(result.contains("PATTERN"));
+}
+
+#[test]
+fn test_install_export_mode_formatting() {
+    let input = "install(EXPORT MyProjectTargets NAMESPACE MyProject:: FILE MyProjectConfig.cmake DESTINATION lib/cmake/MyProject)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // Should format with EXPORT/NAMESPACE/FILE/DESTINATION as single-value keywords
+    assert!(result.contains("EXPORT"));
+    assert!(result.contains("MyProjectTargets"));
+    assert!(result.contains("NAMESPACE"));
+    assert!(result.contains("MyProject::"));
+    assert!(result.contains("FILE"));
+    assert!(result.contains("MyProjectConfig.cmake"));
+}
+
+#[test]
+fn test_install_variable_mode_fallback() {
+    let input = "install(${INSTALL_TYPE} mylib DESTINATION lib)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // When mode is a variable, we can't resolve to a specific mode grammar
+    // Falls back to general keyword-aware formatting (using hardcoded keywords)
+    assert!(result.contains("${INSTALL_TYPE}"));
+    assert!(result.contains("mylib"));
+    assert!(result.contains("DESTINATION"));
+    // Still treats DESTINATION as a keyword (using fallback keyword list)
+    // This is correct behavior - DESTINATION is a keyword even if mode is unknown
+}
+
+#[test]
+fn test_install_mode_idempotency_targets() {
+    let input = "install(TARGETS mylib RUNTIME DESTINATION bin LIBRARY DESTINATION lib)";
+    let pass1 = format_text(input, &default_config());
+    let pass2 = format_text(&pass1, &default_config());
+    assert_eq!(pass1, pass2, "TARGETS mode formatting should be idempotent");
+}
+
+#[test]
+fn test_install_mode_idempotency_files() {
+    let input = "install(FILES readme.txt license.txt DESTINATION share/doc)";
+    let pass1 = format_text(input, &default_config());
+    let pass2 = format_text(&pass1, &default_config());
+    assert_eq!(pass1, pass2, "FILES mode formatting should be idempotent");
+}
+
+#[test]
+fn test_install_mode_idempotency_directory() {
+    let input = "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")";
+    let pass1 = format_text(input, &default_config());
+    let pass2 = format_text(&pass1, &default_config());
+    assert_eq!(pass1, pass2, "DIRECTORY mode formatting should be idempotent");
+}
+
+#[test]
+fn test_install_mode_idempotency_export() {
+    let input = "install(EXPORT MyProjectTargets NAMESPACE MyProject:: FILE MyProjectConfig.cmake DESTINATION lib/cmake/MyProject)";
+    let pass1 = format_text(input, &default_config());
+    let pass2 = format_text(&pass1, &default_config());
+    assert_eq!(pass1, pass2, "EXPORT mode formatting should be idempotent");
+}
+
+#[test]
+fn test_install_script_mode() {
+    let input = "install(SCRIPT \"${CMAKE_CURRENT_SOURCE_DIR}/post-install.cmake\")";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // Should format SCRIPT as single-value
+    assert!(result.contains("SCRIPT"));
+    assert!(result.contains("${CMAKE_CURRENT_SOURCE_DIR}/post-install.cmake"));
+}
+
+#[test]
+fn test_install_code_mode() {
+    let input = "install(CODE \"message(STATUS \\\"Installing\\\")\")";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // Should format CODE as single-value
+    assert!(result.contains("CODE"));
+    assert!(result.contains("message(STATUS"));
+}

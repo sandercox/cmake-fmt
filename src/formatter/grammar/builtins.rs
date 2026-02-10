@@ -126,41 +126,117 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         "NO_CMAKE_FIND_ROOT_PATH" => Flag,
     );
 
-    // install (basic, single-mode deferred to Phase 14)
-    grammar!("install",
-        "TARGETS" => MultiValue,
-        "DESTINATION" => SingleValue,
-        "COMPONENT" => SingleValue,
-        "CONFIGURATIONS" => MultiValue,
-        "OPTIONAL" => Flag,
-        "EXCLUDE_FROM_ALL" => Flag,
-        "NAMELINK_ONLY" => Flag,
-        "NAMELINK_SKIP" => Flag,
-        "RUNTIME" => Flag,
-        "LIBRARY" => Flag,
-        "ARCHIVE" => Flag,
-        "OBJECTS" => Flag,
-        "FRAMEWORK" => Flag,
-        "BUNDLE" => Flag,
-        "PRIVATE_HEADER" => Flag,
-        "PUBLIC_HEADER" => Flag,
-        "RESOURCE" => Flag,
-        "FILES" => MultiValue,
-        "PROGRAMS" => MultiValue,
-        "DIRECTORY" => MultiValue,
-        "SCRIPT" => SingleValue,
-        "CODE" => SingleValue,
-        "EXPORT" => SingleValue,
-        "NAMESPACE" => SingleValue,
-        "FILE" => SingleValue,
-        "PERMISSIONS" => MultiValue,
-        "RENAME" => SingleValue,
-        "TYPE" => SingleValue,
-        "PATTERN" => SingleValue,
-        "REGEX" => SingleValue,
-        "EXCLUDE" => Flag,
-        "FILES_MATCHING" => Flag,
-    );
+    // install - multi-mode command (Phase 14)
+    {
+        let mut modes = HashMap::new();
+
+        // TARGETS mode
+        modes.insert("TARGETS".to_string(), CommandGrammar::from_keywords(&[
+            ("TARGETS", MultiValue),
+            ("DESTINATION", SingleValue),
+            ("PERMISSIONS", MultiValue),
+            ("CONFIGURATIONS", MultiValue),
+            ("COMPONENT", SingleValue),
+            ("NAMELINK_COMPONENT", SingleValue),
+            ("OPTIONAL", Flag),
+            ("EXCLUDE_FROM_ALL", Flag),
+            ("NAMELINK_ONLY", Flag),
+            ("NAMELINK_SKIP", Flag),
+            // Artifact type selectors
+            ("ARCHIVE", Flag),
+            ("LIBRARY", Flag),
+            ("RUNTIME", Flag),
+            ("OBJECTS", Flag),
+            ("FRAMEWORK", Flag),
+            ("BUNDLE", Flag),
+            ("PUBLIC_HEADER", Flag),
+            ("PRIVATE_HEADER", Flag),
+            ("RESOURCE", Flag),
+            // FILE_SET support
+            ("FILE_SET", SingleValue),
+            ("TYPE", SingleValue),
+            ("INCLUDES", MultiValue),
+        ]));
+
+        // FILES mode
+        modes.insert("FILES".to_string(), CommandGrammar::from_keywords(&[
+            ("FILES", MultiValue),
+            ("DESTINATION", SingleValue),
+            ("PERMISSIONS", MultiValue),
+            ("CONFIGURATIONS", MultiValue),
+            ("COMPONENT", SingleValue),
+            ("RENAME", SingleValue),
+            ("OPTIONAL", Flag),
+            ("EXCLUDE_FROM_ALL", Flag),
+            ("TYPE", SingleValue),
+        ]));
+
+        // PROGRAMS mode
+        modes.insert("PROGRAMS".to_string(), CommandGrammar::from_keywords(&[
+            ("PROGRAMS", MultiValue),
+            ("DESTINATION", SingleValue),
+            ("PERMISSIONS", MultiValue),
+            ("CONFIGURATIONS", MultiValue),
+            ("COMPONENT", SingleValue),
+            ("RENAME", SingleValue),
+            ("OPTIONAL", Flag),
+            ("EXCLUDE_FROM_ALL", Flag),
+            ("TYPE", SingleValue),
+        ]));
+
+        // DIRECTORY mode
+        modes.insert("DIRECTORY".to_string(), CommandGrammar::from_keywords(&[
+            ("DIRECTORY", MultiValue),
+            ("DESTINATION", SingleValue),
+            ("FILE_PERMISSIONS", MultiValue),
+            ("DIRECTORY_PERMISSIONS", MultiValue),
+            ("USE_SOURCE_PERMISSIONS", Flag),
+            ("OPTIONAL", Flag),
+            ("MESSAGE_NEVER", Flag),
+            ("CONFIGURATIONS", MultiValue),
+            ("COMPONENT", SingleValue),
+            ("EXCLUDE_FROM_ALL", Flag),
+            ("FILES_MATCHING", Flag),
+            ("PATTERN", SingleValue),
+            ("REGEX", SingleValue),
+            ("EXCLUDE", Flag),
+            ("TYPE", SingleValue),
+        ]));
+
+        // SCRIPT mode
+        modes.insert("SCRIPT".to_string(), CommandGrammar::from_keywords(&[
+            ("SCRIPT", SingleValue),
+        ]));
+
+        // CODE mode
+        modes.insert("CODE".to_string(), CommandGrammar::from_keywords(&[
+            ("CODE", SingleValue),
+        ]));
+
+        // EXPORT mode
+        modes.insert("EXPORT".to_string(), CommandGrammar::from_keywords(&[
+            ("EXPORT", SingleValue),
+            ("DESTINATION", SingleValue),
+            ("NAMESPACE", SingleValue),
+            ("FILE", SingleValue),
+            ("PERMISSIONS", MultiValue),
+            ("CONFIGURATIONS", MultiValue),
+            ("COMPONENT", SingleValue),
+            ("EXPORT_LINK_INTERFACE_LIBRARIES", Flag),
+        ]));
+
+        // RUNTIME_DEPENDENCY_SET mode (CMake 3.21+)
+        modes.insert("RUNTIME_DEPENDENCY_SET".to_string(), CommandGrammar::from_keywords(&[
+            ("RUNTIME_DEPENDENCY_SET", SingleValue),
+            ("DESTINATION", SingleValue),
+            ("COMPONENT", SingleValue),
+            ("NAMELINK_COMPONENT", SingleValue),
+            ("OPTIONAL", Flag),
+            ("EXCLUDE_FROM_ALL", Flag),
+        ]));
+
+        grammars.insert("install".to_string(), Grammar::Modes { modes });
+    }
 
     // add_custom_command
     grammar!("add_custom_command",
