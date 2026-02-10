@@ -1,4 +1,4 @@
-use cmake_format::formatter::{detect_line_ending, format_text, FormatConfig, LineEnding};
+use cmake_fmt::formatter::{detect_line_ending, format_text, FormatConfig, LineEnding};
 
 // ============================================================================
 // DETECTION TESTS

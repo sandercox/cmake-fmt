@@ -1,7 +1,11 @@
 [package]
-name = "cmake-format"
-version = "0.1.0"
+name = "cmake-fmt"
+version = "0.3.0"
 edition = "2021"
+
+[[bin]]
+name = "cmake-fmt"
+path = "src/main.rs"
 
 [dependencies]
 rowan = "0.16.1"

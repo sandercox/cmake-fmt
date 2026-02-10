@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use cmake_format::formatter::FormatConfig;
+use cmake_fmt::formatter::FormatConfig;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -136,9 +136,9 @@ fn apply_style_overrides(config: &mut FormatConfig, style: &str) {
             }
             "command_case" => {
                 match value {
-                    "lowercase" => config.command_case = cmake_format::formatter::CommandCase::Lowercase,
-                    "uppercase" => config.command_case = cmake_format::formatter::CommandCase::Uppercase,
-                    "preserve" => config.command_case = cmake_format::formatter::CommandCase::Preserve,
+                    "lowercase" => config.command_case = cmake_fmt::formatter::CommandCase::Lowercase,
+                    "uppercase" => config.command_case = cmake_fmt::formatter::CommandCase::Uppercase,
+                    "preserve" => config.command_case = cmake_fmt::formatter::CommandCase::Preserve,
                     _ => eprintln!("Warning: Invalid value for command_case (expected lowercase, uppercase, or preserve): {}", value),
                 }
             }
@@ -150,17 +150,17 @@ fn apply_style_overrides(config: &mut FormatConfig, style: &str) {
             }
             "line_ending" => {
                 match value {
-                    "auto" => config.line_ending = cmake_format::formatter::LineEnding::Auto,
-                    "lf" => config.line_ending = cmake_format::formatter::LineEnding::Lf,
-                    "crlf" => config.line_ending = cmake_format::formatter::LineEnding::CrLf,
+                    "auto" => config.line_ending = cmake_fmt::formatter::LineEnding::Auto,
+                    "lf" => config.line_ending = cmake_fmt::formatter::LineEnding::Lf,
+                    "crlf" => config.line_ending = cmake_fmt::formatter::LineEnding::CrLf,
                     _ => eprintln!("Warning: Invalid value for line_ending (expected auto, lf, or crlf): {}", value),
                 }
             }
             "closing_style" => {
                 match value {
-                    "keep" => config.closing_style = cmake_format::formatter::ClosingStyle::Keep,
-                    "remove" => config.closing_style = cmake_format::formatter::ClosingStyle::Remove,
-                    "force" => config.closing_style = cmake_format::formatter::ClosingStyle::Force,
+                    "keep" => config.closing_style = cmake_fmt::formatter::ClosingStyle::Keep,
+                    "remove" => config.closing_style = cmake_fmt::formatter::ClosingStyle::Remove,
+                    "force" => config.closing_style = cmake_fmt::formatter::ClosingStyle::Force,
                     _ => eprintln!("Warning: Invalid value for closing_style (expected keep, remove, or force): {}", value),
                 }
             }

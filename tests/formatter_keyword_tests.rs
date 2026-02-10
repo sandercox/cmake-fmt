@@ -1,4 +1,4 @@
-use cmake_format::formatter::{format_text, CommandCase, FormatConfig};
+use cmake_fmt::formatter::{format_text, CommandCase, FormatConfig};
 
 fn default_config() -> FormatConfig {
     FormatConfig::default()
@@ -15,9 +15,9 @@ fn test_target_link_libraries_keywords() {
     // Should break because line is too long
     assert!(result.contains("PUBLIC\n"));
     assert!(result.contains("PRIVATE\n"));
-    // Check indentation: keyword at 1 level, values at 2 levels
-    assert!(result.contains("  PUBLIC\n"));
-    assert!(result.contains("    lib1\n"));
+    // Check indentation: keyword at 1 level (tab), values at 2 levels (2 tabs)
+    assert!(result.contains("\tPUBLIC\n"));
+    assert!(result.contains("\t\tlib1\n"));
 }
 
 #[test]
@@ -333,13 +333,13 @@ fn test_mixed_keywords_proper_indentation() {
     assert!(result.contains("PUBLIC\n"));
     assert!(result.contains("PRIVATE\n"));
     assert!(result.contains("INTERFACE\n"));
-    // Verify indentation levels
-    assert!(result.contains("  PUBLIC\n"));
-    assert!(result.contains("  PRIVATE\n"));
-    assert!(result.contains("  INTERFACE\n"));
-    assert!(result.contains("    lib1\n"));
-    assert!(result.contains("    lib3\n"));
-    assert!(result.contains("    lib5\n"));
+    // Verify indentation levels: keywords at 1 tab, values at 2 tabs
+    assert!(result.contains("\tPUBLIC\n"));
+    assert!(result.contains("\tPRIVATE\n"));
+    assert!(result.contains("\tINTERFACE\n"));
+    assert!(result.contains("\t\tlib1\n"));
+    assert!(result.contains("\t\tlib3\n"));
+    assert!(result.contains("\t\tlib5\n"));
 }
 
 #[test]

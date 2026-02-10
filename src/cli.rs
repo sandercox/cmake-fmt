@@ -3,11 +3,11 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use cmake_format::formatter::{format_text, FormatConfig};
+use cmake_fmt::formatter::{format_text, FormatConfig};
 
 /// Format CMake files
 #[derive(Parser)]
-#[command(name = "cmake-format", version, about = "Format CMake files")]
+#[command(name = "cmake-fmt", version, about = "Format CMake files")]
 pub struct Cli {
     /// Files to format (use "-" for stdin)
     #[arg(value_name = "FILE")]
@@ -122,8 +122,8 @@ fn process_stdin(config: &FormatConfig, check_mode: bool, diff_mode: bool) -> Re
 
     if diff_mode {
         if input != formatted {
-            if let Some(diff_output) = cmake_format::diff::generate_diff(&input, &formatted, "stdin") {
-                cmake_format::diff::print_colored_diff(&diff_output);
+            if let Some(diff_output) = cmake_fmt::diff::generate_diff(&input, &formatted, "stdin") {
+                cmake_fmt::diff::print_colored_diff(&diff_output);
             }
             Ok(ExitCode::from(1))
         } else {
@@ -229,8 +229,8 @@ fn process_file(
 
     if diff_mode {
         if original != formatted {
-            if let Some(diff_output) = cmake_format::diff::generate_diff(&original, &formatted, &path.display().to_string()) {
-                cmake_format::diff::print_colored_diff(&diff_output);
+            if let Some(diff_output) = cmake_fmt::diff::generate_diff(&original, &formatted, &path.display().to_string()) {
+                cmake_fmt::diff::print_colored_diff(&diff_output);
             }
             Ok(true)
         } else {

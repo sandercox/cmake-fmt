@@ -1,5 +1,5 @@
-use cmake_format::cst::parse_text;
-use cmake_format::formatter::{format_text, ClosingStyle, CommandCase, FormatConfig};
+use cmake_fmt::cst::parse_text;
+use cmake_fmt::formatter::{format_text, ClosingStyle, CommandCase, FormatConfig};
 
 // ============================================================================
 // SNAPSHOT TESTS
@@ -128,7 +128,7 @@ fn test_crlf_handling() {
 
     // Force LF mode should strip CRLF
     let lf_config = FormatConfig {
-        line_ending: cmake_format::formatter::LineEnding::Lf,
+        line_ending: cmake_fmt::formatter::LineEnding::Lf,
         ..FormatConfig::default()
     };
     let lf_output = format_text(input, &lf_config);

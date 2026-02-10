@@ -1,11 +1,11 @@
-use cmake_format::diff::{generate_diff, print_colored_diff};
+use cmake_fmt::diff::{generate_diff, print_colored_diff};
 use std::io::Write;
 use std::process::Command;
 use tempfile::TempDir;
 
 // Helper to get the binary path
 fn cmake_format_bin() -> String {
-    env!("CARGO_BIN_EXE_cmake-format").to_string()
+    env!("CARGO_BIN_EXE_cmake-fmt").to_string()
 }
 
 // ============================================================================
