@@ -72,7 +72,9 @@ fn test_install_keywords() {
     // Should break due to length
     assert!(result.contains("TARGETS\n"));
     assert!(result.contains("ARCHIVE\n"));
-    assert!(result.contains("DESTINATION\n"));
+    // DESTINATION is SingleValue, so it keeps value inline: "DESTINATION lib"
+    assert!(result.contains("DESTINATION"));
+    assert!(result.contains("lib"));
 }
 
 #[test]
@@ -463,4 +465,150 @@ fn test_keyword_arglist_bracket_comment() {
     assert!(result.contains("#[=["));
     assert!(result.contains("Special lib"));
     assert!(result.contains("]=]"));
+}
+
+// ============================================================================
+// PHASE 13 GRAMMAR-DRIVEN FORMATTING TESTS
+// ============================================================================
+
+#[test]
+fn test_flag_grouping_find_package() {
+    // REQUIRED QUIET CONFIG should group on one line, not each on its own
+    let input = "find_package(Boost\n    REQUIRED\n    QUIET\n    CONFIG\n    COMPONENTS\n        filesystem\n        system\n)";
+    let result = format_text(input, &default_config());
+    // Flags should group together
+    assert!(result.contains("REQUIRED") && result.contains("QUIET"));
+    // COMPONENTS should be on its own line with values below
+    assert!(result.contains("COMPONENTS\n"));
+}
+
+#[test]
+fn test_flag_grouping_short_fits_one_line() {
+    let input = "find_package(Boost REQUIRED QUIET)";
+    let result = format_text(input, &default_config());
+    // Short enough to fit on one line
+    assert_eq!(result.trim(), "find_package(Boost REQUIRED QUIET)");
+}
+
+#[test]
+fn test_single_value_inline_short() {
+    // DESTINATION lib should stay inline when short
+    let input = "install(TARGETS mylib DESTINATION lib)";
+    let result = format_text(input, &default_config());
+    // Short enough for one line
+    assert_eq!(result.trim(), "install(TARGETS mylib DESTINATION lib)");
+}
+
+#[test]
+fn test_multi_value_one_per_line() {
+    let input = "target_sources(mylib PRIVATE src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp src/f.cpp src/g.cpp)";
+    let result = format_text(input, &default_config());
+    // Should break with each source on its own line
+    assert!(result.contains("PRIVATE\n"));
+    // Count that source files are on separate lines
+    let lines: Vec<&str> = result.lines().collect();
+    let source_lines = lines.iter().filter(|l| l.trim().ends_with(".cpp")).count();
+    assert!(source_lines >= 5, "Expected 5+ source files on separate lines, got {}", source_lines);
+}
+
+#[test]
+fn test_unknown_keyword_in_known_command() {
+    // BOGUS_KEYWORD is not in find_package grammar -- should not crash
+    let input = "find_package(Boost REQUIRED BOGUS_KEYWORD some_value COMPONENTS filesystem)";
+    let result = format_text(input, &default_config());
+    // Should format without errors, BOGUS_KEYWORD treated as argument
+    assert!(result.contains("Boost"));
+    assert!(result.contains("REQUIRED"));
+    assert!(result.contains("BOGUS_KEYWORD"));
+    assert!(result.contains("COMPONENTS"));
+}
+
+#[test]
+fn test_completely_unknown_command() {
+    // my_custom_function is not in grammar registry -- should use simple formatting
+    let input = "my_custom_function(arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9 arg10 arg11 arg12 arg13)";
+    let result = format_text(input, &default_config());
+    // Should format without errors using simple argument formatting
+    assert!(result.contains("my_custom_function"));
+    assert!(result.contains("arg1"));
+}
+
+#[test]
+fn test_force_break_keywords_true() {
+    let mut config = default_config();
+    config.force_break_keywords = true;
+    // This would normally fit on one line
+    let input = "find_package(Boost REQUIRED)";
+    let result = format_text(input, &config);
+    // With force_break, should go multiline
+    assert!(result.contains('\n'));
+    let line_count = result.lines().count();
+    assert!(line_count >= 2, "Expected multiline output with force_break_keywords, got {} lines", line_count);
+}
+
+#[test]
+fn test_force_break_keywords_false_short_stays_inline() {
+    let config = default_config(); // force_break_keywords = false by default
+    let input = "find_package(Boost REQUIRED)";
+    let result = format_text(input, &config);
+    // Should stay on one line
+    assert_eq!(result.trim(), "find_package(Boost REQUIRED)");
+}
+
+#[test]
+fn test_idempotency_keyword_aware_commands() {
+    let config = default_config();
+    let inputs = vec![
+        "find_package(Boost REQUIRED QUIET COMPONENTS filesystem system)",
+        "target_link_libraries(myapp PUBLIC lib1 lib2 PRIVATE lib3 lib4 lib5 lib6 lib7)",
+        "install(TARGETS mylib DESTINATION lib OPTIONAL)",
+        "target_sources(mylib PRIVATE a.cpp b.cpp c.cpp d.cpp e.cpp f.cpp g.cpp h.cpp i.cpp j.cpp)",
+    ];
+    for input in inputs {
+        let first = format_text(input, &config);
+        let second = format_text(&first, &config);
+        assert_eq!(first, second, "Idempotency failed for input: {}", input);
+    }
+}
+
+#[test]
+fn test_idempotency_force_break() {
+    let mut config = default_config();
+    config.force_break_keywords = true;
+    let inputs = vec![
+        "find_package(Boost REQUIRED QUIET COMPONENTS filesystem system)",
+        "target_link_libraries(myapp PUBLIC lib1 lib2 PRIVATE lib3)",
+    ];
+    for input in inputs {
+        let first = format_text(input, &config);
+        let second = format_text(&first, &config);
+        assert_eq!(first, second, "Idempotency failed with force_break for: {}", input);
+    }
+}
+
+#[test]
+fn test_backward_compat_existing_commands() {
+    // These commands already worked before grammar system -- verify they still produce valid output
+    let config = default_config();
+    let test_cases = vec![
+        ("set(MY_VAR value)", "set(MY_VAR value)\n"),
+        ("message(STATUS \"hello\")", "message(STATUS \"hello\")\n"),
+        ("if(TRUE)\nendif()", "if(TRUE)\nendif()\n"),
+    ];
+    for (input, expected) in test_cases {
+        let result = format_text(input, &config);
+        assert_eq!(result, expected, "Backward compat failed for: {}", input);
+    }
+}
+
+#[test]
+fn test_case_sensitive_keywords() {
+    // "Config" should not be treated as "CONFIG" keyword
+    let input = "find_package(KF5 REQUIRED COMPONENTS CoreAddons I18n Config ConfigWidgets)";
+    let result = format_text(input, &default_config());
+    // All components should be preserved
+    assert!(result.contains("Config"));
+    assert!(result.contains("ConfigWidgets"));
+    assert!(result.contains("I18n"));
+    assert!(result.contains("CoreAddons"));
 }

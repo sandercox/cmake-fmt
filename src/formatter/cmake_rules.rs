@@ -257,7 +257,8 @@ pub fn format_keyword_aware_args(
             match section.keyword_type {
                 // Flag keywords: group consecutive flags together
                 Some(KeywordType::Flag) => {
-                    // Flags have no values, so section.args should be empty
+                    // Flags typically have no values, but section.args may contain
+                    // non-keyword arguments that follow before the next keyword
                     // Add separator before the flag keyword
                     if is_first_arg {
                         is_first_arg = false;
@@ -278,6 +279,20 @@ pub fn format_keyword_aware_args(
                         ));
                     }
                     docs.push(RcDoc::text(keyword.clone()));
+
+                    // Output any trailing non-keyword arguments in this section
+                    for arg in &section.args {
+                        if signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(value_indent.clone()));
+                        } else {
+                            docs.push(RcDoc::flat_alt(
+                                RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                RcDoc::space(),
+                            ));
+                        }
+                        docs.push(RcDoc::text(arg.clone()));
+                    }
                 }
 
                 // SingleValue keywords: keep value inline when possible
