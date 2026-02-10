@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -29,6 +30,10 @@ pub struct Cli {
     #[arg(long, conflicts_with = "in_place")]
     pub diff: bool,
 
+    /// Interactive mode: review formatting changes hunk-by-hunk
+    #[arg(long, conflicts_with_all = ["in_place", "check", "dry_run", "diff"])]
+    pub interactive: bool,
+
     /// Override config inline (e.g., "indent_width=4,max_line_length=100")
     #[arg(long)]
     pub style: Option<String>,
@@ -44,6 +49,40 @@ fn print_warnings(warnings: &[SuppressionWarning], file_label: &str) {
 /// Run the CLI application
 pub fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
+
+    // Handle interactive mode first (if --interactive flag is set)
+    if cli.interactive {
+        // TTY guard (INT-06): Check stdin and stderr are both terminals
+        if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+            eprintln!("error: interactive mode requires a terminal (TTY)");
+            return Ok(ExitCode::FAILURE);
+        }
+
+        // Determine if stdin input is specified
+        let is_stdin = cli.files.is_empty() || (cli.files.len() == 1 && cli.files[0] == PathBuf::from("-"));
+
+        // Validate exactly one file is provided (no stdin, no multi-file)
+        if cli.files.is_empty() || is_stdin {
+            eprintln!("error: interactive mode requires a file argument");
+            return Ok(ExitCode::FAILURE);
+        }
+        if cli.files.len() > 1 {
+            eprintln!("error: interactive mode supports one file at a time");
+            return Ok(ExitCode::FAILURE);
+        }
+
+        // Resolve config for the file
+        let config = crate::config::resolve_config(Some(&cli.files[0]), cli.style.as_deref());
+
+        // Run interactive mode
+        match cmake_fmt::interactive::run_interactive(&cli.files[0], &config) {
+            Ok(_result) => return Ok(ExitCode::SUCCESS),
+            Err(e) => {
+                eprintln!("error: {:#}", e);
+                return Ok(ExitCode::FAILURE);
+            }
+        }
+    }
 
     // Determine if we're in check mode
     let check_mode = cli.check || cli.dry_run;
