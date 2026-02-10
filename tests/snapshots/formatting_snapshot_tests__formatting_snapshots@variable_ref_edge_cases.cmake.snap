@@ -53,7 +53,10 @@ message("${PREFIX}_${MIDDLE}_${SUFFIX}_done")
 # ----------------------------------------------------------------------------
 
 # Variable ref inside generator expression
-target_compile_options(app PRIVATE $<$<BOOL:${MY_VAR}>:value>)
+target_compile_options(app
+	PRIVATE
+		$<$<BOOL:${MY_VAR}>:value>
+)
 
 # Variable ref in quoted string
 set(MESSAGE "Value is: ${VAR_NAME}")

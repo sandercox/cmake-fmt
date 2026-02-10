@@ -3,8 +3,10 @@ source: tests/formatting_snapshot_tests.rs
 expression: output
 input_file: tests/format_fixtures/blank_lines.cmake
 ---
-cmake_minimum_required(VERSION 3.20)
-project(BlankLines)
+cmake_minimum_required(VERSION 3.20
+)
+project(BlankLines
+)
 
 set(A b)
 

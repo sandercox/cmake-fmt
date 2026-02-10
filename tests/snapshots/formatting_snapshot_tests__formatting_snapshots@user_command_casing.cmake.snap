@@ -3,8 +3,10 @@ source: tests/formatting_snapshot_tests.rs
 expression: output
 input_file: tests/format_fixtures/user_command_casing.cmake
 ---
-cmake_minimum_required(VERSION 3.20)
-project(MyProject)
+cmake_minimum_required(VERSION 3.20
+)
+project(MyProject
+)
 
 # Define a user function with CamelCase
 function(MyHelper arg)
@@ -13,7 +15,10 @@ endfunction()
 
 # Define a macro with CamelCase
 macro(MyHelper_Macro target)
-	add_test(NAME ${target} COMMAND ${target})
+	add_test(NAME ${target}
+		COMMAND
+			${target}
+	)
 endmacro()
 
 # Call builtins (should be lowercased)

@@ -37,13 +37,13 @@ add_library(mylib STATIC src/core.cpp src/utils.cpp src/parser.cpp)
 install(TARGETS
 		mylib
 	ARCHIVE
-	DESTINATION
-		lib
+	DESTINATION lib
 	LIBRARY
-	DESTINATION
-		lib
+	DESTINATION lib
 	RUNTIME
-	DESTINATION
-		bin
+	DESTINATION bin
 )
-target_link_libraries(small PRIVATE lib1)
+target_link_libraries(small
+	PRIVATE
+		lib1
+)

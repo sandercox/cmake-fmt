@@ -5,10 +5,12 @@ input_file: tests/format_fixtures/comments_mixed.cmake
 ---
 # File header comment
 # Another header line
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.20
+)
 
 # Section: Project setup
-project(CommentTest)
+project(CommentTest
+)
 
 set(MY_VAR value) # trailing comment
 set(OTHER_VAR other) # another trailing

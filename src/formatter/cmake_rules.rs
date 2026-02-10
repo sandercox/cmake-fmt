@@ -4,7 +4,7 @@ use pretty::RcDoc;
 use rowan::NodeOrToken;
 
 use super::config::FormatConfig;
-use super::cst_to_doc::detect_argument_formatting_signals;
+use super::cst_to_doc::{detect_argument_formatting_signals, ArgumentFormatSignals};
 use super::grammar::{CommandGrammar, KeywordType};
 
 /// Check if a command name requires keyword-aware formatting
@@ -216,10 +216,16 @@ pub fn format_keyword_aware_args(
         return RcDoc::nil();
     }
 
-    // Detect formatting signals from the argument list
-    let mut signals = detect_argument_formatting_signals(arg_list);
+    // For keyword-aware commands: always use force_multiline to ensure consistent, idempotent formatting.
+    // - MultiValue keywords will format vertically (values under keyword)
+    // - SingleValue keywords ignore force_multiline and always stay inline (keyword + value on same line)
+    // - Flag keywords can group inline
+    // This ensures the output is the same regardless of input formatting (idempotency).
+    let mut signals = ArgumentFormatSignals {
+        force_multiline: true,
+    };
 
-    // Override with force_break_keywords config option
+    // Config override
     if config.force_break_keywords {
         signals.force_multiline = true;
     }
@@ -295,8 +301,8 @@ pub fn format_keyword_aware_args(
                     }
                 }
 
-                // SingleValue keywords: keep value inline when possible
-                Some(KeywordType::SingleValue) if section.args.len() == 1 && !signals.force_multiline => {
+                // SingleValue keywords: keep value inline (ignore force_multiline for idempotency)
+                Some(KeywordType::SingleValue) if section.args.len() == 1 => {
                     // Add separator before the keyword
                     if is_first_arg {
                         is_first_arg = false;
@@ -312,7 +318,7 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(section.args[0].clone()));
                 }
 
-                // MultiValue or SingleValue in force_multiline mode: vertical layout
+                // MultiValue or SingleValue with >1 arg in force_multiline mode: vertical layout
                 _ => {
                     // Standard vertical keyword formatting
                     if is_first_arg {

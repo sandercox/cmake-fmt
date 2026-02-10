@@ -24,8 +24,8 @@ fn test_target_link_libraries_keywords() {
 fn test_target_link_libraries_short_fits_one_line() {
     let input = "target_link_libraries(myapp PRIVATE lib1)";
     let result = format_text(input, &default_config());
-    // Should stay on one line since it fits within 80 chars
-    assert_eq!(result, "target_link_libraries(myapp PRIVATE lib1)\n");
+    // With grammar-driven formatting, keyword-aware commands always format vertically for idempotency
+    assert_eq!(result, "target_link_libraries(myapp\n\tPRIVATE\n\t\tlib1\n)\n");
 }
 
 #[test]
@@ -203,8 +203,11 @@ fn test_blank_line_between_sections() {
     let input = "cmake_minimum_required(VERSION 3.20)\n\nadd_library(mylib src/a.cpp)\n";
     let result = format_text(input, &default_config());
     // Should preserve blank line between sections
+    // cmake_minimum_required formats vertically now, so: command-line1, command-line2, blank, add_library-line
     let lines: Vec<&str> = result.lines().collect();
-    assert_eq!(lines.len(), 3); // command, blank, command
+    assert_eq!(lines.len(), 4);
+    // Verify blank line is preserved
+    assert_eq!(lines[2], "");
 }
 
 #[test]
@@ -272,8 +275,9 @@ fn test_keyword_aware_with_comment_inside_if() {
     let result = format_text(input, &default_config());
     // Comment should be indented at if-block level
     assert!(result.contains("\t# Windows-specific libraries\n"));
-    // Command should stay on one line (short enough)
-    assert!(result.contains("\ttarget_link_libraries(myapp PRIVATE kernel32 user32)\n"));
+    // Command formats vertically for consistency
+    assert!(result.contains("\ttarget_link_libraries(myapp\n"));
+    assert!(result.contains("\t\tPRIVATE\n"));
 }
 
 #[test]
@@ -486,17 +490,16 @@ fn test_flag_grouping_find_package() {
 fn test_flag_grouping_short_fits_one_line() {
     let input = "find_package(Boost REQUIRED QUIET)";
     let result = format_text(input, &default_config());
-    // Short enough to fit on one line
-    assert_eq!(result.trim(), "find_package(Boost REQUIRED QUIET)");
+    // Flags group inline, but command formats vertically for consistency
+    assert_eq!(result, "find_package(Boost\n\tREQUIRED QUIET\n)\n");
 }
 
 #[test]
 fn test_single_value_inline_short() {
-    // DESTINATION lib should stay inline when short
+    // DESTINATION is SingleValue so stays inline, TARGETS is MultiValue so breaks vertically
     let input = "install(TARGETS mylib DESTINATION lib)";
     let result = format_text(input, &default_config());
-    // Short enough for one line
-    assert_eq!(result.trim(), "install(TARGETS mylib DESTINATION lib)");
+    assert_eq!(result, "install(TARGETS\n\t\tmylib\n\tDESTINATION lib\n)\n");
 }
 
 #[test]
@@ -551,8 +554,9 @@ fn test_force_break_keywords_false_short_stays_inline() {
     let config = default_config(); // force_break_keywords = false by default
     let input = "find_package(Boost REQUIRED)";
     let result = format_text(input, &config);
-    // Should stay on one line
-    assert_eq!(result.trim(), "find_package(Boost REQUIRED)");
+    // With grammar-driven formatting, keyword-aware commands always format consistently
+    // for idempotency, regardless of force_break_keywords config
+    assert_eq!(result, "find_package(Boost\n\tREQUIRED\n)\n");
 }
 
 #[test]

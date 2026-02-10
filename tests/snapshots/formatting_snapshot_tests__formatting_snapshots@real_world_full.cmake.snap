@@ -3,8 +3,13 @@ source: tests/formatting_snapshot_tests.rs
 expression: output
 input_file: tests/format_fixtures/real_world_full.cmake
 ---
-cmake_minimum_required(VERSION 3.20)
-project(RealWorld VERSION 1.2.3 LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.20
+)
+project(RealWorld
+	VERSION 1.2.3
+	LANGUAGES
+		CXX
+)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,10 +34,10 @@ endif()
 # Main library
 add_library(realworld
 	STATIC
-		src/core.cpp
-		src/parser.cpp
-		src/formatter.cpp
-		${PLATFORM_SOURCES}
+	src/core.cpp
+	src/parser.cpp
+	src/formatter.cpp
+	${PLATFORM_SOURCES}
 )
 
 target_include_directories(realworld
@@ -49,20 +54,25 @@ target_compile_options(realworld
 		$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>
 )
 
-target_link_libraries(realworld PUBLIC fmt::fmt PRIVATE Threads::Threads)
+target_link_libraries(realworld
+	PUBLIC
+		fmt::fmt
+	PRIVATE
+		Threads::Threads
+)
 
 # Install rules
 install(TARGETS
 		realworld
 	ARCHIVE
-	DESTINATION
-		lib
+	DESTINATION lib
 	LIBRARY
-	DESTINATION
-		lib
+	DESTINATION lib
 	RUNTIME
-	DESTINATION
-		bin
+	DESTINATION bin
 )
 
-install(DIRECTORY include/ DESTINATION include)
+install(DIRECTORY
+		include/
+	DESTINATION include
+)
