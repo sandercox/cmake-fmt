@@ -437,7 +437,15 @@ pub fn format_keyword_aware_args(
                             || !section.comments.is_empty()
                             || !section.blank_lines.is_empty();
 
-                        if use_per_line || signals.force_multiline {
+                        if pairs.len() == 1 {
+                            // Single pair: keep inline with keyword (e.g., PROPERTIES KEY VALUE)
+                            docs.push(RcDoc::space());
+                            docs.push(RcDoc::text(pairs[0][0].clone()));
+                            if pairs[0].len() > 1 {
+                                docs.push(RcDoc::space());
+                                docs.push(RcDoc::text(pairs[0][1].clone()));
+                            }
+                        } else if use_per_line || signals.force_multiline {
                             // Per-line pairs
                             for chunk in pairs {
                                 if signals.force_multiline {
