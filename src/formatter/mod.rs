@@ -80,7 +80,14 @@ pub fn format_text_with_diagnostics_and_path(
         single_file_defs
     };
 
-    let (mut result, warnings) = cst_to_doc::format_cst(&cst, config, parse_input, &user_defs);
+    // Get project-wide user grammars if file_path is provided
+    let user_grammars = if let Some(path) = file_path {
+        grammar::get_project_user_grammars(path)
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    let (mut result, warnings) = cst_to_doc::format_cst(&cst, config, parse_input, &user_defs, &user_grammars);
 
     // Apply CRLF if needed
     if effective_line_ending == LineEnding::CrLf && !result.is_empty() {

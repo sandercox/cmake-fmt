@@ -105,3 +105,120 @@ pub fn scan_project_commands(project_root: &Path) -> HashMap<String, String> {
 
     all_defs
 }
+
+/// Scan all CMake files in a project and extract command grammars from cmake_parse_arguments
+///
+/// Returns a map of lowercase command names to their extracted grammars.
+/// Later definitions win (matching CMake's last-definition-wins behavior).
+pub fn scan_project_grammars(project_root: &Path) -> HashMap<String, super::CommandGrammar> {
+    let mut all_grammars = HashMap::new();
+
+    let cmake_files = find_cmake_files(project_root);
+
+    for file_path in cmake_files {
+        // Read file content
+        let Ok(content) = fs::read_to_string(&file_path) else {
+            // Skip files we can't read
+            continue;
+        };
+
+        // Parse the file
+        let cst = crate::cst::parse_text(&content);
+
+        // Extract grammars from this file
+        let file_grammars = extract_grammars_from_file(&cst.root);
+
+        // Merge into master map (later definitions win)
+        all_grammars.extend(file_grammars);
+    }
+
+    all_grammars
+}
+
+/// Extract command grammars from a single CMake file
+///
+/// Finds function()/macro() definitions and extracts grammars from their bodies
+fn extract_grammars_from_file(root: &crate::SyntaxNode) -> HashMap<String, super::CommandGrammar> {
+    use crate::cst::CommandInvocation;
+
+    let mut grammars = HashMap::new();
+    let mut children_iter = root.children().peekable();
+
+    while let Some(child) = children_iter.next() {
+        // Cast to CommandInvocation
+        let Some(cmd) = CommandInvocation::cast(child) else {
+            continue;
+        };
+
+        let Some(cmd_name) = cmd.name_text() else {
+            continue;
+        };
+
+        let name_lower = cmd_name.to_lowercase();
+
+        // Check if this is a function() or macro() definition
+        if name_lower == "function" || name_lower == "macro" {
+            // Extract the function/macro name from the first argument
+            let func_name = if let Some(arg_list) = cmd.argument_list() {
+                arg_list.arguments()
+                    .next()
+                    .map(|t| t.text().to_string())
+            } else {
+                None
+            };
+
+            let Some(func_name) = func_name else {
+                continue;
+            };
+
+            // Collect all commands until the matching endfunction()/endmacro()
+            let _end_keyword = if name_lower == "function" {
+                "endfunction"
+            } else {
+                "endmacro"
+            };
+
+            let mut body_commands = Vec::new();
+            let mut nesting_depth = 1; // Start at 1 for the current function/macro
+
+            // Collect body commands
+            while let Some(body_child) = children_iter.next() {
+                let Some(body_cmd) = CommandInvocation::cast(body_child) else {
+                    continue;
+                };
+
+                let Some(body_cmd_name) = body_cmd.name_text() else {
+                    continue;
+                };
+
+                let body_name_lower = body_cmd_name.to_lowercase();
+
+                // Track nesting
+                if body_name_lower == "function" || body_name_lower == "macro" {
+                    nesting_depth += 1;
+                } else if body_name_lower == "endfunction" || body_name_lower == "endmacro" {
+                    nesting_depth -= 1;
+                    if nesting_depth == 0 {
+                        // Reached the end of this function/macro
+                        break;
+                    }
+                }
+
+                // Only collect commands at the top level (nesting_depth == 1)
+                if nesting_depth == 1 {
+                    body_commands.push(body_cmd);
+                }
+            }
+
+            // Extract grammar from the body
+            if let Some(grammar) = super::argparse_extractor::extract_command_grammars_from_body(
+                &func_name,
+                &body_commands
+            ) {
+                grammars.insert(func_name.to_lowercase(), grammar);
+            }
+        }
+    }
+
+    grammars
+}

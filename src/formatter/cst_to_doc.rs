@@ -37,14 +37,20 @@ struct FormatContext<'a> {
     config: &'a FormatConfig,
     indent_level: usize,
     user_defs: &'a HashMap<String, String>,
+    user_grammars: &'a HashMap<String, super::grammar::CommandGrammar>,
 }
 
 impl<'a> FormatContext<'a> {
-    fn new(config: &'a FormatConfig, user_defs: &'a HashMap<String, String>) -> Self {
+    fn new(
+        config: &'a FormatConfig,
+        user_defs: &'a HashMap<String, String>,
+        user_grammars: &'a HashMap<String, super::grammar::CommandGrammar>,
+    ) -> Self {
         Self {
             config,
             indent_level: 0,
             user_defs,
+            user_grammars,
         }
     }
 
@@ -65,8 +71,9 @@ pub fn format_cst(
     config: &FormatConfig,
     source: &str,
     user_defs: &HashMap<String, String>,
+    user_grammars: &HashMap<String, super::grammar::CommandGrammar>,
 ) -> (String, Vec<SuppressionWarning>) {
-    let ctx = FormatContext::new(config, user_defs);
+    let ctx = FormatContext::new(config, user_defs, user_grammars);
     format_file(&cst.root, &ctx, source)
 }
 
@@ -283,6 +290,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                 config: ctx.config,
                                 indent_level: cmd_indent,
                                 user_defs: ctx.user_defs,
+                                user_grammars: ctx.user_grammars,
                             };
 
                             // Format and emit command
@@ -454,11 +462,18 @@ fn format_command(
                             .filter(|g| g.is_multi_mode())
                             .and_then(|_| detect_mode_keyword(&arg_list));
                         let grammar = grammar_enum.and_then(|g| g.resolve(first_keyword.as_deref()));
+                        // If no builtin grammar, check user grammars
+                        let user_grammar = if grammar.is_none() {
+                            ctx.user_grammars.get(&name_lower)
+                        } else {
+                            None
+                        };
+                        let effective_grammar = grammar.or(user_grammar);
                         // Skip keyword-aware formatting for unrecognized modes in multi-mode commands
                         let is_unrecognized_mode = grammar_enum.as_ref()
                             .map_or(false, |g| g.is_multi_mode() && grammar.is_none());
-                        if !is_unrecognized_mode && (grammar.is_some() || cmake_rules::is_keyword_aware_command(&name)) {
-                            let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, grammar);
+                        if !is_unrecognized_mode && (effective_grammar.is_some() || cmake_rules::is_keyword_aware_command(&name)) {
+                            let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, effective_grammar);
                             cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
                         } else {
                             let is_custom = !builtins::is_builtin_command(&name_lower);
@@ -492,11 +507,18 @@ fn format_command(
                 .filter(|g| g.is_multi_mode())
                 .and_then(|_| detect_mode_keyword(&arg_list));
             let grammar = grammar_enum.and_then(|g| g.resolve(first_keyword.as_deref()));
+            // If no builtin grammar, check user grammars (builtins take precedence)
+            let user_grammar = if grammar.is_none() {
+                ctx.user_grammars.get(&name_lower)
+            } else {
+                None
+            };
+            let effective_grammar = grammar.or(user_grammar);
             // Skip keyword-aware formatting for unrecognized modes in multi-mode commands
             let is_unrecognized_mode = grammar_enum.as_ref()
                 .map_or(false, |g| g.is_multi_mode() && grammar.is_none());
-            if !is_unrecognized_mode && (grammar.is_some() || cmake_rules::is_keyword_aware_command(&name)) {
-                let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, grammar);
+            if !is_unrecognized_mode && (effective_grammar.is_some() || cmake_rules::is_keyword_aware_command(&name)) {
+                let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, effective_grammar);
                 cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
             } else {
                 let is_custom = !builtins::is_builtin_command(&name_lower);

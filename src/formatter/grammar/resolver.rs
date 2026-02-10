@@ -65,3 +65,40 @@ pub fn clear_project_scan_cache() {
         }
     }
 }
+
+/// Cache for project-wide grammar extraction
+static PROJECT_GRAMMAR_CACHE: OnceLock<Mutex<HashMap<PathBuf, HashMap<String, CommandGrammar>>>> = OnceLock::new();
+
+/// Get project-wide user command grammars extracted from cmake_parse_arguments
+///
+/// Determines the project root from the file's parent directory,
+/// scans all CMake files in the project tree for cmake_parse_arguments calls,
+/// and caches the results per project root.
+pub fn get_project_user_grammars(file_path: &Path) -> HashMap<String, CommandGrammar> {
+    // Determine project root from the file's parent directory
+    let start_dir = file_path.parent().unwrap_or(file_path);
+    let project_root = user_scanner::find_project_root(start_dir);
+
+    // Get or init cache
+    let cache = PROJECT_GRAMMAR_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache_lock = cache.lock().unwrap();
+
+    // Return cached if available
+    if let Some(cached) = cache_lock.get(&project_root) {
+        return cached.clone();
+    }
+
+    // Scan and cache
+    let grammars = user_scanner::scan_project_grammars(&project_root);
+    cache_lock.insert(project_root, grammars.clone());
+    grammars
+}
+
+/// Clear the project grammar cache (for testing purposes)
+pub fn clear_project_grammar_cache() {
+    if let Some(cache) = PROJECT_GRAMMAR_CACHE.get() {
+        if let Ok(mut cache_lock) = cache.lock() {
+            cache_lock.clear();
+        }
+    }
+}
