@@ -80,7 +80,7 @@ line3]])
 
 # Mixed special chars: quotes, braces, dollar signs
 set(SPECIAL
-    [[
+	[[
 "quoted" ${not_expanded} $<not:expanded>
 {braces} [nested[brackets]]
     ]]

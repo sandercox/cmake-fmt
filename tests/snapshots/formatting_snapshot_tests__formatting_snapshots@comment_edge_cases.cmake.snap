@@ -12,17 +12,17 @@ input_file: tests/format_fixtures/comment_edge_cases.cmake
 # ----------------------------------------------------------------------------
 # Comment forces multiline layout
 set(LIST
-    a
-    # comment between args
-    b
+	a
+	# comment between args
+	b
 )
 
 # Multiple comments between arguments
 set(MULTI
-    first
-    # comment 1
-    # comment 2
-    second
+	first
+	# comment 1
+	# comment 2
+	second
 )
 
 # ----------------------------------------------------------------------------

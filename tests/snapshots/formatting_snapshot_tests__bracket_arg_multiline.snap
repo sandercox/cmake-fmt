@@ -3,7 +3,7 @@ source: tests/formatting_snapshot_tests.rs
 expression: output
 ---
 set(HELP
-    [[
+	[[
 Usage: myapp [options]
   --help     Show help
   --version  Show version

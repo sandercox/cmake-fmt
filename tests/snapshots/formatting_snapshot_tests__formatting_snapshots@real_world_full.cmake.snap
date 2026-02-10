@@ -13,58 +13,58 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Platform-specific sources
 if(WIN32)
 	set(PLATFORM_SOURCES
-    src/platform/windows.cpp
-    src/platform/windows_utils.cpp
-)
+		src/platform/windows.cpp
+		src/platform/windows_utils.cpp
+	)
 elseif(APPLE)
 	set(PLATFORM_SOURCES
-    src/platform/macos.cpp
-)
+		src/platform/macos.cpp
+	)
 else()
 	set(PLATFORM_SOURCES
-    src/platform/linux.cpp
-)
+		src/platform/linux.cpp
+	)
 endif()
 
 # Main library
 add_library(realworld
-    STATIC
-        src/core.cpp
-        src/parser.cpp
-        src/formatter.cpp
-        ${PLATFORM_SOURCES}
+	STATIC
+		src/core.cpp
+		src/parser.cpp
+		src/formatter.cpp
+		${PLATFORM_SOURCES}
 )
 
 target_include_directories(realworld
-    PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:include>
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        /src
+	PUBLIC
+		$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+		$<INSTALL_INTERFACE:include>
+	PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}
+		/src
 )
 
 target_compile_options(realworld
-    PRIVATE
-        $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
-        $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>
+	PRIVATE
+		$<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+		$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>
 )
 
 target_link_libraries(realworld PUBLIC fmt::fmt PRIVATE Threads::Threads)
 
 # Install rules
 install(
-    TARGETS
-        realworld
-    ARCHIVE
-    DESTINATION
-        lib
-    LIBRARY
-    DESTINATION
-        lib
-    RUNTIME
-    DESTINATION
-        bin
+	TARGETS
+		realworld
+	ARCHIVE
+	DESTINATION
+		lib
+	LIBRARY
+	DESTINATION
+		lib
+	RUNTIME
+	DESTINATION
+		bin
 )
 
 install( DIRECTORY include/ DESTINATION include)
