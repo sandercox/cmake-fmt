@@ -1,0 +1,18 @@
+cmake_minimum_required(VERSION 3.14)
+project(TestProject)
+
+# Normal section
+set(A value)
+
+# cmake-fmt: off
+set(  UGLY1   a   b  )
+set(  UGLY2   c   d  )
+# cmake-fmt: on
+
+# cmake-fmt: skip
+target_link_libraries(  mylib    PUBLIC   foo   bar  )
+
+set(CLEAN value)
+
+# cmake-fmt: off
+message(  "end of file suppressed"  )

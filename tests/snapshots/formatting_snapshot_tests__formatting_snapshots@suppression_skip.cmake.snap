@@ -1,0 +1,11 @@
+---
+source: tests/formatting_snapshot_tests.rs
+expression: output
+input_file: tests/format_fixtures/suppression_skip.cmake
+---
+set(BEFORE value)
+
+# cmake-fmt: skip
+set(  SKIPPED_VAR    value1   value2  )
+
+set(AFTER value)

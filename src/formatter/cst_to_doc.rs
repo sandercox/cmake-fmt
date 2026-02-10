@@ -116,9 +116,15 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'
                         let leading_comments = comments::extract_leading_comments(&child_node);
 
                         // Process directives in leading comments
+                        // We need to find the actual comment position by searching backwards in source
+                        let cmd_start: usize = child_node.text_range().start().into();
                         for comment in &leading_comments {
                             if let Some(directive) = parse_directive(comment) {
-                                let line = line_number_at_offset(source, child_node.text_range().start().into());
+                                // Find comment position by searching backwards from command
+                                let comment_offset = source[..cmd_start]
+                                    .rfind(comment)
+                                    .unwrap_or(cmd_start);
+                                let line = line_number_at_offset(source, comment_offset);
                                 tracker.process_directive(directive, line);
                             }
                         }
@@ -282,13 +288,12 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (RcDoc<'
                         // Only emit standalone comments (not already handled)
                         let comment_text = token.text().to_string();
 
-                        // Process directives in standalone comments
-                        if let Some(directive) = parse_directive(&comment_text) {
-                            let line = line_number_at_offset(source, token.text_range().start().into());
-                            tracker.process_directive(directive, line);
-                        }
-
                         if !handled_comments.contains(&comment_text) {
+                            // Process directives in standalone comments (not leading/trailing)
+                            if let Some(directive) = parse_directive(&comment_text) {
+                                let line = line_number_at_offset(source, token.text_range().start().into());
+                                tracker.process_directive(directive, line);
+                            }
                             // Emit accumulated blank lines before standalone comment
                             // But only if not first content
                             if blank_line_count >= 2 && !docs.is_empty() {
