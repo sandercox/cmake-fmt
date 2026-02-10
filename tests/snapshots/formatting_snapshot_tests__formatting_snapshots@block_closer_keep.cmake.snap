@@ -6,25 +6,25 @@ input_file: tests/format_fixtures/block_closer_keep.cmake
 # Keep mode: preserve arguments as-is
 if(WIN32)
 	set(PLATFORM windows)
-else(WIN32)
+else()
 	set(PLATFORM unix)
-endif(WIN32)
+endif()
 
 foreach(item ${LIST})
 	message(${item})
-endforeach(item)
+endforeach()
 
 function(my_func ARG1 ARG2)
 	message(${ARG1})
-endfunction(my_func)
+endfunction()
 
 macro(my_macro X Y)
 	set(${X} ${Y})
-endmacro(my_macro)
+endmacro()
 
 while(${COUNTER} LESS 10)
 	math(EXPR COUNTER "${COUNTER} + 1")
-endwhile(${COUNTER} LESS 10)
+endwhile()
 
 # Empty closers should also be preserved
 if(UNIX)
@@ -35,5 +35,5 @@ endif()
 if(WIN32)
 	if(MSVC)
 		set(COMPILER msvc)
-	endif(MSVC)
-endif(WIN32)
+	endif()
+endif()

@@ -81,7 +81,7 @@ fn test_case_uppercase() {
 fn test_case_preserve() {
     let input = "SeT(FOO bar)\n";
     let config = FormatConfig {
-        command_case: CommandCase::Preserve,
+        command_case: CommandCase::Leave,
         ..default_config()
     };
     let result = format_text(input, &config);

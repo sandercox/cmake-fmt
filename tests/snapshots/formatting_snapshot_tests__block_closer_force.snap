@@ -41,7 +41,7 @@ endif(WIN32)
 # elseif chain
 if(WIN32)
 	set(A windows)
-elseif(WIN32)
+elseif(APPLE)
 	set(A apple)
 else(WIN32)
 	set(A other)

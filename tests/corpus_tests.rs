@@ -44,16 +44,25 @@ fn corpus_files() -> Vec<PathBuf> {
     files
 }
 
-/// Extract command names and their arguments (ignoring whitespace/trivia) for semantic comparison
+/// Extract command names and their arguments (ignoring whitespace/trivia) for semantic comparison.
+/// Block closer args (endif, endforeach, etc.) and else args are excluded since they are
+/// semantically irrelevant in CMake and may be stripped by closing_style=remove.
 fn extract_semantic_commands(source: &str) -> Vec<(String, Vec<String>)> {
     let cst = parse_text(source);
     cst.commands()
         .map(|cmd| {
             let name = cmd.name_text().unwrap_or_default().to_lowercase();
-            let args: Vec<String> = cmd
-                .argument_list()
-                .map(|al| al.arguments().map(|a| a.text().to_string()).collect())
-                .unwrap_or_default();
+            let is_closer = matches!(
+                name.as_str(),
+                "endif" | "endforeach" | "endwhile" | "endfunction" | "endmacro" | "else"
+            );
+            let args: Vec<String> = if is_closer {
+                Vec::new()
+            } else {
+                cmd.argument_list()
+                    .map(|al| al.arguments().map(|a| a.text().to_string()).collect())
+                    .unwrap_or_default()
+            };
             (name, args)
         })
         .collect()

@@ -29,7 +29,7 @@ endwhile()
 # Already has correct args (should keep them in force mode)
 if(APPLE)
 	set(A b)
-endif(APPLE)
+endif()
 
 # Nested blocks with empty closers
 if(WIN32)

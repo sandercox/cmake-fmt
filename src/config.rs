@@ -138,8 +138,8 @@ fn apply_style_overrides(config: &mut FormatConfig, style: &str) {
                 match value {
                     "lowercase" => config.command_case = cmake_fmt::formatter::CommandCase::Lowercase,
                     "uppercase" => config.command_case = cmake_fmt::formatter::CommandCase::Uppercase,
-                    "preserve" => config.command_case = cmake_fmt::formatter::CommandCase::Preserve,
-                    _ => eprintln!("Warning: Invalid value for command_case (expected lowercase, uppercase, or preserve): {}", value),
+                    "leave" => config.command_case = cmake_fmt::formatter::CommandCase::Leave,
+                    _ => eprintln!("Warning: Invalid value for command_case (expected lowercase, uppercase, or leave): {}", value),
                 }
             }
             "max_blank_lines" => {
@@ -158,10 +158,10 @@ fn apply_style_overrides(config: &mut FormatConfig, style: &str) {
             }
             "closing_style" => {
                 match value {
-                    "keep" => config.closing_style = cmake_fmt::formatter::ClosingStyle::Keep,
+                    "leave" => config.closing_style = cmake_fmt::formatter::ClosingStyle::Leave,
                     "remove" => config.closing_style = cmake_fmt::formatter::ClosingStyle::Remove,
                     "force" => config.closing_style = cmake_fmt::formatter::ClosingStyle::Force,
-                    _ => eprintln!("Warning: Invalid value for closing_style (expected keep, remove, or force): {}", value),
+                    _ => eprintln!("Warning: Invalid value for closing_style (expected leave, remove, or force): {}", value),
                 }
             }
             _ => {

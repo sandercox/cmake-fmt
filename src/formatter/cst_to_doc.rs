@@ -342,35 +342,45 @@ fn format_command(
     let formatted_name = match ctx.config.command_case {
         CommandCase::Lowercase => name.to_lowercase(),
         CommandCase::Uppercase => name.to_uppercase(),
-        CommandCase::Preserve => name.clone(),
+        CommandCase::Leave => name.clone(),
     };
 
     // Handle block closers and mid-block commands based on closing_style
     let args_doc = if let Some(closer_ctx) = closer_context {
-        match ctx.config.closing_style {
-            ClosingStyle::Keep => {
-                // Keep mode: format normally, ignore closer_context
-                if let Some(arg_list) = cmd.argument_list() {
-                    if cmake_rules::is_keyword_aware_command(&name) {
-                        let sections = cmake_rules::parse_keyword_sections(&arg_list);
-                        cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
-                    } else {
-                        format_argument_list(&arg_list, ctx)
-                    }
-                } else {
-                    RcDoc::nil()
-                }
-            }
-            ClosingStyle::Remove => {
-                // Remove mode: emit empty argument list
+        if closer_ctx.is_mid_block && name.to_lowercase() == "elseif" {
+            // elseif carries a condition — always preserve its arguments
+            if let Some(arg_list) = cmd.argument_list() {
+                format_argument_list(&arg_list, ctx)
+            } else {
                 RcDoc::nil()
             }
-            ClosingStyle::Force => {
-                // Force mode: emit opener's arguments
-                if closer_ctx.opener_args.is_empty() {
+        } else {
+            // True closers (endif, endforeach, etc.) — apply closing_style
+            match ctx.config.closing_style {
+                ClosingStyle::Leave => {
+                    // Leave mode: format normally, ignore closer_context
+                    if let Some(arg_list) = cmd.argument_list() {
+                        if cmake_rules::is_keyword_aware_command(&name) {
+                            let sections = cmake_rules::parse_keyword_sections(&arg_list);
+                            cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
+                        } else {
+                            format_argument_list(&arg_list, ctx)
+                        }
+                    } else {
+                        RcDoc::nil()
+                    }
+                }
+                ClosingStyle::Remove => {
+                    // Remove mode: emit empty argument list
                     RcDoc::nil()
-                } else {
-                    RcDoc::text(closer_ctx.opener_args.join(" "))
+                }
+                ClosingStyle::Force => {
+                    // Force mode: emit opener's arguments
+                    if closer_ctx.opener_args.is_empty() {
+                        RcDoc::nil()
+                    } else {
+                        RcDoc::text(closer_ctx.opener_args.join(" "))
+                    }
                 }
             }
         }
