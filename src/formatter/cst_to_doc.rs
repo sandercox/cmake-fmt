@@ -401,7 +401,8 @@ fn format_command(
         if closer_ctx.is_mid_block && name.to_lowercase() == "elseif" {
             // elseif carries a condition — always preserve its arguments
             if let Some(arg_list) = cmd.argument_list() {
-                format_argument_list(&arg_list, ctx)
+                let is_custom = !builtins::is_builtin_command(&name_lower);
+                format_argument_list(&arg_list, ctx, is_custom)
             } else {
                 RcDoc::nil()
             }
@@ -417,11 +418,15 @@ fn format_command(
                             .filter(|g| g.is_multi_mode())
                             .and_then(|_| detect_mode_keyword(&arg_list));
                         let grammar = grammar_enum.and_then(|g| g.resolve(first_keyword.as_deref()));
-                        if grammar.is_some() || cmake_rules::is_keyword_aware_command(&name) {
+                        // Skip keyword-aware formatting for unrecognized modes in multi-mode commands
+                        let is_unrecognized_mode = grammar_enum.as_ref()
+                            .map_or(false, |g| g.is_multi_mode() && grammar.is_none());
+                        if !is_unrecognized_mode && (grammar.is_some() || cmake_rules::is_keyword_aware_command(&name)) {
                             let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, grammar);
                             cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
                         } else {
-                            format_argument_list(&arg_list, ctx)
+                            let is_custom = !builtins::is_builtin_command(&name_lower);
+                            format_argument_list(&arg_list, ctx, is_custom)
                         }
                     } else {
                         RcDoc::nil()
@@ -451,11 +456,15 @@ fn format_command(
                 .filter(|g| g.is_multi_mode())
                 .and_then(|_| detect_mode_keyword(&arg_list));
             let grammar = grammar_enum.and_then(|g| g.resolve(first_keyword.as_deref()));
-            if grammar.is_some() || cmake_rules::is_keyword_aware_command(&name) {
+            // Skip keyword-aware formatting for unrecognized modes in multi-mode commands
+            let is_unrecognized_mode = grammar_enum.as_ref()
+                .map_or(false, |g| g.is_multi_mode() && grammar.is_none());
+            if !is_unrecognized_mode && (grammar.is_some() || cmake_rules::is_keyword_aware_command(&name)) {
                 let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, grammar);
                 cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
             } else {
-                format_argument_list(&arg_list, ctx)
+                let is_custom = !builtins::is_builtin_command(&name_lower);
+                format_argument_list(&arg_list, ctx, is_custom)
             }
         } else {
             RcDoc::nil()
@@ -517,7 +526,7 @@ pub(crate) fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> Arg
 }
 
 /// Format an argument list with intelligent line breaking
-fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'static, ()> {
+fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_command: bool) -> RcDoc<'static, ()> {
     let args = collect_logical_args(arg_list);
 
     if args.is_empty() {
@@ -528,7 +537,8 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
     let signals = detect_argument_formatting_signals(arg_list);
 
     // If no multiline signals, use auto-layout (flat_alt + group)
-    // But follow ARGL-03: first arg should be on same line as command when broken
+    // ARGL-03: For builtin commands, first arg stays on same line when broken
+    // For custom commands, ALL args break to new lines when broken
     if !signals.force_multiline {
         if args.len() == 1 {
             // Single argument: simple case
@@ -540,31 +550,65 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
         let base_indent = indent_string(ctx.indent_level, ctx.config);
         let inner_indent = indent_string(ctx.indent_level + 1, ctx.config);
 
-        let first_text = args[0].clone();
-        let mut rest_docs = Vec::new();
+        if is_custom_command {
+            // Custom command: ALL args break to new lines when broken
+            // When flat: "arg1 arg2 arg3"
+            // When broken: "\n<inner>arg1\n<inner>arg2\n<inner>arg3\n<base>"
+            let mut all_docs = Vec::new();
 
-        for arg in args.iter().skip(1) {
-            // flat_alt: broken → newline + indent text, flat → space
-            rest_docs.push(RcDoc::flat_alt(
-                RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
-                RcDoc::space(),
+            for (i, arg) in args.iter().enumerate() {
+                if i > 0 {
+                    // Separator before arg (except first): flat → space, broken → newline + indent
+                    all_docs.push(RcDoc::flat_alt(
+                        RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
+                        RcDoc::space(),
+                    ));
+                } else {
+                    // First arg: flat → no separator, broken → newline + indent
+                    all_docs.push(RcDoc::flat_alt(
+                        RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
+                        RcDoc::nil(),
+                    ));
+                }
+                all_docs.push(RcDoc::text(arg.clone()));
+            }
+
+            // Closing paren position: broken → newline + base indent, flat → nothing
+            all_docs.push(RcDoc::flat_alt(
+                RcDoc::hardline().append(RcDoc::text(base_indent)),
+                RcDoc::nil(),
             ));
-            rest_docs.push(RcDoc::text(arg.clone()));
+
+            // Group all arguments together - when it doesn't fit flat, all break
+            return RcDoc::concat(all_docs).group();
+        } else {
+            // Builtin command: first arg stays inline, rest break
+            let first_text = args[0].clone();
+            let mut rest_docs = Vec::new();
+
+            for arg in args.iter().skip(1) {
+                // flat_alt: broken → newline + indent text, flat → space
+                rest_docs.push(RcDoc::flat_alt(
+                    RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
+                    RcDoc::space(),
+                ));
+                rest_docs.push(RcDoc::text(arg.clone()));
+            }
+
+            // Closing paren position: broken → newline + base indent, flat → nothing
+            rest_docs.push(RcDoc::flat_alt(
+                RcDoc::hardline().append(RcDoc::text(base_indent)),
+                RcDoc::nil(),
+            ));
+
+            // When flat: "first rest1 rest2"
+            // When broken: "first\n<inner>rest1\n<inner>rest2\n<base>"
+            return RcDoc::text(first_text)
+                .append(
+                    RcDoc::concat(rest_docs)
+                        .group()
+                );
         }
-
-        // Closing paren position: broken → newline + base indent, flat → nothing
-        rest_docs.push(RcDoc::flat_alt(
-            RcDoc::hardline().append(RcDoc::text(base_indent)),
-            RcDoc::nil(),
-        ));
-
-        // When flat: "first rest1 rest2"
-        // When broken: "first\n<inner>rest1\n<inner>rest2\n<base>"
-        return RcDoc::text(first_text)
-            .append(
-                RcDoc::concat(rest_docs)
-                    .group()
-            );
     }
 
     // Force multiline: walk tokens and build Doc IR with hardlines
@@ -572,7 +616,8 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
     let base_indent = indent_string(ctx.indent_level, ctx.config);
     let inner_indent = indent_string(ctx.indent_level + 1, ctx.config);
 
-    // Strategy for ARGL-03: first arg not indented, rest indented
+    // Strategy: For builtin commands (ARGL-03), first arg not indented, rest indented
+    // For custom commands, ALL args indented (including first)
     let mut first_arg_doc: Option<RcDoc<'static, ()>> = None;
     let mut rest_docs = Vec::new();
     let mut consecutive_newline_count = 0;
@@ -597,8 +642,15 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
                             // e.g. ${VAR}/suffix is two tokens but one logical argument
                             rest_docs.push(RcDoc::text(text));
                         } else if !seen_first_arg {
-                            // First argument: no indent, no break before
-                            first_arg_doc = Some(RcDoc::text(text));
+                            if is_custom_command {
+                                // Custom command: first arg gets hardline + indent (like subsequent args)
+                                rest_docs.push(RcDoc::hardline());
+                                rest_docs.push(RcDoc::text(inner_indent.clone()));
+                                rest_docs.push(RcDoc::text(text));
+                            } else {
+                                // Builtin command: first argument no indent, no break before
+                                first_arg_doc = Some(RcDoc::text(text));
+                            }
                             seen_first_arg = true;
                         } else {
                             // Subsequent arguments: hardline + explicit indent
@@ -659,20 +711,33 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext) -> RcDoc<'
     }
 
     // Build final Doc IR
-    if let Some(first) = first_arg_doc {
-        // We have a first arg
+    if is_custom_command {
+        // Custom command: all args in rest_docs (including first)
         if !rest_docs.is_empty() {
-            // First arg + rest with explicit indentation + closing paren indent
-            first
-                .append(RcDoc::concat(rest_docs))
+            RcDoc::concat(rest_docs)
                 .append(RcDoc::hardline())
                 .append(RcDoc::text(base_indent))
         } else {
-            first
+            // No arguments at all
+            RcDoc::nil()
         }
     } else {
-        // No arguments at all
-        RcDoc::nil()
+        // Builtin command: first arg separate, rest in rest_docs
+        if let Some(first) = first_arg_doc {
+            // We have a first arg
+            if !rest_docs.is_empty() {
+                // First arg + rest with explicit indentation + closing paren indent
+                first
+                    .append(RcDoc::concat(rest_docs))
+                    .append(RcDoc::hardline())
+                    .append(RcDoc::text(base_indent))
+            } else {
+                first
+            }
+        } else {
+            // No arguments at all
+            RcDoc::nil()
+        }
     }
 }
 
