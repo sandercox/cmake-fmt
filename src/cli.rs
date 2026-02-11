@@ -34,7 +34,7 @@ pub struct Cli {
     #[arg(long, conflicts_with_all = ["in_place", "check", "dry_run", "diff"])]
     pub interactive: bool,
 
-    /// Override config inline (e.g., "indent_width=4,max_line_length=100")
+    /// Override config inline (e.g., "indent_width=4,max_line_length=100"). Use --style help for all options
     #[arg(long)]
     pub style: Option<String>,
 }
