@@ -757,3 +757,86 @@ fn test_very_large_file_no_stack_overflow() {
     assert!(result.ends_with('\n'),
         "Output should end with newline");
 }
+
+/// Regression test: blank lines between commands/comments must be preserved
+/// across batch rendering boundaries. The formatter renders docs in batches
+/// of 500 to prevent stack overflow. Each command produces 2 docs (command +
+/// hardline), so the first batch flush occurs after 250 commands. Previously,
+/// blank lines were dropped at batch boundaries because `!docs.is_empty()`
+/// was used to detect "not at start of file", but after a batch flush, docs
+/// is empty even though we're mid-file.
+#[test]
+fn test_blank_line_preserved_across_batch_boundary() {
+    // Generate 260 simple commands (520 docs) to ensure at least one batch flush.
+    // Batch size is 500 docs, so flush occurs after command 250.
+    let mut lines = Vec::new();
+    for i in 0..260 {
+        lines.push(format!("set(VAR_{} value_{})", i, i));
+    }
+
+    // After the batch boundary, add a blank line followed by a comment and command.
+    // This is the exact pattern that was broken: blank line + comment after batch flush.
+    lines.push(String::new()); // blank line
+    lines.push("# Section after batch boundary".to_string());
+    lines.push("set(FINAL_VAR final_value)".to_string());
+
+    let input = lines.join("\n") + "\n";
+    let config = default_config();
+    let result = format_text(&input, &config);
+
+    // The blank line before the comment must be preserved
+    assert!(
+        result.contains("set(VAR_259 value_259)\n\n# Section after batch boundary"),
+        "Blank line before comment must be preserved across batch boundary.\n\
+         Expected to find: set(VAR_259 value_259)\\n\\n# Section after batch boundary\n\
+         Got around boundary:\n{}",
+        // Show context around the boundary for debugging
+        result.lines()
+            .collect::<Vec<_>>()
+            .windows(5)
+            .find(|w| w.iter().any(|l| l.contains("VAR_259")))
+            .map(|w| w.join("\n"))
+            .unwrap_or_else(|| "VAR_259 not found".to_string())
+    );
+
+    // The comment and final command must also be present
+    assert!(result.contains("# Section after batch boundary"),
+        "Comment after batch boundary should be present");
+    assert!(result.contains("set(FINAL_VAR final_value)"),
+        "Command after comment should be present");
+
+    // Verify idempotency
+    let result2 = format_text(&result, &config);
+    assert_eq!(result, result2,
+        "Formatting should be idempotent across batch boundaries with blank lines");
+}
+
+/// Regression test: blank lines between two commands (no comments) must also
+/// be preserved across batch boundaries.
+#[test]
+fn test_blank_line_between_commands_across_batch_boundary() {
+    let mut lines = Vec::new();
+    for i in 0..260 {
+        lines.push(format!("set(VAR_{} value_{})", i, i));
+    }
+
+    // Blank line between two commands right after batch boundary
+    lines.push(String::new()); // blank line
+    lines.push("set(AFTER_BOUNDARY after_value)".to_string());
+
+    let input = lines.join("\n") + "\n";
+    let config = default_config();
+    let result = format_text(&input, &config);
+
+    assert!(
+        result.contains("set(VAR_259 value_259)\n\nset(AFTER_BOUNDARY after_value)"),
+        "Blank line between commands must be preserved across batch boundary.\n\
+         Got around boundary:\n{}",
+        result.lines()
+            .collect::<Vec<_>>()
+            .windows(5)
+            .find(|w| w.iter().any(|l| l.contains("VAR_259")))
+            .map(|w| w.join("\n"))
+            .unwrap_or_else(|| "VAR_259 not found".to_string())
+    );
+}

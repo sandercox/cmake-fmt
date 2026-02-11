@@ -179,7 +179,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                         // Emit accumulated blank lines before command/comments
                         // When leading comments exist, blank_line_before handles all gaps
                         // (including before the first comment), so skip blank_line_count.
-                        if blank_line_count >= 2 && !docs.is_empty() && !has_emittable_leading {
+                        if blank_line_count >= 2 && (!docs.is_empty() || !batch_strings.is_empty()) && !has_emittable_leading {
                             let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, ctx.config.max_blank_lines);
                             for _ in 0..blank_lines_to_emit {
                                 docs.push(RcDoc::hardline());
@@ -196,7 +196,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                 let indent_str = indent_string(current_indent, ctx.config);
                                 for lc in &leading_comments {
                                     if !trailing_comments.contains(&lc.text) {
-                                        if lc.blank_line_before && !docs.is_empty() {
+                                        if lc.blank_line_before && (!docs.is_empty() || !batch_strings.is_empty()) {
                                             docs.push(RcDoc::hardline());
                                         }
                                         docs.push(RcDoc::text(format!("{}{}", indent_str, lc.text)));
@@ -208,7 +208,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                 let indent_str = indent_string(current_indent, ctx.config);
                                 for lc in &leading_comments {
                                     if !trailing_comments.contains(&lc.text) {
-                                        if lc.blank_line_before && !docs.is_empty() {
+                                        if lc.blank_line_before && (!docs.is_empty() || !batch_strings.is_empty()) {
                                             docs.push(RcDoc::hardline());
                                         }
                                         docs.push(RcDoc::text(format!("{}{}", indent_str, lc.text)));
@@ -238,7 +238,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                         for lc in &leading_comments {
                             // Only emit if not already handled as a trailing comment
                             if !trailing_comments.contains(&lc.text) {
-                                if lc.blank_line_before && !docs.is_empty() {
+                                if lc.blank_line_before && (!docs.is_empty() || !batch_strings.is_empty()) {
                                     docs.push(RcDoc::hardline());
                                 }
                                 docs.push(RcDoc::text(format!("{}{}", indent_str, lc.text)));
@@ -328,7 +328,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                     SyntaxKind::ERROR => {
                         // Emit accumulated blank lines before error
                         // But only if not first content
-                        if blank_line_count >= 2 && !docs.is_empty() {
+                        if blank_line_count >= 2 && (!docs.is_empty() || !batch_strings.is_empty()) {
                             let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, ctx.config.max_blank_lines);
                             for _ in 0..blank_lines_to_emit {
                                 docs.push(RcDoc::hardline());
@@ -360,7 +360,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                             }
                             // Emit accumulated blank lines before standalone comment
                             // But only if not first content
-                            if blank_line_count >= 2 && !docs.is_empty() {
+                            if blank_line_count >= 2 && (!docs.is_empty() || !batch_strings.is_empty()) {
                                 let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, ctx.config.max_blank_lines);
                                 for _ in 0..blank_lines_to_emit {
                                     docs.push(RcDoc::hardline());
