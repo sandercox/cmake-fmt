@@ -1,4 +1,4 @@
-use super::{builtin_grammars, user_scanner, CommandGrammar, Grammar};
+use super::{builtin_grammars, user_scanner, CommandGrammar, Grammar, KeywordType};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -101,4 +101,26 @@ pub fn clear_project_grammar_cache() {
             cache_lock.clear();
         }
     }
+}
+
+/// Convert config grammar definitions to CommandGrammar map
+pub fn config_grammars_to_map(
+    config_grammars: &HashMap<String, crate::formatter::config::CommandGrammarConfig>
+) -> HashMap<String, CommandGrammar> {
+    config_grammars.iter().map(|(name, cfg)| {
+        let mut keywords = HashMap::new();
+        for kw in &cfg.options {
+            keywords.insert(kw.clone(), KeywordType::Flag);
+        }
+        for kw in &cfg.one_value_keywords {
+            keywords.insert(kw.clone(), KeywordType::SingleValue);
+        }
+        for kw in &cfg.multi_value_keywords {
+            keywords.insert(kw.clone(), KeywordType::MultiValue);
+        }
+        for kw in &cfg.pair_value_keywords {
+            keywords.insert(kw.clone(), KeywordType::PairValue);
+        }
+        (name.to_lowercase(), CommandGrammar { keywords })
+    }).collect()
 }

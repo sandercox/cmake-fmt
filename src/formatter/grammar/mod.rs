@@ -7,8 +7,8 @@ pub mod user_scanner;
 
 pub use self::builtins::*;
 pub use self::resolver::{
-    clear_project_grammar_cache, clear_project_scan_cache, get_project_user_commands,
-    get_project_user_grammars, GrammarRegistry,
+    clear_project_grammar_cache, clear_project_scan_cache, config_grammars_to_map,
+    get_project_user_commands, get_project_user_grammars, GrammarRegistry,
 };
 
 /// Classification of CMake command keywords

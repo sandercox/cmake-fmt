@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 
 /// Configuration for CMake formatting
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -23,6 +24,11 @@ pub struct FormatConfig {
     pub closing_style: ClosingStyle,
     /// Force keyword-aware commands to use multiline layout regardless of line length (default: false)
     pub force_break_keywords: bool,
+
+    /// Manual command grammar definitions
+    /// Map of command name -> grammar definition
+    #[serde(default)]
+    pub command_grammars: HashMap<String, CommandGrammarConfig>,
 }
 
 impl Default for FormatConfig {
@@ -37,6 +43,7 @@ impl Default for FormatConfig {
             line_ending: LineEnding::Auto,
             closing_style: ClosingStyle::Remove,
             force_break_keywords: false,
+            command_grammars: HashMap::new(),
         }
     }
 }
@@ -96,4 +103,22 @@ impl Default for ClosingStyle {
     fn default() -> Self {
         Self::Remove
     }
+}
+
+/// Grammar configuration for a custom command, as specified in config file
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(default)]
+pub struct CommandGrammarConfig {
+    /// Flag keywords (no values consumed)
+    #[serde(default)]
+    pub options: Vec<String>,
+    /// Single-value keywords (consumes exactly one value)
+    #[serde(default)]
+    pub one_value_keywords: Vec<String>,
+    /// Multi-value keywords (consumes multiple values until next keyword)
+    #[serde(default)]
+    pub multi_value_keywords: Vec<String>,
+    /// Pair-value keywords (consumes alternating key/value pairs)
+    #[serde(default)]
+    pub pair_value_keywords: Vec<String>,
 }

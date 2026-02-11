@@ -173,6 +173,7 @@ fn apply_style_overrides(config: &mut FormatConfig, style: &str) {
                     _ => eprintln!("Warning: Invalid value for closing_style (expected leave, remove, or force): {}", value),
                 }
             }
+            // command_grammars: Complex type, set via config file only (not --style CLI override)
             _ => {
                 eprintln!("Warning: Unknown config key (ignored): {}", key);
             }

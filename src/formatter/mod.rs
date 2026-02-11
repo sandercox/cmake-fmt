@@ -7,7 +7,7 @@ mod comments;
 mod suppression;
 mod user_commands;
 
-pub use config::{ClosingStyle, CommandCase, FormatConfig, LineEnding, UserCommandCase};
+pub use config::{ClosingStyle, CommandCase, CommandGrammarConfig, FormatConfig, LineEnding, UserCommandCase};
 pub use grammar::{CommandGrammar, GrammarRegistry, KeywordType};
 pub use suppression::SuppressionWarning;
 
@@ -86,6 +86,13 @@ pub fn format_text_with_diagnostics_and_path(
     } else {
         std::collections::HashMap::new()
     };
+
+    // Convert config grammars and merge (config overrides auto-detected)
+    let config_grammar_map = grammar::config_grammars_to_map(&config.command_grammars);
+    // Start with auto-detected grammars, then override with config grammars
+    let mut merged_grammars = user_grammars;
+    merged_grammars.extend(config_grammar_map);
+    let user_grammars = merged_grammars;
 
     let (mut result, warnings) = cst_to_doc::format_cst(&cst, config, parse_input, &user_defs, &user_grammars);
 
