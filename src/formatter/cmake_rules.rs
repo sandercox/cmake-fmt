@@ -623,8 +623,11 @@ pub fn format_keyword_aware_args(
                     // Values under the keyword with explicit indentation
                     if !section.args.is_empty() {
                         // Apply source grouping if enabled
+                        // Disable grouping when comments or blank lines are present to preserve their positions
                         let effective_args = if config.source_grouping != super::config::SourceGrouping::None
                             && matches!(section.keyword_type, Some(KeywordType::MultiValue) | None)
+                            && section.comments.is_empty()
+                            && section.blank_lines.is_empty()
                         {
                             group_source_pairs(&section.args, config.source_grouping)
                         } else {
@@ -708,7 +711,11 @@ pub fn format_keyword_aware_args(
             // pre-keyword args (a file list), all go on separate lines.
 
             // Apply source grouping if enabled
-            let effective_args = if config.source_grouping != super::config::SourceGrouping::None {
+            // Disable grouping when comments or blank lines are present to preserve their positions
+            let effective_args = if config.source_grouping != super::config::SourceGrouping::None
+                && section.comments.is_empty()
+                && section.blank_lines.is_empty()
+            {
                 group_source_pairs(&section.args, config.source_grouping)
             } else {
                 section.args.clone()
@@ -783,9 +790,20 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
 
     // Collect all args and comments from all sections
     for section in sections {
+        // Apply source grouping if enabled
+        // Disable grouping when comments or blank lines are present to preserve their positions
+        let effective_args = if config.source_grouping != super::config::SourceGrouping::None
+            && section.comments.is_empty()
+            && section.blank_lines.is_empty()
+        {
+            group_source_pairs(&section.args, config.source_grouping)
+        } else {
+            section.args.clone()
+        };
+
         let mut comment_iter = section.comments.iter().peekable();
 
-        for (arg_idx, arg) in section.args.iter().enumerate() {
+        for (arg_idx, arg) in effective_args.iter().enumerate() {
             // Emit comments before this argument
             while let Some((pos, comment)) = comment_iter.peek() {
                 if *pos == arg_idx {
