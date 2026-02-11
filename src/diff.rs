@@ -48,110 +48,108 @@ pub fn print_colored_diff(original: &str, formatted: &str, path: &str) {
         // Print hunk header
         println!("{}", format!("{}", hunk.header()).if_supports_color(Stream::Stdout, |t| t.cyan()));
 
-        // Process each change using inline diff
-        for (idx, change) in hunk.iter_changes().enumerate() {
-            let tag = change.tag();
-            let value = change.value();
+        // Collect all changes so we can process runs of deletes/inserts together
+        let changes: Vec<_> = hunk.iter_changes().map(|c| (c.tag(), c.value().to_string())).collect();
+        let mut i = 0;
 
-            match tag {
+        while i < changes.len() {
+            match changes[i].0 {
                 ChangeTag::Equal => {
-                    // Context line - no color
-                    print!(" {}", value);
-                    if !value.ends_with('\n') {
+                    print!(" {}", changes[i].1);
+                    if !changes[i].1.ends_with('\n') {
                         println!();
                     }
+                    i += 1;
                 }
                 ChangeTag::Delete => {
-                    // Check if there's a corresponding insert for inline diff
-                    let has_inline = hunk.iter_changes().skip(idx + 1).next()
-                        .map(|next| next.tag() == ChangeTag::Insert)
-                        .unwrap_or(false);
+                    // Collect consecutive deletes
+                    let del_start = i;
+                    while i < changes.len() && changes[i].0 == ChangeTag::Delete {
+                        i += 1;
+                    }
+                    let deletes = &changes[del_start..i];
 
-                    if has_inline {
-                        // Get the corresponding insert line
-                        let insert_value = hunk.iter_changes().skip(idx + 1).next().unwrap().value();
+                    // Collect consecutive inserts that follow
+                    let ins_start = i;
+                    while i < changes.len() && changes[i].0 == ChangeTag::Insert {
+                        i += 1;
+                    }
+                    let inserts = &changes[ins_start..i];
 
-                        // Perform character-level diff for inline highlighting
-                        let inline_diff = TextDiff::from_chars(value, insert_value);
-
-                        print!("-");
-                        for inline_change in inline_diff.iter_all_changes() {
-                            let inline_tag = inline_change.tag();
-                            let inline_value = inline_change.value();
-
-                            match inline_tag {
-                                ChangeTag::Equal => {
-                                    // Unchanged portion - red foreground only
-                                    print!("{}", inline_value.if_supports_color(Stream::Stdout, |t| t.red()));
-                                }
-                                ChangeTag::Delete => {
-                                    // Changed portion - white foreground + red background
-                                    print!("{}", inline_value.if_supports_color(Stream::Stdout, |t| t.bright_white().on_red()));
-                                }
-                                ChangeTag::Insert => {
-                                    // This shouldn't appear in the delete line
-                                }
-                            }
-                        }
-                        if !value.ends_with('\n') {
-                            println!();
+                    // Only do inline highlighting when delete/insert counts match
+                    if !inserts.is_empty() && deletes.len() == inserts.len() {
+                        for (del, ins) in deletes.iter().zip(inserts.iter()) {
+                            print_inline_delete(&del.1, &ins.1);
+                            print_inline_insert(&del.1, &ins.1);
                         }
                     } else {
-                        // No corresponding insert - just red foreground
-                        print!("-{}", value.if_supports_color(Stream::Stdout, |t| t.red()));
-                        if !value.ends_with('\n') {
-                            println!();
+                        // Unmatched counts - show plain colored lines
+                        for del in deletes {
+                            print_plain_line("-", &del.1, true);
+                        }
+                        for ins in inserts {
+                            print_plain_line("+", &ins.1, false);
                         }
                     }
                 }
                 ChangeTag::Insert => {
-                    // Check if the previous change was a delete (for inline diff)
-                    let prev_is_delete = if idx > 0 {
-                        hunk.iter_changes().nth(idx - 1)
-                            .map(|prev| prev.tag() == ChangeTag::Delete)
-                            .unwrap_or(false)
-                    } else {
-                        false
-                    };
-
-                    if prev_is_delete {
-                        // Get the corresponding delete line
-                        let delete_value = hunk.iter_changes().nth(idx - 1).unwrap().value();
-
-                        // Perform character-level diff for inline highlighting
-                        let inline_diff = TextDiff::from_chars(delete_value, value);
-
-                        print!("+");
-                        for inline_change in inline_diff.iter_all_changes() {
-                            let inline_tag = inline_change.tag();
-                            let inline_value = inline_change.value();
-
-                            match inline_tag {
-                                ChangeTag::Equal => {
-                                    // Unchanged portion - green foreground only
-                                    print!("{}", inline_value.if_supports_color(Stream::Stdout, |t| t.green()));
-                                }
-                                ChangeTag::Insert => {
-                                    // Changed portion - white foreground + green background
-                                    print!("{}", inline_value.if_supports_color(Stream::Stdout, |t| t.bright_white().on_green()));
-                                }
-                                ChangeTag::Delete => {
-                                    // This shouldn't appear in the insert line
-                                }
-                            }
-                        }
-                        if !value.ends_with('\n') {
-                            println!();
-                        }
-                    } else {
-                        // No corresponding delete - just green foreground
-                        print!("+{}", value.if_supports_color(Stream::Stdout, |t| t.green()));
-                        if !value.ends_with('\n') {
-                            println!();
-                        }
-                    }
+                    // Orphan insert (no preceding delete) - plain green
+                    print_plain_line("+", &changes[i].1, false);
+                    i += 1;
                 }
             }
         }
+    }
+}
+
+/// Print a delete line with inline character-level highlighting
+fn print_inline_delete(old: &str, new: &str) {
+    let inline_diff = TextDiff::from_chars(old, new);
+    print!("-");
+    for change in inline_diff.iter_all_changes() {
+        match change.tag() {
+            ChangeTag::Equal => {
+                print!("{}", change.value().if_supports_color(Stream::Stdout, |t| t.red()));
+            }
+            ChangeTag::Delete => {
+                print!("{}", change.value().if_supports_color(Stream::Stdout, |t| t.bright_white().on_red()));
+            }
+            ChangeTag::Insert => {}
+        }
+    }
+    if !old.ends_with('\n') {
+        println!();
+    }
+}
+
+/// Print an insert line with inline character-level highlighting
+fn print_inline_insert(old: &str, new: &str) {
+    let inline_diff = TextDiff::from_chars(old, new);
+    print!("+");
+    for change in inline_diff.iter_all_changes() {
+        match change.tag() {
+            ChangeTag::Equal => {
+                print!("{}", change.value().if_supports_color(Stream::Stdout, |t| t.green()));
+            }
+            ChangeTag::Insert => {
+                print!("{}", change.value().if_supports_color(Stream::Stdout, |t| t.bright_white().on_green()));
+            }
+            ChangeTag::Delete => {}
+        }
+    }
+    if !new.ends_with('\n') {
+        println!();
+    }
+}
+
+/// Print a plain colored line (no inline highlighting)
+fn print_plain_line(prefix: &str, value: &str, is_delete: bool) {
+    if is_delete {
+        print!("{}{}", prefix, value.if_supports_color(Stream::Stdout, |t| t.red()));
+    } else {
+        print!("{}{}", prefix, value.if_supports_color(Stream::Stdout, |t| t.green()));
+    }
+    if !value.ends_with('\n') {
+        println!();
     }
 }

@@ -64,36 +64,61 @@ pub fn display_hunk(term: &Term, hunk: &DiffHunk, hunk_num: usize, total: usize)
     let header = format!("@@ Hunk {}/{} @@", hunk_num, total);
     term.write_line(&header.if_supports_color(Stream::Stderr, |text| text.cyan()).to_string())?;
 
-    // Process changes to detect adjacent delete/insert pairs for inline highlighting
+    // Process changes, collecting delete/insert runs for proper positional pairing
     let mut i = 0;
     while i < hunk.changes.len() {
         match &hunk.changes[i] {
-            Change::Delete(old_line) => {
-                // Check if the next change is an insert (for inline highlighting)
-                if i + 1 < hunk.changes.len() {
-                    if let Change::Insert(new_line) = &hunk.changes[i + 1] {
-                        // Adjacent delete+insert pair - use inline highlighting
-                        let (formatted_old, formatted_new) = format_inline_pair(old_line, new_line);
-                        term.write_line(&format!("-{}", formatted_old))?;
-                        term.write_line(&format!("+{}", formatted_new))?;
-                        i += 2; // Skip both changes
-                        continue;
+            Change::Delete(_) => {
+                // Collect consecutive deletes
+                let del_start = i;
+                while i < hunk.changes.len() && matches!(&hunk.changes[i], Change::Delete(_)) {
+                    i += 1;
+                }
+                let del_end = i;
+
+                // Collect consecutive inserts that follow
+                let ins_start = i;
+                while i < hunk.changes.len() && matches!(&hunk.changes[i], Change::Insert(_)) {
+                    i += 1;
+                }
+                let ins_end = i;
+
+                let del_count = del_end - del_start;
+                let ins_count = ins_end - ins_start;
+
+                // Only do inline highlighting when counts match
+                if ins_count > 0 && del_count == ins_count {
+                    for j in 0..del_count {
+                        if let (Change::Delete(old_line), Change::Insert(new_line)) =
+                            (&hunk.changes[del_start + j], &hunk.changes[ins_start + j])
+                        {
+                            let (formatted_old, formatted_new) = format_inline_pair(old_line, new_line);
+                            term.write_line(&format!("-{}", formatted_old))?;
+                            term.write_line(&format!("+{}", formatted_new))?;
+                        }
+                    }
+                } else {
+                    // Unmatched counts - plain colored lines
+                    for j in del_start..del_end {
+                        if let Change::Delete(line) = &hunk.changes[j] {
+                            let text = format!("-{}", line);
+                            term.write_line(&text.if_supports_color(Stream::Stderr, |t| t.red()).to_string())?;
+                        }
+                    }
+                    for j in ins_start..ins_end {
+                        if let Change::Insert(line) = &hunk.changes[j] {
+                            let text = format!("+{}", line);
+                            term.write_line(&text.if_supports_color(Stream::Stderr, |t| t.green()).to_string())?;
+                        }
                     }
                 }
-
-                // No corresponding insert - just show red foreground
-                let text = format!("-{}", old_line);
-                term.write_line(&text.if_supports_color(Stream::Stderr, |t| t.red()).to_string())?;
-                i += 1;
             }
             Change::Insert(new_line) => {
-                // Insert without preceding delete - just show green foreground
                 let text = format!("+{}", new_line);
                 term.write_line(&text.if_supports_color(Stream::Stderr, |t| t.green()).to_string())?;
                 i += 1;
             }
             Change::Equal(line) => {
-                // Context line - no color
                 term.write_line(&format!(" {}", line))?;
                 i += 1;
             }
