@@ -56,7 +56,7 @@ fn print_style_help() {
     println!();
     println!("  {:<25} {:<15} {:<15} {}", "Setting", "Type", "Default", "Values");
     println!("  {:<25} {:<15} {:<15} {}", "-------", "----", "-------", "------");
-    println!("  {:<25} {:<15} {:<15} {}", "indent_width", "integer", "4", "Number of spaces/tabs per indent level");
+    println!("  {:<25} {:<15} {:<15} {}", "indent_width", "integer", "4", "Number of spaces per indent level");
     println!("  {:<25} {:<15} {:<15} {}", "max_line_length", "integer", "80", "Maximum line length before wrapping");
     println!("  {:<25} {:<15} {:<15} {}", "use_tabs", "boolean", "true", "true, false");
     println!("  {:<25} {:<15} {:<15} {}", "command_case", "enum", "lowercase", "lowercase, uppercase, leave");
