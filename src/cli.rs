@@ -34,9 +34,13 @@ pub struct Cli {
     #[arg(long, conflicts_with_all = ["in_place", "check", "dry_run", "diff"])]
     pub interactive: bool,
 
-    /// Override config inline (e.g., "indent_width=4,max_line_length=100"). Use --style help for all options
+    /// Override config inline (e.g., "indent_width=4,max_line_length=100")
     #[arg(long)]
     pub style: Option<String>,
+
+    /// Show all available style settings
+    #[arg(long = "help-style")]
+    pub help_style: bool,
 }
 
 /// Print suppression warnings to stderr
@@ -78,8 +82,8 @@ fn print_style_help() {
 pub fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
 
-    // Handle --style help
-    if cli.style.as_deref() == Some("help") {
+    // Handle --help-style
+    if cli.help_style {
         print_style_help();
         return Ok(ExitCode::SUCCESS);
     }
