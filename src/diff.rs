@@ -1,6 +1,11 @@
 use owo_colors::{OwoColorize, Stream};
 use similar::{ChangeTag, TextDiff};
 
+/// Tab width for expanding tabs in diff output. Terminals don't reliably
+/// render ANSI background colors on tab characters, so we expand to spaces.
+/// Uses 8 (terminal/POSIX standard). Same approach as delta, diff-so-fancy, etc.
+const TAB_WIDTH: usize = 8;
+
 /// Generate a unified diff between original and formatted text.
 /// Returns None if the texts are identical, Some(diff_string) otherwise.
 pub fn generate_diff(original: &str, formatted: &str, path: &str) -> Option<String> {
@@ -55,10 +60,8 @@ pub fn print_colored_diff(original: &str, formatted: &str, path: &str) {
         while i < changes.len() {
             match changes[i].0 {
                 ChangeTag::Equal => {
-                    print!(" {}", changes[i].1);
-                    if !changes[i].1.ends_with('\n') {
-                        println!();
-                    }
+                    let expanded = expand_tabs(changes[i].1.trim_end_matches('\n'), 1);
+                    println!(" {}", expanded);
                     i += 1;
                 }
                 ChangeTag::Delete => {
@@ -107,10 +110,9 @@ fn print_inline_side(del_text: &str, ins_text: &str, is_delete: bool) {
     let inline_diff = TextDiff::from_chars(del_text, ins_text);
     let prefix = if is_delete { "-" } else { "+" };
     let mut need_prefix = true;
-    // Buffer to batch consecutive same-styled text into one ANSI span.
-    // Terminals need continuous ANSI spans for background color on tabs.
     let mut buf = String::new();
     let mut buf_emphasized = false;
+    let mut col: usize = 1; // prefix takes 1 column
 
     for change in inline_diff.iter_all_changes() {
         let tag = change.tag();
@@ -121,30 +123,38 @@ fn print_inline_side(del_text: &str, ins_text: &str, is_delete: bool) {
 
         let emphasized = tag != ChangeTag::Equal;
 
-        for (i, segment) in change.value().split('\n').enumerate() {
-            if i > 0 {
-                // Flush buffer before newline
+        for ch in change.value().chars() {
+            if ch == '\n' {
                 flush_inline_buf(&buf, buf_emphasized, is_delete, Stream::Stdout);
                 buf.clear();
                 println!();
                 need_prefix = true;
-            }
-            if !segment.is_empty() {
+                col = 1; // reset column (prefix takes 1)
+            } else {
                 if need_prefix {
                     print!("{}", prefix);
                     need_prefix = false;
                 }
-                // If style changed, flush previous batch
+                // Flush if style changed
                 if !buf.is_empty() && buf_emphasized != emphasized {
                     flush_inline_buf(&buf, buf_emphasized, is_delete, Stream::Stdout);
                     buf.clear();
                 }
                 buf_emphasized = emphasized;
-                buf.push_str(segment);
+                if ch == '\t' {
+                    // Expand tab to spaces at correct tab stop
+                    let spaces = TAB_WIDTH - (col % TAB_WIDTH);
+                    for _ in 0..spaces {
+                        buf.push(' ');
+                    }
+                    col += spaces;
+                } else {
+                    buf.push(ch);
+                    col += 1;
+                }
             }
         }
     }
-    // Flush remaining
     flush_inline_buf(&buf, buf_emphasized, is_delete, Stream::Stdout);
     if !need_prefix {
         println!();
@@ -171,12 +181,30 @@ fn flush_inline_buf(buf: &str, emphasized: bool, is_delete: bool, stream: Stream
 
 /// Print a plain colored line (no inline highlighting)
 fn print_plain_line(prefix: &str, value: &str, is_delete: bool) {
+    let expanded = expand_tabs(value.trim_end_matches('\n'), prefix.len());
     if is_delete {
-        print!("{}{}", prefix, value.if_supports_color(Stream::Stdout, |t| t.red()));
+        print!("{}{}", prefix, expanded.if_supports_color(Stream::Stdout, |t| t.red()));
     } else {
-        print!("{}{}", prefix, value.if_supports_color(Stream::Stdout, |t| t.green()));
+        print!("{}{}", prefix, expanded.if_supports_color(Stream::Stdout, |t| t.green()));
     }
-    if !value.ends_with('\n') {
-        println!();
+    println!();
+}
+
+/// Expand tab characters to spaces based on column position
+fn expand_tabs(s: &str, start_col: usize) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut col = start_col;
+    for ch in s.chars() {
+        if ch == '\t' {
+            let spaces = TAB_WIDTH - (col % TAB_WIDTH);
+            for _ in 0..spaces {
+                result.push(' ');
+            }
+            col += spaces;
+        } else {
+            result.push(ch);
+            col += 1;
+        }
     }
+    result
 }

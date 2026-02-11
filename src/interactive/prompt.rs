@@ -22,15 +22,17 @@ pub enum UserChoice {
 /// Format one side (delete or insert) of an inline-highlighted diff block as lines.
 ///
 /// Joins all text, does char-level diff, and returns Vec of formatted lines with prefixes.
+/// Tab width for expanding tabs in diff output (terminal/POSIX standard)
+const TAB_WIDTH: usize = 8;
+
 fn format_inline_side(del_text: &str, ins_text: &str, is_delete: bool) -> Vec<String> {
     let inline_diff = TextDiff::from_chars(del_text, ins_text);
     let prefix = if is_delete { "-" } else { "+" };
     let mut lines = Vec::new();
     let mut current_line = String::from(prefix);
-    // Buffer to batch consecutive same-styled text into one ANSI span.
-    // Terminals need continuous ANSI spans for background color on tabs.
     let mut buf = String::new();
     let mut buf_emphasized = false;
+    let mut col: usize = 1; // prefix takes 1 column
 
     for change in inline_diff.iter_all_changes() {
         let tag = change.tag();
@@ -41,26 +43,33 @@ fn format_inline_side(del_text: &str, ins_text: &str, is_delete: bool) -> Vec<St
 
         let emphasized = tag != ChangeTag::Equal;
 
-        for (i, segment) in change.value().split('\n').enumerate() {
-            if i > 0 {
-                // Flush buffer before newline
+        for ch in change.value().chars() {
+            if ch == '\n' {
                 flush_inline_buf_to_string(&mut current_line, &buf, buf_emphasized, is_delete);
                 buf.clear();
                 lines.push(current_line);
                 current_line = String::from(prefix);
-            }
-            if !segment.is_empty() {
-                // If style changed, flush previous batch
+                col = 1;
+            } else {
+                // Flush if style changed
                 if !buf.is_empty() && buf_emphasized != emphasized {
                     flush_inline_buf_to_string(&mut current_line, &buf, buf_emphasized, is_delete);
                     buf.clear();
                 }
                 buf_emphasized = emphasized;
-                buf.push_str(segment);
+                if ch == '\t' {
+                    let spaces = TAB_WIDTH - (col % TAB_WIDTH);
+                    for _ in 0..spaces {
+                        buf.push(' ');
+                    }
+                    col += spaces;
+                } else {
+                    buf.push(ch);
+                    col += 1;
+                }
             }
         }
     }
-    // Flush remaining
     flush_inline_buf_to_string(&mut current_line, &buf, buf_emphasized, is_delete);
     if current_line != prefix {
         lines.push(current_line);
@@ -123,7 +132,7 @@ pub fn display_hunk(term: &Term, hunk: &DiffHunk, hunk_num: usize, total: usize)
                     // Pure deletes, no inserts to compare against
                     for j in del_start..del_end {
                         if let Change::Delete(line) = &hunk.changes[j] {
-                            let text = format!("-{}", line);
+                            let text = format!("-{}", expand_tabs_interactive(line, 1));
                             term.write_line(&text.if_supports_color(Stream::Stderr, |t| t.red()).to_string())?;
                         }
                     }
@@ -145,18 +154,37 @@ pub fn display_hunk(term: &Term, hunk: &DiffHunk, hunk_num: usize, total: usize)
                 }
             }
             Change::Insert(new_line) => {
-                let text = format!("+{}", new_line);
+                let text = format!("+{}", expand_tabs_interactive(new_line, 1));
                 term.write_line(&text.if_supports_color(Stream::Stderr, |t| t.green()).to_string())?;
                 i += 1;
             }
             Change::Equal(line) => {
-                term.write_line(&format!(" {}", line))?;
+                term.write_line(&format!(" {}", expand_tabs_interactive(line, 1)))?;
                 i += 1;
             }
         }
     }
 
     Ok(())
+}
+
+/// Expand tab characters to spaces based on column position
+fn expand_tabs_interactive(s: &str, start_col: usize) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut col = start_col;
+    for ch in s.chars() {
+        if ch == '\t' {
+            let spaces = TAB_WIDTH - (col % TAB_WIDTH);
+            for _ in 0..spaces {
+                result.push(' ');
+            }
+            col += spaces;
+        } else {
+            result.push(ch);
+            col += 1;
+        }
+    }
+    result
 }
 
 /// Display help message
