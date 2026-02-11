@@ -107,12 +107,13 @@ fn print_inline_side(del_text: &str, ins_text: &str, is_delete: bool) {
     let inline_diff = TextDiff::from_chars(del_text, ins_text);
     let prefix = if is_delete { "-" } else { "+" };
     let mut need_prefix = true;
+    // Buffer to batch consecutive same-styled text into one ANSI span.
+    // Terminals need continuous ANSI spans for background color on tabs.
+    let mut buf = String::new();
+    let mut buf_emphasized = false;
 
     for change in inline_diff.iter_all_changes() {
         let tag = change.tag();
-
-        // For delete side: render Equal + Delete, skip Insert
-        // For insert side: render Equal + Insert, skip Delete
         let dominated = if is_delete { ChangeTag::Insert } else { ChangeTag::Delete };
         if tag == dominated {
             continue;
@@ -120,35 +121,51 @@ fn print_inline_side(del_text: &str, ins_text: &str, is_delete: bool) {
 
         let emphasized = tag != ChangeTag::Equal;
 
-        for ch in change.value().chars() {
-            if need_prefix {
-                print!("{}", prefix);
-                need_prefix = false;
-            }
-            if ch == '\n' {
+        for (i, segment) in change.value().split('\n').enumerate() {
+            if i > 0 {
+                // Flush buffer before newline
+                flush_inline_buf(&buf, buf_emphasized, is_delete, Stream::Stdout);
+                buf.clear();
                 println!();
                 need_prefix = true;
-            } else {
-                // Replace tabs with spaces in emphasized portions - terminals don't
-                // render background color for tab characters
-                let s = if ch == '\t' && emphasized { "    ".to_string() } else { ch.to_string() };
-                if emphasized {
-                    if is_delete {
-                        print!("{}", s.if_supports_color(Stream::Stdout, |t| t.bright_white().on_red()));
-                    } else {
-                        print!("{}", s.if_supports_color(Stream::Stdout, |t| t.bright_white().on_green()));
-                    }
-                } else if is_delete {
-                    print!("{}", s.if_supports_color(Stream::Stdout, |t| t.red()));
-                } else {
-                    print!("{}", s.if_supports_color(Stream::Stdout, |t| t.green()));
+            }
+            if !segment.is_empty() {
+                if need_prefix {
+                    print!("{}", prefix);
+                    need_prefix = false;
                 }
+                // If style changed, flush previous batch
+                if !buf.is_empty() && buf_emphasized != emphasized {
+                    flush_inline_buf(&buf, buf_emphasized, is_delete, Stream::Stdout);
+                    buf.clear();
+                }
+                buf_emphasized = emphasized;
+                buf.push_str(segment);
             }
         }
     }
-    // If we didn't end on a newline, add one
+    // Flush remaining
+    flush_inline_buf(&buf, buf_emphasized, is_delete, Stream::Stdout);
     if !need_prefix {
         println!();
+    }
+}
+
+/// Flush a buffered inline segment with the appropriate ANSI color
+fn flush_inline_buf(buf: &str, emphasized: bool, is_delete: bool, stream: Stream) {
+    if buf.is_empty() {
+        return;
+    }
+    if emphasized {
+        if is_delete {
+            print!("{}", buf.if_supports_color(stream, |t| t.bright_white().on_red()));
+        } else {
+            print!("{}", buf.if_supports_color(stream, |t| t.bright_white().on_green()));
+        }
+    } else if is_delete {
+        print!("{}", buf.if_supports_color(stream, |t| t.red()));
+    } else {
+        print!("{}", buf.if_supports_color(stream, |t| t.green()));
     }
 }
 

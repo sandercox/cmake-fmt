@@ -27,6 +27,10 @@ fn format_inline_side(del_text: &str, ins_text: &str, is_delete: bool) -> Vec<St
     let prefix = if is_delete { "-" } else { "+" };
     let mut lines = Vec::new();
     let mut current_line = String::from(prefix);
+    // Buffer to batch consecutive same-styled text into one ANSI span.
+    // Terminals need continuous ANSI spans for background color on tabs.
+    let mut buf = String::new();
+    let mut buf_emphasized = false;
 
     for change in inline_diff.iter_all_changes() {
         let tag = change.tag();
@@ -37,33 +41,49 @@ fn format_inline_side(del_text: &str, ins_text: &str, is_delete: bool) -> Vec<St
 
         let emphasized = tag != ChangeTag::Equal;
 
-        for ch in change.value().chars() {
-            if ch == '\n' {
+        for (i, segment) in change.value().split('\n').enumerate() {
+            if i > 0 {
+                // Flush buffer before newline
+                flush_inline_buf_to_string(&mut current_line, &buf, buf_emphasized, is_delete);
+                buf.clear();
                 lines.push(current_line);
                 current_line = String::from(prefix);
-            } else {
-                // Replace tabs with spaces in emphasized portions - terminals don't
-                // render background color for tab characters
-                let s = if ch == '\t' && emphasized { "    ".to_string() } else { ch.to_string() };
-                if emphasized {
-                    if is_delete {
-                        current_line.push_str(&s.if_supports_color(Stream::Stderr, |t| t.bright_white().on_red()).to_string());
-                    } else {
-                        current_line.push_str(&s.if_supports_color(Stream::Stderr, |t| t.bright_white().on_green()).to_string());
-                    }
-                } else if is_delete {
-                    current_line.push_str(&s.if_supports_color(Stream::Stderr, |t| t.red()).to_string());
-                } else {
-                    current_line.push_str(&s.if_supports_color(Stream::Stderr, |t| t.green()).to_string());
+            }
+            if !segment.is_empty() {
+                // If style changed, flush previous batch
+                if !buf.is_empty() && buf_emphasized != emphasized {
+                    flush_inline_buf_to_string(&mut current_line, &buf, buf_emphasized, is_delete);
+                    buf.clear();
                 }
+                buf_emphasized = emphasized;
+                buf.push_str(segment);
             }
         }
     }
-    // Don't push a trailing prefix-only line (from final newline)
+    // Flush remaining
+    flush_inline_buf_to_string(&mut current_line, &buf, buf_emphasized, is_delete);
     if current_line != prefix {
         lines.push(current_line);
     }
     lines
+}
+
+/// Flush a buffered inline segment with the appropriate ANSI color into a string
+fn flush_inline_buf_to_string(out: &mut String, buf: &str, emphasized: bool, is_delete: bool) {
+    if buf.is_empty() {
+        return;
+    }
+    if emphasized {
+        if is_delete {
+            out.push_str(&buf.if_supports_color(Stream::Stderr, |t| t.bright_white().on_red()).to_string());
+        } else {
+            out.push_str(&buf.if_supports_color(Stream::Stderr, |t| t.bright_white().on_green()).to_string());
+        }
+    } else if is_delete {
+        out.push_str(&buf.if_supports_color(Stream::Stderr, |t| t.red()).to_string());
+    } else {
+        out.push_str(&buf.if_supports_color(Stream::Stderr, |t| t.green()).to_string());
+    }
 }
 
 /// Display a diff hunk to the terminal with inline change highlighting
