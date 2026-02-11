@@ -29,6 +29,9 @@ pub struct FormatConfig {
     /// Map of command name -> grammar definition
     #[serde(default)]
     pub command_grammars: HashMap<String, CommandGrammarConfig>,
+
+    /// Source file grouping mode for .h/.cpp pairs (default: None)
+    pub source_grouping: SourceGrouping,
 }
 
 impl Default for FormatConfig {
@@ -44,6 +47,7 @@ impl Default for FormatConfig {
             closing_style: ClosingStyle::Remove,
             force_break_keywords: false,
             command_grammars: HashMap::new(),
+            source_grouping: SourceGrouping::None,
         }
     }
 }
@@ -102,6 +106,24 @@ pub enum ClosingStyle {
 impl Default for ClosingStyle {
     fn default() -> Self {
         Self::Remove
+    }
+}
+
+/// Source file grouping mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceGrouping {
+    /// No grouping (default) - each file on its own line
+    None,
+    /// Group header/source pairs on same line, headers listed first
+    HeadersFirst,
+    /// Group header/source pairs on same line, sources listed first
+    SourcesFirst,
+}
+
+impl Default for SourceGrouping {
+    fn default() -> Self {
+        Self::None
     }
 }
 

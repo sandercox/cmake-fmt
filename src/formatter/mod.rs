@@ -7,7 +7,7 @@ mod comments;
 mod suppression;
 mod user_commands;
 
-pub use config::{ClosingStyle, CommandCase, CommandGrammarConfig, FormatConfig, LineEnding, UserCommandCase};
+pub use config::{ClosingStyle, CommandCase, CommandGrammarConfig, FormatConfig, LineEnding, SourceGrouping, UserCommandCase};
 pub use grammar::{CommandGrammar, GrammarRegistry, KeywordType};
 pub use suppression::SuppressionWarning;
 

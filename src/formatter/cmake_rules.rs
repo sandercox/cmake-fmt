@@ -2,10 +2,122 @@ use crate::cst::ArgumentList;
 use crate::syntax_kind::SyntaxKind;
 use pretty::RcDoc;
 use rowan::NodeOrToken;
+use std::collections::HashMap;
 
 use super::config::FormatConfig;
 use super::cst_to_doc::detect_argument_formatting_signals;
 use super::grammar::{CommandGrammar, KeywordType};
+
+/// Recognized header extensions
+const HEADER_EXTS: &[&str] = &["h", "hh", "hpp", "hxx", "h++", "H"];
+/// Recognized source extensions
+const SOURCE_EXTS: &[&str] = &["c", "cc", "cpp", "cxx", "c++", "C", "m", "mm"];
+
+/// Check if a filename has a header extension
+fn is_header_file(name: &str) -> bool {
+    name.rsplit('.').next().map_or(false, |ext| HEADER_EXTS.contains(&ext))
+}
+
+/// Check if a filename has a source extension
+fn is_source_file(name: &str) -> bool {
+    name.rsplit('.').next().map_or(false, |ext| SOURCE_EXTS.contains(&ext))
+}
+
+/// Extract the base name (without extension) from a file path
+fn base_name(name: &str) -> Option<&str> {
+    // Handle paths: take the last component, then strip extension
+    let filename = name.rsplit('/').next().unwrap_or(name);
+    let filename = filename.rsplit('\\').next().unwrap_or(filename);
+    filename.rfind('.').map(|pos| &filename[..pos])
+}
+
+/// Group source files into pairs based on matching base names
+///
+/// Takes a list of file arguments and returns a new list where matching
+/// header/source pairs are placed adjacent to each other and joined as a
+/// single string (space-separated) so they render on the same line.
+///
+/// Arguments that are not source/header files pass through unchanged.
+/// Files without a matching pair pass through unchanged.
+pub fn group_source_pairs(
+    args: &[String],
+    grouping: super::config::SourceGrouping,
+) -> Vec<String> {
+    use super::config::SourceGrouping;
+
+    if grouping == SourceGrouping::None {
+        return args.to_vec();
+    }
+
+    // Build index: base_name -> (header_indices, source_indices)
+    let mut base_map: HashMap<String, (Vec<usize>, Vec<usize>)> = HashMap::new();
+    let mut is_paired = vec![false; args.len()];
+
+    for (i, arg) in args.iter().enumerate() {
+        if let Some(base) = base_name(arg) {
+            let base_lower = base.to_lowercase();
+            let entry = base_map.entry(base_lower).or_insert_with(|| (vec![], vec![]));
+            if is_header_file(arg) {
+                entry.0.push(i);
+            } else if is_source_file(arg) {
+                entry.1.push(i);
+            }
+        }
+    }
+
+    // Identify pairs (greedily match first header with first source)
+    let mut pairs: Vec<(usize, usize)> = Vec::new(); // (first_idx, second_idx) in desired order
+    for (_base, (headers, sources)) in &base_map {
+        let pair_count = headers.len().min(sources.len());
+        for k in 0..pair_count {
+            let (first, second) = match grouping {
+                SourceGrouping::HeadersFirst => (headers[k], sources[k]),
+                SourceGrouping::SourcesFirst => (sources[k], headers[k]),
+                SourceGrouping::None => unreachable!(),
+            };
+            pairs.push((first, second));
+            is_paired[headers[k]] = true;
+            is_paired[sources[k]] = true;
+        }
+    }
+
+    // Build result: emit paired files together, unpaired files unchanged
+    // Maintain original order: when we encounter the first file of a pair,
+    // emit the pair as a single space-joined string. Skip the second file.
+    let pair_lookup: HashMap<usize, usize> = pairs.iter()
+        .flat_map(|&(a, b)| vec![(a, b), (b, a)])
+        .collect();
+    let mut emitted = vec![false; args.len()];
+    let mut result = Vec::new();
+
+    for (i, arg) in args.iter().enumerate() {
+        if emitted[i] {
+            continue;
+        }
+        if is_paired[i] {
+            if let Some(&partner) = pair_lookup.get(&i) {
+                // Determine which goes first based on grouping mode
+                let (first_idx, second_idx) = if pairs.iter().any(|&(a, _)| a == i) {
+                    (i, partner)
+                } else {
+                    (partner, i)
+                };
+                // Emit pair as single space-joined string (renders as one unit on one line)
+                result.push(format!("{} {}", args[first_idx], args[second_idx]));
+                emitted[first_idx] = true;
+                emitted[second_idx] = true;
+            } else {
+                result.push(arg.clone());
+                emitted[i] = true;
+            }
+        } else {
+            result.push(arg.clone());
+            emitted[i] = true;
+        }
+    }
+
+    result
+}
 
 /// Check if a command name requires keyword-aware formatting
 pub fn is_keyword_aware_command(name: &str) -> bool {
@@ -510,6 +622,15 @@ pub fn format_keyword_aware_args(
 
                     // Values under the keyword with explicit indentation
                     if !section.args.is_empty() {
+                        // Apply source grouping if enabled
+                        let effective_args = if config.source_grouping != super::config::SourceGrouping::None
+                            && matches!(section.keyword_type, Some(KeywordType::MultiValue) | None)
+                        {
+                            group_source_pairs(&section.args, config.source_grouping)
+                        } else {
+                            section.args.clone()
+                        };
+
                         // Use per-line when values were explicitly on new lines,
                         // or when there are comments/blank lines that can't go inline
                         let use_per_line = section.values_on_new_line
@@ -520,7 +641,7 @@ pub fn format_keyword_aware_args(
                             // Values on separate lines or has comments: keep per-line behavior
                             let mut comment_iter = section.comments.iter().peekable();
 
-                            for (arg_idx, arg) in section.args.iter().enumerate() {
+                            for (arg_idx, arg) in effective_args.iter().enumerate() {
                                 while let Some((pos, comment)) = comment_iter.peek() {
                                     if *pos == arg_idx {
                                         if signals.force_multiline {
@@ -569,7 +690,7 @@ pub fn format_keyword_aware_args(
                             }
                         } else {
                             // Values on same line as keyword: flat_alt inherits from outer group
-                            for arg in &section.args {
+                            for arg in &effective_args {
                                 docs.push(RcDoc::flat_alt(
                                     RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
                                     RcDoc::space(),
@@ -585,8 +706,16 @@ pub fn format_keyword_aware_args(
             // ARGL-03 refined: first arg stays inline only when it's a single
             // pre-keyword arg (e.g., target name). When there are multiple
             // pre-keyword args (a file list), all go on separate lines.
-            let is_list = section.args.len() > 1;
-            for (_j, arg) in section.args.iter().enumerate() {
+
+            // Apply source grouping if enabled
+            let effective_args = if config.source_grouping != super::config::SourceGrouping::None {
+                group_source_pairs(&section.args, config.source_grouping)
+            } else {
+                section.args.clone()
+            };
+
+            let is_list = effective_args.len() > 1;
+            for (_j, arg) in effective_args.iter().enumerate() {
                 if is_first_arg && !is_list {
                     // Single pre-keyword arg: keep inline with command
                     is_first_arg = false;

@@ -173,6 +173,14 @@ fn apply_style_overrides(config: &mut FormatConfig, style: &str) {
                     _ => eprintln!("Warning: Invalid value for closing_style (expected leave, remove, or force): {}", value),
                 }
             }
+            "source_grouping" => {
+                match value {
+                    "none" => config.source_grouping = cmake_fmt::formatter::SourceGrouping::None,
+                    "headers_first" => config.source_grouping = cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+                    "sources_first" => config.source_grouping = cmake_fmt::formatter::SourceGrouping::SourcesFirst,
+                    _ => eprintln!("Warning: Invalid value for source_grouping (expected none, headers_first, or sources_first): {}", value),
+                }
+            }
             // command_grammars: Complex type, set via config file only (not --style CLI override)
             _ => {
                 eprintln!("Warning: Unknown config key (ignored): {}", key);
