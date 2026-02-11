@@ -42,7 +42,9 @@ fn format_inline_side(del_text: &str, ins_text: &str, is_delete: bool) -> Vec<St
                 lines.push(current_line);
                 current_line = String::from(prefix);
             } else {
-                let s = ch.to_string();
+                // Replace tabs with spaces in emphasized portions - terminals don't
+                // render background color for tab characters
+                let s = if ch == '\t' && emphasized { "    ".to_string() } else { ch.to_string() };
                 if emphasized {
                     if is_delete {
                         current_line.push_str(&s.if_supports_color(Stream::Stderr, |t| t.bright_white().on_red()).to_string());

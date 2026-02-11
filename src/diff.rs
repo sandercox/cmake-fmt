@@ -129,7 +129,9 @@ fn print_inline_side(del_text: &str, ins_text: &str, is_delete: bool) {
                 println!();
                 need_prefix = true;
             } else {
-                let s = ch.to_string();
+                // Replace tabs with spaces in emphasized portions - terminals don't
+                // render background color for tab characters
+                let s = if ch == '\t' && emphasized { "    ".to_string() } else { ch.to_string() };
                 if emphasized {
                     if is_delete {
                         print!("{}", s.if_supports_color(Stream::Stdout, |t| t.bright_white().on_red()));
