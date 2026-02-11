@@ -46,9 +46,43 @@ fn print_warnings(warnings: &[SuppressionWarning], file_label: &str) {
     }
 }
 
+/// Print all available style settings
+fn print_style_help() {
+    println!("Available style settings for --style and config files (.cmake-fmt.toml / .cmake-fmt.yaml):");
+    println!();
+    println!("  {:<25} {:<15} {:<15} {}", "Setting", "Type", "Default", "Values");
+    println!("  {:<25} {:<15} {:<15} {}", "-------", "----", "-------", "------");
+    println!("  {:<25} {:<15} {:<15} {}", "indent_width", "integer", "4", "Number of spaces/tabs per indent level");
+    println!("  {:<25} {:<15} {:<15} {}", "max_line_length", "integer", "80", "Maximum line length before wrapping");
+    println!("  {:<25} {:<15} {:<15} {}", "use_tabs", "boolean", "true", "true, false");
+    println!("  {:<25} {:<15} {:<15} {}", "command_case", "enum", "lowercase", "lowercase, uppercase, leave");
+    println!("  {:<25} {:<15} {:<15} {}", "user_command_case", "enum", "infer", "lowercase, uppercase, leave, infer");
+    println!("  {:<25} {:<15} {:<15} {}", "max_blank_lines", "integer", "1", "Maximum consecutive blank lines allowed");
+    println!("  {:<25} {:<15} {:<15} {}", "line_ending", "enum", "auto", "auto, lf, crlf");
+    println!("  {:<25} {:<15} {:<15} {}", "closing_style", "enum", "remove", "leave, remove, force");
+    println!("  {:<25} {:<15} {:<15} {}", "force_break_keywords", "boolean", "false", "true, false");
+    println!("  {:<25} {:<15} {:<15} {}", "source_grouping", "enum", "none", "none, headers_first, sources_first");
+    println!();
+    println!("CLI usage:  cmake-fmt --style \"indent_width=4,max_line_length=120\" <file>");
+    println!();
+    println!("Config file only (not available via --style):");
+    println!("  command_grammars        map            {{}}              Custom command grammar definitions");
+    println!();
+    println!("Example .cmake-fmt.toml:");
+    println!("  indent_width = 2");
+    println!("  use_tabs = false");
+    println!("  command_case = \"lowercase\"");
+}
+
 /// Run the CLI application
 pub fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
+
+    // Handle --style help
+    if cli.style.as_deref() == Some("help") {
+        print_style_help();
+        return Ok(ExitCode::SUCCESS);
+    }
 
     // Handle interactive mode first (if --interactive flag is set)
     if cli.interactive {
