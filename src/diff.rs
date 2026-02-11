@@ -76,20 +76,17 @@ pub fn print_colored_diff(original: &str, formatted: &str, path: &str) {
                     }
                     let inserts = &changes[ins_start..i];
 
-                    // Only do inline highlighting when delete/insert counts match
-                    if !inserts.is_empty() && deletes.len() == inserts.len() {
-                        for (del, ins) in deletes.iter().zip(inserts.iter()) {
-                            print_inline_delete(&del.1, &ins.1);
-                            print_inline_insert(&del.1, &ins.1);
-                        }
-                    } else {
-                        // Unmatched counts - show plain colored lines
+                    if inserts.is_empty() {
+                        // Pure deletes, no inserts to compare against
                         for del in deletes {
                             print_plain_line("-", &del.1, true);
                         }
-                        for ins in inserts {
-                            print_plain_line("+", &ins.1, false);
-                        }
+                    } else {
+                        // Join all deletes and inserts, do char-level diff on joined text
+                        let del_text: String = deletes.iter().map(|d| d.1.as_str()).collect();
+                        let ins_text: String = inserts.iter().map(|i| i.1.as_str()).collect();
+                        print_inline_side(&del_text, &ins_text, true);
+                        print_inline_side(&del_text, &ins_text, false);
                     }
                 }
                 ChangeTag::Insert => {
@@ -102,42 +99,53 @@ pub fn print_colored_diff(original: &str, formatted: &str, path: &str) {
     }
 }
 
-/// Print a delete line with inline character-level highlighting
-fn print_inline_delete(old: &str, new: &str) {
-    let inline_diff = TextDiff::from_chars(old, new);
-    print!("-");
-    for change in inline_diff.iter_all_changes() {
-        match change.tag() {
-            ChangeTag::Equal => {
-                print!("{}", change.value().if_supports_color(Stream::Stdout, |t| t.red()));
-            }
-            ChangeTag::Delete => {
-                print!("{}", change.value().if_supports_color(Stream::Stdout, |t| t.bright_white().on_red()));
-            }
-            ChangeTag::Insert => {}
-        }
-    }
-    if !old.ends_with('\n') {
-        println!();
-    }
-}
+/// Print one side (delete or insert) of an inline-highlighted diff block.
+///
+/// Joins all delete/insert lines, does char-level diff on joined text,
+/// and renders with proper `-`/`+` prefixes at newline boundaries.
+fn print_inline_side(del_text: &str, ins_text: &str, is_delete: bool) {
+    let inline_diff = TextDiff::from_chars(del_text, ins_text);
+    let prefix = if is_delete { "-" } else { "+" };
+    let mut need_prefix = true;
 
-/// Print an insert line with inline character-level highlighting
-fn print_inline_insert(old: &str, new: &str) {
-    let inline_diff = TextDiff::from_chars(old, new);
-    print!("+");
     for change in inline_diff.iter_all_changes() {
-        match change.tag() {
-            ChangeTag::Equal => {
-                print!("{}", change.value().if_supports_color(Stream::Stdout, |t| t.green()));
+        let tag = change.tag();
+
+        // For delete side: render Equal + Delete, skip Insert
+        // For insert side: render Equal + Insert, skip Delete
+        let dominated = if is_delete { ChangeTag::Insert } else { ChangeTag::Delete };
+        if tag == dominated {
+            continue;
+        }
+
+        let emphasized = tag != ChangeTag::Equal;
+
+        for ch in change.value().chars() {
+            if need_prefix {
+                print!("{}", prefix);
+                need_prefix = false;
             }
-            ChangeTag::Insert => {
-                print!("{}", change.value().if_supports_color(Stream::Stdout, |t| t.bright_white().on_green()));
+            if ch == '\n' {
+                println!();
+                need_prefix = true;
+            } else {
+                let s = ch.to_string();
+                if emphasized {
+                    if is_delete {
+                        print!("{}", s.if_supports_color(Stream::Stdout, |t| t.bright_white().on_red()));
+                    } else {
+                        print!("{}", s.if_supports_color(Stream::Stdout, |t| t.bright_white().on_green()));
+                    }
+                } else if is_delete {
+                    print!("{}", s.if_supports_color(Stream::Stdout, |t| t.red()));
+                } else {
+                    print!("{}", s.if_supports_color(Stream::Stdout, |t| t.green()));
+                }
             }
-            ChangeTag::Delete => {}
         }
     }
-    if !new.ends_with('\n') {
+    // If we didn't end on a newline, add one
+    if !need_prefix {
         println!();
     }
 }

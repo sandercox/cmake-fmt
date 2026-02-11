@@ -19,37 +19,49 @@ pub enum UserChoice {
     Help,
 }
 
-/// Format a line pair with inline character-level highlighting
+/// Format one side (delete or insert) of an inline-highlighted diff block as lines.
 ///
-/// Returns (formatted_old, formatted_new) with ANSI color codes for inline emphasis
-fn format_inline_pair(old_line: &str, new_line: &str) -> (String, String) {
-    let inline_diff = TextDiff::from_chars(old_line, new_line);
-
-    let mut formatted_old = String::new();
-    let mut formatted_new = String::new();
+/// Joins all text, does char-level diff, and returns Vec of formatted lines with prefixes.
+fn format_inline_side(del_text: &str, ins_text: &str, is_delete: bool) -> Vec<String> {
+    let inline_diff = TextDiff::from_chars(del_text, ins_text);
+    let prefix = if is_delete { "-" } else { "+" };
+    let mut lines = Vec::new();
+    let mut current_line = String::from(prefix);
 
     for change in inline_diff.iter_all_changes() {
         let tag = change.tag();
-        let value = change.value();
+        let dominated = if is_delete { ChangeTag::Insert } else { ChangeTag::Delete };
+        if tag == dominated {
+            continue;
+        }
 
-        match tag {
-            ChangeTag::Equal => {
-                // Unchanged portions - red foreground only for old, green for new
-                formatted_old.push_str(&value.to_string().if_supports_color(Stream::Stderr, |t| t.red()).to_string());
-                formatted_new.push_str(&value.to_string().if_supports_color(Stream::Stderr, |t| t.green()).to_string());
-            }
-            ChangeTag::Delete => {
-                // Changed portion in old line - white on red background
-                formatted_old.push_str(&value.to_string().if_supports_color(Stream::Stderr, |t| t.bright_white().on_red()).to_string());
-            }
-            ChangeTag::Insert => {
-                // Changed portion in new line - white on green background
-                formatted_new.push_str(&value.to_string().if_supports_color(Stream::Stderr, |t| t.bright_white().on_green()).to_string());
+        let emphasized = tag != ChangeTag::Equal;
+
+        for ch in change.value().chars() {
+            if ch == '\n' {
+                lines.push(current_line);
+                current_line = String::from(prefix);
+            } else {
+                let s = ch.to_string();
+                if emphasized {
+                    if is_delete {
+                        current_line.push_str(&s.if_supports_color(Stream::Stderr, |t| t.bright_white().on_red()).to_string());
+                    } else {
+                        current_line.push_str(&s.if_supports_color(Stream::Stderr, |t| t.bright_white().on_green()).to_string());
+                    }
+                } else if is_delete {
+                    current_line.push_str(&s.if_supports_color(Stream::Stderr, |t| t.red()).to_string());
+                } else {
+                    current_line.push_str(&s.if_supports_color(Stream::Stderr, |t| t.green()).to_string());
+                }
             }
         }
     }
-
-    (formatted_old, formatted_new)
+    // Don't push a trailing prefix-only line (from final newline)
+    if current_line != prefix {
+        lines.push(current_line);
+    }
+    lines
 }
 
 /// Display a diff hunk to the terminal with inline change highlighting
@@ -83,33 +95,30 @@ pub fn display_hunk(term: &Term, hunk: &DiffHunk, hunk_num: usize, total: usize)
                 }
                 let ins_end = i;
 
-                let del_count = del_end - del_start;
                 let ins_count = ins_end - ins_start;
 
-                // Only do inline highlighting when counts match
-                if ins_count > 0 && del_count == ins_count {
-                    for j in 0..del_count {
-                        if let (Change::Delete(old_line), Change::Insert(new_line)) =
-                            (&hunk.changes[del_start + j], &hunk.changes[ins_start + j])
-                        {
-                            let (formatted_old, formatted_new) = format_inline_pair(old_line, new_line);
-                            term.write_line(&format!("-{}", formatted_old))?;
-                            term.write_line(&format!("+{}", formatted_new))?;
-                        }
-                    }
-                } else {
-                    // Unmatched counts - plain colored lines
+                if ins_count == 0 {
+                    // Pure deletes, no inserts to compare against
                     for j in del_start..del_end {
                         if let Change::Delete(line) = &hunk.changes[j] {
                             let text = format!("-{}", line);
                             term.write_line(&text.if_supports_color(Stream::Stderr, |t| t.red()).to_string())?;
                         }
                     }
-                    for j in ins_start..ins_end {
-                        if let Change::Insert(line) = &hunk.changes[j] {
-                            let text = format!("+{}", line);
-                            term.write_line(&text.if_supports_color(Stream::Stderr, |t| t.green()).to_string())?;
-                        }
+                } else {
+                    // Join all deletes and inserts, char-level diff on joined text
+                    let del_text: String = (del_start..del_end)
+                        .filter_map(|j| if let Change::Delete(l) = &hunk.changes[j] { Some(format!("{}\n", l)) } else { None })
+                        .collect();
+                    let ins_text: String = (ins_start..ins_end)
+                        .filter_map(|j| if let Change::Insert(l) = &hunk.changes[j] { Some(format!("{}\n", l)) } else { None })
+                        .collect();
+
+                    for line in format_inline_side(&del_text, &ins_text, true) {
+                        term.write_line(&line)?;
+                    }
+                    for line in format_inline_side(&del_text, &ins_text, false) {
+                        term.write_line(&line)?;
                     }
                 }
             }
