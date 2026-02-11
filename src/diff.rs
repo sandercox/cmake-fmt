@@ -85,8 +85,8 @@ pub fn print_colored_diff(original: &str, formatted: &str, path: &str) {
                                     print!("{}", inline_value.if_supports_color(Stream::Stdout, |t| t.red()));
                                 }
                                 ChangeTag::Delete => {
-                                    // Changed portion - red foreground + dark red background
-                                    print!("{}", inline_value.if_supports_color(Stream::Stdout, |t| t.red().on_red()));
+                                    // Changed portion - white foreground + red background
+                                    print!("{}", inline_value.if_supports_color(Stream::Stdout, |t| t.bright_white().on_red()));
                                 }
                                 ChangeTag::Insert => {
                                     // This shouldn't appear in the delete line
@@ -132,8 +132,8 @@ pub fn print_colored_diff(original: &str, formatted: &str, path: &str) {
                                     print!("{}", inline_value.if_supports_color(Stream::Stdout, |t| t.green()));
                                 }
                                 ChangeTag::Insert => {
-                                    // Changed portion - green foreground + dark green background
-                                    print!("{}", inline_value.if_supports_color(Stream::Stdout, |t| t.green().on_green()));
+                                    // Changed portion - white foreground + green background
+                                    print!("{}", inline_value.if_supports_color(Stream::Stdout, |t| t.bright_white().on_green()));
                                 }
                                 ChangeTag::Delete => {
                                     // This shouldn't appear in the insert line

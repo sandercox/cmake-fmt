@@ -39,12 +39,12 @@ fn format_inline_pair(old_line: &str, new_line: &str) -> (String, String) {
                 formatted_new.push_str(&value.to_string().if_supports_color(Stream::Stderr, |t| t.green()).to_string());
             }
             ChangeTag::Delete => {
-                // Changed portion in old line - red with red background
-                formatted_old.push_str(&value.to_string().if_supports_color(Stream::Stderr, |t| t.red().on_red()).to_string());
+                // Changed portion in old line - white on red background
+                formatted_old.push_str(&value.to_string().if_supports_color(Stream::Stderr, |t| t.bright_white().on_red()).to_string());
             }
             ChangeTag::Insert => {
-                // Changed portion in new line - green with green background
-                formatted_new.push_str(&value.to_string().if_supports_color(Stream::Stderr, |t| t.green().on_green()).to_string());
+                // Changed portion in new line - white on green background
+                formatted_new.push_str(&value.to_string().if_supports_color(Stream::Stderr, |t| t.bright_white().on_green()).to_string());
             }
         }
     }
