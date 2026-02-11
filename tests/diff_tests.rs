@@ -109,10 +109,11 @@ fn test_generate_diff_patch_compatible() {
 fn test_print_colored_diff_runs_without_panic() {
     // This test just verifies print_colored_diff doesn't panic
     // We can't test actual color output in CI, but we can test it runs
-    let diff_text = "--- a/test.cmake\n+++ b/test.cmake\n@@ -1 +1 @@\n-old\n+new\n";
+    let original = "old\n";
+    let formatted = "new\n";
 
     // Redirect stdout to suppress output during test
-    print_colored_diff(diff_text);
+    print_colored_diff(original, formatted, "test.cmake");
 
     // If we got here without panic, test passes
 }

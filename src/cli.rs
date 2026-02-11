@@ -170,9 +170,7 @@ fn process_stdin(config: &FormatConfig, check_mode: bool, diff_mode: bool) -> Re
 
     if diff_mode {
         if input != formatted {
-            if let Some(diff_output) = cmake_fmt::diff::generate_diff(&input, &formatted, "stdin") {
-                cmake_fmt::diff::print_colored_diff(&diff_output);
-            }
+            cmake_fmt::diff::print_colored_diff(&input, &formatted, "stdin");
             Ok(ExitCode::from(1))
         } else {
             Ok(ExitCode::SUCCESS)
@@ -284,9 +282,7 @@ fn process_file(
 
     if diff_mode {
         if original != formatted {
-            if let Some(diff_output) = cmake_fmt::diff::generate_diff(&original, &formatted, &path.display().to_string()) {
-                cmake_fmt::diff::print_colored_diff(&diff_output);
-            }
+            cmake_fmt::diff::print_colored_diff(&original, &formatted, &path.display().to_string());
             Ok(true)
         } else {
             Ok(false)
