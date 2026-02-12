@@ -7,7 +7,11 @@ pub mod resolver;
 pub mod user_scanner;
 
 pub use self::builtins::*;
-pub use self::export::{export_grammars_to_toml, import_grammar_file, GrammarFile};
+pub use self::export::{
+    detect_grammar_format, export_command_grammars, export_command_grammars_to_toml,
+    export_command_grammars_to_yaml, export_grammars, export_grammars_to_toml,
+    export_grammars_to_yaml, import_grammar_file, GrammarFile, GrammarFormat,
+};
 pub use self::resolver::{
     clear_project_grammar_cache, clear_project_scan_cache, config_grammars_to_map,
     get_project_user_commands, get_project_user_grammars, GrammarRegistry,
