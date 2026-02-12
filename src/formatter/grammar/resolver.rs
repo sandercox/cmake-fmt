@@ -29,15 +29,15 @@ impl GrammarRegistry {
     }
 }
 
-/// Cache for project-wide user command scans
-static PROJECT_SCAN_CACHE: OnceLock<Mutex<HashMap<PathBuf, HashMap<String, String>>>> = OnceLock::new();
+/// Cache for combined project-wide scan results (commands + grammars)
+static PROJECT_SCAN_CACHE: OnceLock<Mutex<HashMap<PathBuf, user_scanner::ProjectScanResult>>> = OnceLock::new();
 
-/// Get project-wide user command definitions with caching
+/// Get combined project scan results (commands and grammars) with caching
 ///
 /// Determines the project root from the file's parent directory,
 /// scans all CMake files in the project tree (following CMake dependency graph),
 /// and caches the results per project root.
-pub fn get_project_user_commands(file_path: &Path, verbose: bool) -> HashMap<String, String> {
+fn get_project_scan(file_path: &Path, verbose: bool) -> user_scanner::ProjectScanResult {
     // Determine project root from the file's parent directory
     let start_dir = file_path.parent().unwrap_or(file_path);
     let project_root = user_scanner::find_project_root(start_dir);
@@ -55,9 +55,27 @@ pub fn get_project_user_commands(file_path: &Path, verbose: bool) -> HashMap<Str
     }
 
     // Scan and cache
-    let user_defs = user_scanner::scan_project_commands(&project_root, verbose);
-    cache_lock.insert(project_root, user_defs.clone());
-    user_defs
+    let scan_result = user_scanner::scan_project(&project_root, verbose);
+    cache_lock.insert(project_root, scan_result.clone());
+    scan_result
+}
+
+/// Get project-wide user command definitions with caching
+///
+/// Determines the project root from the file's parent directory,
+/// scans all CMake files in the project tree (following CMake dependency graph),
+/// and caches the results per project root.
+pub fn get_project_user_commands(file_path: &Path, verbose: bool) -> HashMap<String, String> {
+    get_project_scan(file_path, verbose).commands
+}
+
+/// Get project-wide user command grammars extracted from cmake_parse_arguments
+///
+/// Determines the project root from the file's parent directory,
+/// scans all CMake files in the project tree for cmake_parse_arguments calls,
+/// and caches the results per project root.
+pub fn get_project_user_grammars(file_path: &Path, verbose: bool) -> HashMap<String, CommandGrammar> {
+    get_project_scan(file_path, verbose).grammars
 }
 
 /// Clear the project scan cache (for testing purposes)
@@ -69,44 +87,11 @@ pub fn clear_project_scan_cache() {
     }
 }
 
-/// Cache for project-wide grammar extraction
-static PROJECT_GRAMMAR_CACHE: OnceLock<Mutex<HashMap<PathBuf, HashMap<String, CommandGrammar>>>> = OnceLock::new();
-
-/// Get project-wide user command grammars extracted from cmake_parse_arguments
-///
-/// Determines the project root from the file's parent directory,
-/// scans all CMake files in the project tree for cmake_parse_arguments calls,
-/// and caches the results per project root.
-pub fn get_project_user_grammars(file_path: &Path, verbose: bool) -> HashMap<String, CommandGrammar> {
-    // Determine project root from the file's parent directory
-    let start_dir = file_path.parent().unwrap_or(file_path);
-    let project_root = user_scanner::find_project_root(start_dir);
-
-    // Get or init cache
-    let cache = PROJECT_GRAMMAR_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut cache_lock = cache.lock().unwrap();
-
-    // Return cached if available
-    if let Some(cached) = cache_lock.get(&project_root) {
-        if verbose {
-            eprintln!("verbose: using cached scan results for {}", project_root.display());
-        }
-        return cached.clone();
-    }
-
-    // Scan and cache
-    let grammars = user_scanner::scan_project_grammars(&project_root, verbose);
-    cache_lock.insert(project_root, grammars.clone());
-    grammars
-}
-
 /// Clear the project grammar cache (for testing purposes)
+///
+/// Same cache as clear_project_scan_cache - kept for backward compatibility
 pub fn clear_project_grammar_cache() {
-    if let Some(cache) = PROJECT_GRAMMAR_CACHE.get() {
-        if let Ok(mut cache_lock) = cache.lock() {
-            cache_lock.clear();
-        }
-    }
+    clear_project_scan_cache();
 }
 
 /// Convert config grammar definitions to CommandGrammar map

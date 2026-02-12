@@ -217,47 +217,21 @@ pub fn follow_cmake_dependencies(project_root: &Path, verbose: bool) -> Vec<Path
     result
 }
 
-/// Scan all CMake files in a project and extract user command definitions
-///
-/// Returns a map of lowercase command names to their original casing as defined.
-/// Later definitions win (matching CMake's last-definition-wins behavior).
-pub fn scan_project_commands(project_root: &Path, verbose: bool) -> HashMap<String, String> {
-    let mut all_defs = HashMap::new();
-
-    let cmake_files = follow_cmake_dependencies(project_root, verbose);
-
-    for file_path in cmake_files {
-        // Read file content
-        let Ok(content) = fs::read_to_string(&file_path) else {
-            // Skip files we can't read
-            continue;
-        };
-
-        // Parse the file
-        let cst = crate::cst::parse_text(&content);
-
-        // Scan for user command definitions
-        let file_defs = crate::formatter::user_commands::scan_user_command_definitions(&cst.root);
-
-        if verbose && !file_defs.is_empty() {
-            eprintln!("verbose: found {} function/macro definitions in {}", file_defs.len(), file_path.display());
-            for name in file_defs.values() {
-                eprintln!("verbose:   - {}", name);
-            }
-        }
-
-        // Merge into master map (later definitions win)
-        all_defs.extend(file_defs);
-    }
-
-    all_defs
+/// Combined results from scanning a project's CMake files
+#[derive(Clone)]
+pub struct ProjectScanResult {
+    /// User command definitions (lowercase name -> original casing)
+    pub commands: HashMap<String, String>,
+    /// User command grammars extracted from cmake_parse_arguments
+    pub grammars: HashMap<String, super::CommandGrammar>,
 }
 
-/// Scan all CMake files in a project and extract command grammars from cmake_parse_arguments
+/// Scan all CMake files in a project and extract both command definitions and grammars
 ///
-/// Returns a map of lowercase command names to their extracted grammars.
+/// Returns both user command definitions and extracted grammars from a single traversal.
 /// Later definitions win (matching CMake's last-definition-wins behavior).
-pub fn scan_project_grammars(project_root: &Path, verbose: bool) -> HashMap<String, super::CommandGrammar> {
+pub fn scan_project(project_root: &Path, verbose: bool) -> ProjectScanResult {
+    let mut all_defs = HashMap::new();
     let mut all_grammars = HashMap::new();
 
     let cmake_files = follow_cmake_dependencies(project_root, verbose);
@@ -269,10 +243,23 @@ pub fn scan_project_grammars(project_root: &Path, verbose: bool) -> HashMap<Stri
             continue;
         };
 
-        // Parse the file
+        // Parse the file ONCE
         let cst = crate::cst::parse_text(&content);
 
-        // Extract grammars from this file
+        // Extract command definitions from the parsed CST
+        let file_defs = crate::formatter::user_commands::scan_user_command_definitions(&cst.root);
+
+        if verbose && !file_defs.is_empty() {
+            eprintln!("verbose: found {} function/macro definitions in {}", file_defs.len(), file_path.display());
+            for name in file_defs.values() {
+                eprintln!("verbose:   - {}", name);
+            }
+        }
+
+        // Merge definitions into master map (later definitions win)
+        all_defs.extend(file_defs);
+
+        // Extract grammars from the SAME parsed CST
         let file_grammars = extract_grammars_from_file(&cst.root);
 
         if verbose {
@@ -281,11 +268,34 @@ pub fn scan_project_grammars(project_root: &Path, verbose: bool) -> HashMap<Stri
             }
         }
 
-        // Merge into master map (later definitions win)
+        // Merge grammars into master map (later definitions win)
         all_grammars.extend(file_grammars);
     }
 
-    all_grammars
+    ProjectScanResult {
+        commands: all_defs,
+        grammars: all_grammars,
+    }
+}
+
+/// Scan all CMake files in a project and extract user command definitions
+///
+/// Returns a map of lowercase command names to their original casing as defined.
+/// Later definitions win (matching CMake's last-definition-wins behavior).
+#[deprecated(note = "Use scan_project() instead")]
+#[allow(deprecated)]
+pub fn scan_project_commands(project_root: &Path, verbose: bool) -> HashMap<String, String> {
+    scan_project(project_root, verbose).commands
+}
+
+/// Scan all CMake files in a project and extract command grammars from cmake_parse_arguments
+///
+/// Returns a map of lowercase command names to their extracted grammars.
+/// Later definitions win (matching CMake's last-definition-wins behavior).
+#[deprecated(note = "Use scan_project() instead")]
+#[allow(deprecated)]
+pub fn scan_project_grammars(project_root: &Path, verbose: bool) -> HashMap<String, super::CommandGrammar> {
+    scan_project(project_root, verbose).grammars
 }
 
 /// Extract command grammars from a single CMake file
