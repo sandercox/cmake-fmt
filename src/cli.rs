@@ -116,12 +116,13 @@ fn export_custom_grammar_to_file(
     grammar_files_arg: &[PathBuf],
 ) -> Result<ExitCode> {
     use anyhow::Context;
-    use cmake_fmt::formatter::grammar::{config_grammars_to_map, get_project_user_grammars};
+    use cmake_fmt::formatter::grammar::{builtin_grammars, config_grammars_to_map, get_project_user_commands, get_project_user_grammars};
     use cmake_fmt::formatter::{detect_grammar_format, export_command_grammars};
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::fs;
 
     let mut merged_grammars = HashMap::new();
+    let mut all_user_commands = HashMap::new();
 
     // Scan each input file for auto-detected grammars and config grammars
     for file in input_files {
@@ -139,6 +140,39 @@ fn export_custom_grammar_to_file(
 
         // Config grammars override auto-detected
         merged_grammars.extend(config_grammar_map);
+
+        // Collect all user command definitions
+        let user_cmds = get_project_user_commands(file);
+        all_user_commands.extend(user_cmds);
+    }
+
+    // Detect grammarless custom commands
+    let builtin_names: HashSet<String> = builtin_grammars().keys().cloned().collect();
+    let mut grammarless_commands: Vec<String> = all_user_commands
+        .iter()
+        .filter_map(|(lowercase_name, original_name)| {
+            // Skip if this command has a grammar (auto-detected or config)
+            if merged_grammars.contains_key(lowercase_name) {
+                return None;
+            }
+            // Skip if this is a builtin command
+            if builtin_names.contains(lowercase_name) {
+                return None;
+            }
+            // This is a custom command with no grammar
+            Some(original_name.clone())
+        })
+        .collect();
+
+    // Sort for deterministic output
+    grammarless_commands.sort();
+
+    // Warn about grammarless commands
+    if !grammarless_commands.is_empty() {
+        for cmd in &grammarless_commands {
+            eprintln!("warning: no grammar found for custom command '{}' (define in config or grammar file)", cmd);
+        }
+        eprintln!("{} custom command(s) have no grammar definition", grammarless_commands.len());
     }
 
     let format = detect_grammar_format(path);
