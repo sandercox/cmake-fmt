@@ -302,4 +302,7 @@ pub struct CommandGrammarConfig {
     /// Pair-value keywords (consumes alternating key/value pairs)
     #[serde(default)]
     pub pair_value_keywords: Vec<String>,
+    /// Command-line keywords (bin-packs values to fill lines)
+    #[serde(default)]
+    pub command_line_keywords: Vec<String>,
 }

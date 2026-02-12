@@ -8,7 +8,7 @@ mod suppression;
 mod user_commands;
 
 pub use config::{ClosingStyle, CommandCase, CommandGrammarConfig, FormatConfig, LineEnding, SourceGrouping, UserCommandCase};
-pub use grammar::{CommandGrammar, GrammarRegistry, KeywordType};
+pub use grammar::{export_grammars_to_toml, import_grammar_file, CommandGrammar, GrammarRegistry, KeywordType};
 pub use suppression::SuppressionWarning;
 
 use crate::cst::parse_text;

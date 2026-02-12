@@ -2,10 +2,12 @@ use std::collections::HashMap;
 
 pub mod argparse_extractor;
 pub mod builtins;
+pub mod export;
 pub mod resolver;
 pub mod user_scanner;
 
 pub use self::builtins::*;
+pub use self::export::{export_grammars_to_toml, import_grammar_file, GrammarFile};
 pub use self::resolver::{
     clear_project_grammar_cache, clear_project_scan_cache, config_grammars_to_map,
     get_project_user_commands, get_project_user_grammars, GrammarRegistry,

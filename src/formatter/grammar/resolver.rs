@@ -121,6 +121,9 @@ pub fn config_grammars_to_map(
         for kw in &cfg.pair_value_keywords {
             keywords.insert(kw.clone(), KeywordType::PairValue);
         }
+        for kw in &cfg.command_line_keywords {
+            keywords.insert(kw.clone(), KeywordType::CommandLine);
+        }
         (name.to_lowercase(), CommandGrammar { keywords })
     }).collect()
 }
