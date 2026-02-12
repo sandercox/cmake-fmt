@@ -119,6 +119,47 @@ pub fn group_source_pairs(
     result
 }
 
+/// Apply source grouping while preserving blank line boundaries.
+/// Groups files within segments (between blank lines) independently,
+/// then adjusts blank line positions for the shorter grouped segments.
+fn group_source_pairs_preserving_blanks(
+    args: &[String],
+    blank_lines: &[usize],
+    grouping: super::config::SourceGrouping,
+) -> (Vec<String>, Vec<usize>) {
+    if blank_lines.is_empty() {
+        return (group_source_pairs(args, grouping), Vec::new());
+    }
+
+    // Split args into segments at blank line boundaries
+    let mut segments: Vec<&[String]> = Vec::new();
+    let mut start = 0;
+
+    for &bl_pos in blank_lines {
+        let end = bl_pos.min(args.len());
+        segments.push(&args[start..end]);
+        start = end;
+    }
+    // Final segment
+    if start < args.len() {
+        segments.push(&args[start..]);
+    }
+
+    // Group each segment independently and track new blank line positions
+    let mut result = Vec::new();
+    let mut new_blank_lines = Vec::new();
+
+    for (i, segment) in segments.iter().enumerate() {
+        if i > 0 {
+            new_blank_lines.push(result.len());
+        }
+        let grouped = group_source_pairs(segment, grouping);
+        result.extend(grouped);
+    }
+
+    (result, new_blank_lines)
+}
+
 /// Check if a command name requires keyword-aware formatting
 pub fn is_keyword_aware_command(name: &str) -> bool {
     use super::grammar::GrammarRegistry;
@@ -712,22 +753,22 @@ pub fn format_keyword_aware_args(
                     // Values under the keyword with explicit indentation
                     if !section.args.is_empty() {
                         // Apply source grouping if enabled
-                        // Disable grouping when comments or blank lines are present to preserve their positions
-                        let effective_args = if config.source_grouping != super::config::SourceGrouping::None
+                        // Disable grouping when comments are present to preserve their positions
+                        // Blank lines are preserved as segment boundaries
+                        let (effective_args, effective_blank_lines) = if config.source_grouping != super::config::SourceGrouping::None
                             && matches!(section.keyword_type, Some(KeywordType::MultiValue) | Some(KeywordType::CommandLine) | None)
                             && section.comments.is_empty()
-                            && section.blank_lines.is_empty()
                         {
-                            group_source_pairs(&section.args, config.source_grouping)
+                            group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, config.source_grouping)
                         } else {
-                            section.args.clone()
+                            (section.args.clone(), section.blank_lines.clone())
                         };
 
                         // Use per-line when values were explicitly on new lines,
                         // or when there are comments/blank lines that can't go inline
                         let use_per_line = section.values_on_new_line
                             || !section.comments.is_empty()
-                            || !section.blank_lines.is_empty();
+                            || !effective_blank_lines.is_empty();
 
                         if use_per_line {
                             // Values on separate lines or has comments: keep per-line behavior
@@ -752,7 +793,7 @@ pub fn format_keyword_aware_args(
                                     }
                                 }
 
-                                if section.blank_lines.contains(&arg_idx) && signals.force_multiline {
+                                if effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
                                     docs.push(RcDoc::hardline());
                                 }
 
@@ -800,12 +841,12 @@ pub fn format_keyword_aware_args(
             // pre-keyword args (a file list), all go on separate lines.
 
             // Apply source grouping if enabled
-            // Disable grouping when comments or blank lines are present to preserve their positions
+            // Disable grouping when comments are present to preserve their positions
+            // Blank lines are preserved as segment boundaries
             let effective_args = if config.source_grouping != super::config::SourceGrouping::None
                 && section.comments.is_empty()
-                && section.blank_lines.is_empty()
             {
-                group_source_pairs(&section.args, config.source_grouping)
+                group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, config.source_grouping).0
             } else {
                 section.args.clone()
             };
@@ -880,21 +921,21 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
     // Collect all args and comments from all sections
     for section in sections {
         // Apply source grouping if enabled
-        // Disable grouping when comments or blank lines are present to preserve their positions
-        let effective_args = if config.source_grouping != super::config::SourceGrouping::None
+        // Disable grouping when comments are present to preserve their positions
+        // Blank lines are preserved as segment boundaries
+        let (effective_args, effective_blank_lines) = if config.source_grouping != super::config::SourceGrouping::None
             && section.comments.is_empty()
-            && section.blank_lines.is_empty()
         {
-            group_source_pairs(&section.args, config.source_grouping)
+            group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, config.source_grouping)
         } else {
-            section.args.clone()
+            (section.args.clone(), section.blank_lines.clone())
         };
 
         let mut comment_iter = section.comments.iter().peekable();
 
         for (arg_idx, arg) in effective_args.iter().enumerate() {
             // Check for blank line before this argument (before comments to preserve ordering)
-            if section.blank_lines.contains(&arg_idx) && force_multiline {
+            if effective_blank_lines.contains(&arg_idx) && force_multiline {
                 docs.push(RcDoc::hardline());
                 is_first_arg = false;
             }
