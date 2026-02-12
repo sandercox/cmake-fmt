@@ -42,9 +42,13 @@ pub struct Cli {
     #[arg(long = "help-style")]
     pub help_style: bool,
 
-    /// Export all detected grammars to a TOML file
+    /// Export detected custom grammars to a file (scanned from input files)
     #[arg(long = "export-grammar", value_name = "FILE")]
     pub export_grammar: Option<PathBuf>,
+
+    /// Export all grammars including builtins to a file
+    #[arg(long = "export-all-grammar", value_name = "FILE")]
+    pub export_all_grammar: Option<PathBuf>,
 
     /// Import additional grammar file(s) (can be specified multiple times)
     #[arg(long = "grammar-file", value_name = "FILE")]
@@ -86,20 +90,69 @@ fn print_style_help() {
     println!("  command_case = \"lowercase\"");
 }
 
-/// Export grammars to a file
-fn export_grammar_to_file(path: &std::path::Path) -> Result<ExitCode> {
+/// Export all grammars (including builtins) to a file
+fn export_all_grammar_to_file(path: &std::path::Path) -> Result<ExitCode> {
     use anyhow::Context;
     use cmake_fmt::formatter::grammar::builtin_grammars;
-    use cmake_fmt::formatter::export_grammars_to_toml;
+    use cmake_fmt::formatter::{detect_grammar_format, export_grammars};
     use std::fs;
 
     let grammars = builtin_grammars();
-    let toml_content = export_grammars_to_toml(&grammars);
+    let format = detect_grammar_format(path);
+    let content = export_grammars(&grammars, &format);
 
-    fs::write(path, toml_content)
+    fs::write(path, content)
         .with_context(|| format!("Failed to write grammar file: {}", path.display()))?;
 
     eprintln!("Exported {} grammars to {}", grammars.len(), path.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Export custom grammars (detected from input files) to a file
+fn export_custom_grammar_to_file(
+    path: &std::path::Path,
+    input_files: &[PathBuf],
+    style_override: Option<&str>,
+    grammar_files_arg: &[PathBuf],
+) -> Result<ExitCode> {
+    use anyhow::Context;
+    use cmake_fmt::formatter::grammar::{config_grammars_to_map, get_project_user_grammars};
+    use cmake_fmt::formatter::{detect_grammar_format, export_command_grammars};
+    use std::collections::HashMap;
+    use std::fs;
+
+    let mut merged_grammars = HashMap::new();
+
+    // Scan each input file for auto-detected grammars and config grammars
+    for file in input_files {
+        // Get auto-detected grammars from this file's project
+        let auto_detected = get_project_user_grammars(file);
+
+        // Merge auto-detected (don't override existing)
+        for (name, grammar) in auto_detected {
+            merged_grammars.entry(name).or_insert(grammar);
+        }
+
+        // Get config grammars for this file
+        let config = crate::config::resolve_config(Some(file), style_override, grammar_files_arg);
+        let config_grammar_map = config_grammars_to_map(&config.command_grammars);
+
+        // Config grammars override auto-detected
+        merged_grammars.extend(config_grammar_map);
+    }
+
+    let format = detect_grammar_format(path);
+    let content = export_command_grammars(&merged_grammars, &format);
+
+    fs::write(path, content)
+        .with_context(|| format!("Failed to write grammar file: {}", path.display()))?;
+
+    if merged_grammars.is_empty() {
+        eprintln!("No custom grammars detected in input files");
+    } else {
+        eprintln!("Exported {} custom grammars to {}", merged_grammars.len(), path.display());
+    }
+
     Ok(ExitCode::SUCCESS)
 }
 
@@ -113,9 +166,9 @@ pub fn run() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    // Handle --export-grammar
-    if let Some(ref export_path) = cli.export_grammar {
-        return export_grammar_to_file(export_path);
+    // Handle --export-all-grammar (exports all builtins)
+    if let Some(ref export_path) = cli.export_all_grammar {
+        return export_all_grammar_to_file(export_path);
     }
 
     // Handle interactive mode first (if --interactive flag is set)
@@ -163,6 +216,12 @@ pub fn run() -> Result<ExitCode> {
     let is_stdin = cli.files.is_empty() || (cli.files.len() == 1 && cli.files[0] == PathBuf::from("-"));
 
     if is_stdin {
+        // Handle --export-grammar with stdin (error)
+        if cli.export_grammar.is_some() {
+            eprintln!("error: --export-grammar requires input files to scan for custom grammars");
+            return Ok(ExitCode::FAILURE);
+        }
+
         // For stdin, resolve config from current directory
         let config = crate::config::resolve_config(None, cli.style.as_deref(), &cli.grammar_files);
         process_stdin(&config, check_mode, diff_mode)
@@ -174,6 +233,16 @@ pub fn run() -> Result<ExitCode> {
         if expanded.is_empty() {
             eprintln!("No files found");
             return Ok(ExitCode::SUCCESS);
+        }
+
+        // Handle --export-grammar (exports custom grammars from input files)
+        if let Some(ref export_path) = cli.export_grammar {
+            return export_custom_grammar_to_file(
+                export_path,
+                &expanded,
+                cli.style.as_deref(),
+                &cli.grammar_files,
+            );
         }
 
         process_files(&expanded, cli.style.as_deref(), &cli.grammar_files, cli.in_place, check_mode, diff_mode)
