@@ -45,7 +45,7 @@ pub fn keyword_type_to_str(kw_type: &KeywordType) -> &'static str {
         KeywordType::SingleValue => "SingleValue",
         KeywordType::MultiValue => "MultiValue",
         KeywordType::PairValue => "PairValue",
-        KeywordType::CommandLine => "CommandLine",
+        KeywordType::BinPack => "BinPack",
     }
 }
 
@@ -56,7 +56,7 @@ pub fn str_to_keyword_type(s: &str) -> Result<KeywordType, String> {
         "SingleValue" => Ok(KeywordType::SingleValue),
         "MultiValue" => Ok(KeywordType::MultiValue),
         "PairValue" => Ok(KeywordType::PairValue),
-        "CommandLine" => Ok(KeywordType::CommandLine),
+        "BinPack" => Ok(KeywordType::BinPack),
         _ => Err(format!("Unknown keyword type: {}", s)),
     }
 }
@@ -270,7 +270,7 @@ mod tests {
             KeywordType::SingleValue,
             KeywordType::MultiValue,
             KeywordType::PairValue,
-            KeywordType::CommandLine,
+            KeywordType::BinPack,
         ];
         for kw_type in types {
             let s = keyword_type_to_str(&kw_type);

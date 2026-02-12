@@ -29,8 +29,8 @@ pub enum KeywordType {
     /// Pair-value keyword: consumes alternating key/value pairs
     /// e.g., PROPERTIES prop1 value1 prop2 value2
     PairValue,
-    /// Command-line keyword: bin-packs values to fill lines (e.g., COMMAND)
-    CommandLine,
+    /// Bin-pack keyword: packs values to fill lines (e.g., COMMAND)
+    BinPack,
 }
 
 /// Grammar definition for a CMake command

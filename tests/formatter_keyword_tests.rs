@@ -1199,7 +1199,7 @@ fn test_multivalue_multiple_args_still_vertical() {
 }
 
 // ============================================================================
-// QUICK TASK 15: CommandLine Bin-Pack Formatting Tests
+// QUICK TASK 15: BinPack Formatting Tests
 // ============================================================================
 
 #[test]
@@ -1222,7 +1222,7 @@ fn test_command_bin_packs_to_fill_lines() {
     assert!(result.contains("OUTPUT_VARIABLE LLVM_PREFIX\n"));
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
-    assert_eq!(result, pass2, "CommandLine formatting must be idempotent");
+    assert_eq!(result, pass2, "BinPack formatting must be idempotent");
 }
 
 #[test]
@@ -1240,7 +1240,7 @@ fn test_command_bin_packs_wraps_long_lines() {
     assert!(result.contains('\n'));
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
-    assert_eq!(result, pass2, "CommandLine wrapping must be idempotent");
+    assert_eq!(result, pass2, "BinPack wrapping must be idempotent");
 }
 
 #[test]
@@ -1254,7 +1254,7 @@ fn test_command_bin_packs_even_when_input_multiline() {
     assert!(result.contains("COMMAND ${CMAKE_COMMAND} -E copy input.txt output.txt\n"));
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
-    assert_eq!(result, pass2, "CommandLine bin-packing must be idempotent");
+    assert_eq!(result, pass2, "BinPack packing must be idempotent");
 }
 
 #[test]
@@ -1267,7 +1267,7 @@ fn test_command_single_arg_stays_inline() {
     assert!(result.contains("COMMAND mytest"));
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
-    assert_eq!(result, pass2, "CommandLine single arg must be idempotent");
+    assert_eq!(result, pass2, "BinPack single arg must be idempotent");
 }
 
 #[test]
@@ -1281,5 +1281,5 @@ fn test_command_add_custom_target_bin_packs() {
     assert!(result.contains("${CMAKE_CTEST_COMMAND}"));
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
-    assert_eq!(result, pass2, "add_custom_target CommandLine must be idempotent");
+    assert_eq!(result, pass2, "add_custom_target BinPack must be idempotent");
 }

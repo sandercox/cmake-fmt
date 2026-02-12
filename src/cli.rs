@@ -114,7 +114,7 @@ fn print_grammar_help() {
     println!("        REQUIRED: Flag");
     println!("        DESTINATION: SingleValue");
     println!("        SOURCES: MultiValue");
-    println!("        COMMAND: CommandLine");
+    println!("        COMMAND: BinPack");
     println!("        PROPERTIES: PairValue");
     println!();
     println!("Keyword types:");
@@ -124,7 +124,7 @@ fn print_grammar_help() {
     println!("  {:<15} {}", "Flag", "No value consumed (e.g., REQUIRED, QUIET)");
     println!("  {:<15} {}", "SingleValue", "Consumes exactly one value (e.g., VERSION 1.0, DESTINATION /usr/lib)");
     println!("  {:<15} {}", "MultiValue", "Consumes all values until next keyword (e.g., SOURCES a.cpp b.cpp c.cpp)");
-    println!("  {:<15} {}", "CommandLine", "Bin-packs values to fill lines (e.g., COMMAND echo hello world)");
+    println!("  {:<15} {}", "BinPack", "Packs values to fill lines (e.g., COMMAND echo hello world)");
     println!("  {:<15} {}", "PairValue", "Consumes alternating key/value pairs (e.g., PROPERTIES CXX_STANDARD 17)");
     println!();
     println!("Multi-mode commands:");

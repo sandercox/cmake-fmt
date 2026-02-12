@@ -69,7 +69,7 @@ REQUIRED = "Flag"
 OUTPUT = "SingleValue"
 SOURCES = "MultiValue"
 PROPERTIES = "PairValue"
-COMMAND = "CommandLine"
+COMMAND = "BinPack"
 "#;
 
     let imported = import_grammar_file(toml_content)
@@ -82,7 +82,7 @@ COMMAND = "CommandLine"
     assert_eq!(grammar.keyword_type("OUTPUT"), Some(KeywordType::SingleValue));
     assert_eq!(grammar.keyword_type("SOURCES"), Some(KeywordType::MultiValue));
     assert_eq!(grammar.keyword_type("PROPERTIES"), Some(KeywordType::PairValue));
-    assert_eq!(grammar.keyword_type("COMMAND"), Some(KeywordType::CommandLine));
+    assert_eq!(grammar.keyword_type("COMMAND"), Some(KeywordType::BinPack));
 }
 
 #[test]
@@ -175,13 +175,13 @@ FILES = "MultiValue"
 }
 
 #[test]
-fn test_command_line_keywords_in_config() {
+fn test_bin_pack_keywords_in_config() {
     use cmake_fmt::formatter::CommandGrammarConfig;
 
     let mut config_grammars = HashMap::new();
     let mut grammar_config = CommandGrammarConfig::default();
     grammar_config.options = vec!["VERBATIM".to_string()];
-    grammar_config.command_line_keywords = vec!["COMMAND".to_string()];
+    grammar_config.bin_pack_keywords = vec!["COMMAND".to_string()];
     config_grammars.insert("my_command".to_string(), grammar_config);
 
     let grammar_map = config_grammars_to_map(&config_grammars);
@@ -190,7 +190,7 @@ fn test_command_line_keywords_in_config() {
     let grammar = &grammar_map["my_command"];
 
     assert_eq!(grammar.keyword_type("VERBATIM"), Some(KeywordType::Flag));
-    assert_eq!(grammar.keyword_type("COMMAND"), Some(KeywordType::CommandLine));
+    assert_eq!(grammar.keyword_type("COMMAND"), Some(KeywordType::BinPack));
 }
 
 #[test]

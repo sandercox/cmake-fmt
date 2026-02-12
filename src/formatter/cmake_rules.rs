@@ -661,8 +661,8 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(section.args[0].clone()));
                 }
 
-                // CommandLine keywords (e.g., COMMAND): bin-pack values to fill lines
-                Some(KeywordType::CommandLine) => {
+                // BinPack keywords (e.g., COMMAND): pack values to fill lines
+                Some(KeywordType::BinPack) => {
                     // Add separator before the keyword (same pattern as other keywords)
                     if is_first_arg {
                         is_first_arg = false;
@@ -756,7 +756,7 @@ pub fn format_keyword_aware_args(
                         // Disable grouping when comments are present to preserve their positions
                         // Blank lines are preserved as segment boundaries
                         let (effective_args, effective_blank_lines) = if config.source_grouping != super::config::SourceGrouping::None
-                            && matches!(section.keyword_type, Some(KeywordType::MultiValue) | Some(KeywordType::CommandLine) | None)
+                            && matches!(section.keyword_type, Some(KeywordType::MultiValue) | Some(KeywordType::BinPack) | None)
                             && section.comments.is_empty()
                         {
                             group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, config.source_grouping)
