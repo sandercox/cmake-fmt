@@ -350,6 +350,13 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         "PROPERTIES" => PairValue,
     );
 
+    // set (empty grammar enables source grouping via keyword-aware path)
+    grammar!("set",
+        "CACHE" => MultiValue,
+        "PARENT_SCOPE" => Flag,
+        "FORCE" => Flag,
+    );
+
     // add_test
     grammar!("add_test",
         "NAME" => SingleValue,

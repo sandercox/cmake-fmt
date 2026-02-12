@@ -893,6 +893,12 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
         let mut comment_iter = section.comments.iter().peekable();
 
         for (arg_idx, arg) in effective_args.iter().enumerate() {
+            // Check for blank line before this argument (before comments to preserve ordering)
+            if section.blank_lines.contains(&arg_idx) && force_multiline {
+                docs.push(RcDoc::hardline());
+                is_first_arg = false;
+            }
+
             // Emit comments before this argument
             while let Some((pos, comment)) = comment_iter.peek() {
                 if *pos == arg_idx {
@@ -911,12 +917,6 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
                 } else {
                     break;
                 }
-            }
-
-            // Check for blank line before this argument
-            if section.blank_lines.contains(&arg_idx) && force_multiline {
-                docs.push(RcDoc::hardline());
-                is_first_arg = false;
             }
 
             // Add separator before arg (except for the very first arg)
