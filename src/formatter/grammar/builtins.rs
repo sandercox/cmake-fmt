@@ -248,7 +248,7 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
     // add_custom_command
     grammar!("add_custom_command",
         "OUTPUT" => MultiValue,
-        "COMMAND" => MultiValue,
+        "COMMAND" => CommandLine,
         "DEPENDS" => MultiValue,
         "WORKING_DIRECTORY" => SingleValue,
         "COMMENT" => SingleValue,
@@ -268,7 +268,7 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
 
     // add_custom_target
     grammar!("add_custom_target",
-        "COMMAND" => MultiValue,
+        "COMMAND" => CommandLine,
         "DEPENDS" => MultiValue,
         "WORKING_DIRECTORY" => SingleValue,
         "COMMENT" => SingleValue,
@@ -283,7 +283,7 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
 
     // execute_process
     grammar!("execute_process",
-        "COMMAND" => MultiValue,
+        "COMMAND" => CommandLine,
         "WORKING_DIRECTORY" => SingleValue,
         "TIMEOUT" => SingleValue,
         "RESULT_VARIABLE" => SingleValue,
@@ -353,7 +353,7 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
     // add_test
     grammar!("add_test",
         "NAME" => SingleValue,
-        "COMMAND" => MultiValue,
+        "COMMAND" => CommandLine,
         "CONFIGURATIONS" => MultiValue,
         "WORKING_DIRECTORY" => SingleValue,
         "COMMAND_EXPAND_LISTS" => Flag,

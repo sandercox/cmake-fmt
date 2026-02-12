@@ -651,7 +651,7 @@ pub fn format_keyword_aware_args(
                         // Apply source grouping if enabled
                         // Disable grouping when comments or blank lines are present to preserve their positions
                         let effective_args = if config.source_grouping != super::config::SourceGrouping::None
-                            && matches!(section.keyword_type, Some(KeywordType::MultiValue) | None)
+                            && matches!(section.keyword_type, Some(KeywordType::MultiValue) | Some(KeywordType::CommandLine) | None)
                             && section.comments.is_empty()
                             && section.blank_lines.is_empty()
                         {
