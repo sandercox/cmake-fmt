@@ -108,7 +108,10 @@ fn build_grammar_entries(grammars: &HashMap<String, Grammar>) -> Vec<GrammarEntr
 }
 
 /// Build grammar entries from CommandGrammar HashMap (custom grammars only)
-fn build_command_grammar_entries(grammars: &HashMap<String, CommandGrammar>) -> Vec<GrammarEntry> {
+fn build_command_grammar_entries(
+    grammars: &HashMap<String, CommandGrammar>,
+    name_map: Option<&HashMap<String, String>>,
+) -> Vec<GrammarEntry> {
     let mut entries = Vec::new();
 
     // Sort by command name for deterministic output
@@ -121,8 +124,13 @@ fn build_command_grammar_entries(grammars: &HashMap<String, CommandGrammar>) -> 
         for (kw, kw_type) in &cg.keywords {
             keywords.insert(kw.clone(), keyword_type_to_str(kw_type).to_string());
         }
+        // Use original casing from name_map if available
+        let display_name = name_map
+            .and_then(|m| m.get(command_name))
+            .cloned()
+            .unwrap_or_else(|| command_name.clone());
         entries.push(GrammarEntry {
-            command: command_name.clone(),
+            command: display_name,
             mode: None, // User grammars are always simple
             keywords,
         });
@@ -158,8 +166,11 @@ pub fn export_grammars_to_yaml(grammars: &HashMap<String, Grammar>) -> String {
 }
 
 /// Export command grammars to TOML format (custom grammars only)
-pub fn export_command_grammars_to_toml(grammars: &HashMap<String, CommandGrammar>) -> String {
-    let entries = build_command_grammar_entries(grammars);
+pub fn export_command_grammars_to_toml(
+    grammars: &HashMap<String, CommandGrammar>,
+    name_map: Option<&HashMap<String, String>>,
+) -> String {
+    let entries = build_command_grammar_entries(grammars, name_map);
     let grammar_file = GrammarFile { grammars: entries };
     let toml_string = toml::to_string_pretty(&grammar_file).unwrap();
 
@@ -171,8 +182,11 @@ pub fn export_command_grammars_to_toml(grammars: &HashMap<String, CommandGrammar
 }
 
 /// Export command grammars to YAML format (custom grammars only)
-pub fn export_command_grammars_to_yaml(grammars: &HashMap<String, CommandGrammar>) -> String {
-    let entries = build_command_grammar_entries(grammars);
+pub fn export_command_grammars_to_yaml(
+    grammars: &HashMap<String, CommandGrammar>,
+    name_map: Option<&HashMap<String, String>>,
+) -> String {
+    let entries = build_command_grammar_entries(grammars, name_map);
     let grammar_file = GrammarFile { grammars: entries };
     let yaml_string = serde_yml::to_string(&grammar_file).unwrap();
 
@@ -192,10 +206,14 @@ pub fn export_grammars(grammars: &HashMap<String, Grammar>, format: &GrammarForm
 }
 
 /// Export command grammars with format dispatch
-pub fn export_command_grammars(grammars: &HashMap<String, CommandGrammar>, format: &GrammarFormat) -> String {
+pub fn export_command_grammars(
+    grammars: &HashMap<String, CommandGrammar>,
+    format: &GrammarFormat,
+    name_map: Option<&HashMap<String, String>>,
+) -> String {
     match format {
-        GrammarFormat::Toml => export_command_grammars_to_toml(grammars),
-        GrammarFormat::Yaml => export_command_grammars_to_yaml(grammars),
+        GrammarFormat::Toml => export_command_grammars_to_toml(grammars, name_map),
+        GrammarFormat::Yaml => export_command_grammars_to_yaml(grammars, name_map),
     }
 }
 

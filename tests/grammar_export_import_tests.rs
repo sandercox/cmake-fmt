@@ -364,7 +364,7 @@ fn test_export_command_grammars_toml() {
     cmd2.keywords.insert("DEPENDS".to_string(), KeywordType::MultiValue);
     grammars.insert("my_command_2".to_string(), cmd2);
 
-    let toml_content = export_command_grammars(&grammars, &GrammarFormat::Toml);
+    let toml_content = export_command_grammars(&grammars, &GrammarFormat::Toml, None);
 
     // Should contain [[grammar]] entries
     assert!(toml_content.contains("[[grammar]]"));
@@ -399,7 +399,7 @@ fn test_export_command_grammars_yaml() {
     cmd.keywords.insert("OUTPUT_DIR".to_string(), KeywordType::SingleValue);
     grammars.insert("custom_cmd".to_string(), cmd);
 
-    let yaml_content = export_command_grammars(&grammars, &GrammarFormat::Yaml);
+    let yaml_content = export_command_grammars(&grammars, &GrammarFormat::Yaml, None);
 
     // Should be valid YAML
     let parsed: serde_yml::Value = serde_yml::from_str(&yaml_content)
@@ -434,7 +434,7 @@ fn test_export_empty_command_grammars() {
     let grammars: HashMap<String, cmake_fmt::formatter::CommandGrammar> = HashMap::new();
 
     // Export to YAML
-    let yaml_content = export_command_grammars(&grammars, &GrammarFormat::Yaml);
+    let yaml_content = export_command_grammars(&grammars, &GrammarFormat::Yaml, None);
     let parsed_yaml: serde_yml::Value = serde_yml::from_str(&yaml_content)
         .expect("Empty grammar should produce valid YAML");
     assert!(parsed_yaml.get("grammar").is_some());
@@ -442,12 +442,59 @@ fn test_export_empty_command_grammars() {
     assert!(grammar_array.is_empty());
 
     // Export to TOML
-    let toml_content = export_command_grammars(&grammars, &GrammarFormat::Toml);
+    let toml_content = export_command_grammars(&grammars, &GrammarFormat::Toml, None);
     let parsed_toml: toml::Value = toml::from_str(&toml_content)
         .expect("Empty grammar should produce valid TOML");
     assert!(parsed_toml.get("grammar").is_some());
     let grammar_array = parsed_toml.get("grammar").unwrap().as_array().unwrap();
     assert!(grammar_array.is_empty());
+}
+
+#[test]
+fn test_export_command_grammars_preserves_original_casing() {
+    use cmake_fmt::formatter::CommandGrammar;
+
+    // Create a grammar with lowercase key (as stored internally)
+    let mut grammars = HashMap::new();
+    let mut cmd = CommandGrammar::new();
+    cmd.keywords.insert("FLAG1".to_string(), KeywordType::Flag);
+    cmd.keywords.insert("VALUE1".to_string(), KeywordType::SingleValue);
+    cmd.keywords.insert("MULTI1".to_string(), KeywordType::MultiValue);
+    grammars.insert("mycustomfunction".to_string(), cmd);
+
+    // Create name map with original casing
+    let mut name_map = HashMap::new();
+    name_map.insert("mycustomfunction".to_string(), "MyCustomFunction".to_string());
+
+    // Export with name_map
+    let yaml_content = export_command_grammars(&grammars, &GrammarFormat::Yaml, Some(&name_map));
+
+    // Verify that the output uses original casing
+    assert!(yaml_content.contains("MyCustomFunction"));
+    assert!(!yaml_content.contains("mycustomfunction"));
+
+    // Verify round-trip import still works (lowercases on import)
+    let imported = import_grammar_file(&yaml_content)
+        .expect("Should import exported YAML");
+
+    // Should be stored with lowercase key
+    assert!(imported.contains_key("mycustomfunction"));
+    assert!(!imported.contains_key("MyCustomFunction"));
+
+    // Verify keywords are preserved
+    let cmd_imported = &imported["mycustomfunction"];
+    assert_eq!(cmd_imported.keyword_type("FLAG1"), Some(KeywordType::Flag));
+    assert_eq!(cmd_imported.keyword_type("VALUE1"), Some(KeywordType::SingleValue));
+    assert_eq!(cmd_imported.keyword_type("MULTI1"), Some(KeywordType::MultiValue));
+
+    // Test TOML format as well
+    let toml_content = export_command_grammars(&grammars, &GrammarFormat::Toml, Some(&name_map));
+    assert!(toml_content.contains("MyCustomFunction"));
+    assert!(!toml_content.contains("mycustomfunction"));
+
+    let imported_toml = import_grammar_file(&toml_content)
+        .expect("Should import exported TOML");
+    assert!(imported_toml.contains_key("mycustomfunction"));
 }
 
 #[test]

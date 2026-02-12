@@ -176,7 +176,7 @@ fn export_custom_grammar_to_file(
     }
 
     let format = detect_grammar_format(path);
-    let content = export_command_grammars(&merged_grammars, &format);
+    let content = export_command_grammars(&merged_grammars, &format, Some(&all_user_commands));
 
     fs::write(path, content)
         .with_context(|| format!("Failed to write grammar file: {}", path.display()))?;
