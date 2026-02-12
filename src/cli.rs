@@ -38,10 +38,6 @@ pub struct Cli {
     #[arg(long)]
     pub style: Option<String>,
 
-    /// Show all available style settings
-    #[arg(long = "help-style")]
-    pub help_style: bool,
-
     /// Export detected custom grammars to a file (scanned from input files)
     #[arg(long = "export-grammar", value_name = "FILE")]
     pub export_grammar: Option<PathBuf>,
@@ -57,6 +53,14 @@ pub struct Cli {
     /// Show verbose output during file scanning and analysis
     #[arg(long)]
     pub verbose: bool,
+
+    /// Show all available style settings
+    #[arg(long = "help-style", display_order = 900)]
+    pub help_style: bool,
+
+    /// Show grammar file format and keyword types
+    #[arg(long = "help-grammar", display_order = 901)]
+    pub help_grammar: bool,
 }
 
 /// Print suppression warnings to stderr
@@ -92,6 +96,59 @@ fn print_style_help() {
     println!("  indent_width = 2");
     println!("  use_tabs = false");
     println!("  command_case = \"lowercase\"");
+}
+
+/// Print grammar file format documentation
+fn print_grammar_help() {
+    println!("Grammar files teach cmake-fmt about custom CMake commands");
+    println!();
+    println!("Supported formats:");
+    println!("  - YAML (.yaml, .yml)");
+    println!("  - TOML (.toml, .tml)");
+    println!();
+    println!("Example grammar file (YAML):");
+    println!();
+    println!("  grammar:");
+    println!("    - command: my_custom_command");
+    println!("      keywords:");
+    println!("        REQUIRED: Flag");
+    println!("        DESTINATION: SingleValue");
+    println!("        SOURCES: MultiValue");
+    println!("        COMMAND: CommandLine");
+    println!("        PROPERTIES: PairValue");
+    println!();
+    println!("Keyword types:");
+    println!();
+    println!("  {:<15} {}", "Type", "Description");
+    println!("  {:<15} {}", "----", "-----------");
+    println!("  {:<15} {}", "Flag", "No value consumed (e.g., REQUIRED, QUIET)");
+    println!("  {:<15} {}", "SingleValue", "Consumes exactly one value (e.g., VERSION 1.0, DESTINATION /usr/lib)");
+    println!("  {:<15} {}", "MultiValue", "Consumes all values until next keyword (e.g., SOURCES a.cpp b.cpp c.cpp)");
+    println!("  {:<15} {}", "CommandLine", "Bin-packs values to fill lines (e.g., COMMAND echo hello world)");
+    println!("  {:<15} {}", "PairValue", "Consumes alternating key/value pairs (e.g., PROPERTIES CXX_STANDARD 17)");
+    println!();
+    println!("Multi-mode commands:");
+    println!("  For commands like install() that have different keyword sets per sub-command,");
+    println!("  add a 'mode' field to each grammar entry:");
+    println!();
+    println!("    - command: install");
+    println!("      mode: TARGETS");
+    println!("      keywords:");
+    println!("        DESTINATION: SingleValue");
+    println!();
+    println!("    - command: install");
+    println!("      mode: FILES");
+    println!("      keywords:");
+    println!("        DESTINATION: SingleValue");
+    println!("        FILES: MultiValue");
+    println!();
+    println!("Usage:");
+    println!("  --grammar-file <path>        Import grammar file");
+    println!("  --export-grammar <path>      Export custom grammars from input files");
+    println!("  --export-all-grammar <path>  Export all grammars including builtins");
+    println!();
+    println!("Config file:");
+    println!("  grammar_files = [\"path/to/grammars.yaml\"]");
 }
 
 /// Export all grammars (including builtins) to a file
@@ -202,6 +259,12 @@ pub fn run() -> Result<ExitCode> {
     // Handle --help-style
     if cli.help_style {
         print_style_help();
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    // Handle --help-grammar
+    if cli.help_grammar {
+        print_grammar_help();
         return Ok(ExitCode::SUCCESS);
     }
 
