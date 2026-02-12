@@ -620,6 +620,69 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(section.args[0].clone()));
                 }
 
+                // CommandLine keywords (e.g., COMMAND): bin-pack values to fill lines
+                Some(KeywordType::CommandLine) => {
+                    // Add separator before the keyword (same pattern as other keywords)
+                    if is_first_arg {
+                        is_first_arg = false;
+                        if signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.clone()));
+                        } else {
+                            docs.push(RcDoc::flat_alt(
+                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                                RcDoc::nil(),
+                            ));
+                        }
+                    } else if signals.force_multiline {
+                        docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(keyword_indent.clone()));
+                    } else {
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                            RcDoc::space(),
+                        ));
+                    }
+                    docs.push(RcDoc::text(keyword.clone()));
+
+                    // Values: bin-pack using per-value groups
+                    if !section.args.is_empty() {
+                        let has_annotations = !section.comments.is_empty() || !section.blank_lines.is_empty();
+
+                        if has_annotations {
+                            // Fall back to per-line (same as MultiValue) to preserve comment positions
+                            for arg in &section.args {
+                                if signals.force_multiline {
+                                    docs.push(RcDoc::hardline());
+                                    docs.push(RcDoc::text(value_indent.clone()));
+                                } else {
+                                    docs.push(RcDoc::flat_alt(
+                                        RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                        RcDoc::space(),
+                                    ));
+                                }
+                                docs.push(RcDoc::text(arg.clone()));
+                            }
+                        } else {
+                            // Bin-pack: each value in its own group()
+                            // The pretty printer checks each inner group independently:
+                            // if flat form (space + arg) fits remaining line width, stays flat;
+                            // otherwise breaks to new line with value_indent
+                            for arg in &section.args {
+                                docs.push(
+                                    RcDoc::group(
+                                        RcDoc::flat_alt(
+                                            RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                            RcDoc::space(),
+                                        )
+                                        .append(RcDoc::text(arg.clone()))
+                                    )
+                                );
+                            }
+                        }
+                    }
+                }
+
                 // MultiValue or SingleValue with >1 arg in force_multiline mode: vertical layout
                 _ => {
                     // Standard vertical keyword formatting

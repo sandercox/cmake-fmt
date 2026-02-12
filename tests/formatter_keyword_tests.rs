@@ -1197,3 +1197,89 @@ fn test_multivalue_multiple_args_still_vertical() {
     let pass2 = format_text(&result, &default_config());
     assert_eq!(result, pass2, "MultiValue multi-arg formatting must be idempotent");
 }
+
+// ============================================================================
+// QUICK TASK 15: CommandLine Bin-Pack Formatting Tests
+// ============================================================================
+
+#[test]
+fn test_command_short_stays_inline() {
+    // Short COMMAND stays on one line
+    let input = "execute_process(COMMAND echo hello OUTPUT_VARIABLE result)";
+    let result = format_text(input, &default_config());
+    assert_eq!(result, "execute_process(COMMAND echo hello OUTPUT_VARIABLE result)\n");
+}
+
+#[test]
+fn test_command_bin_packs_to_fill_lines() {
+    // Long COMMAND bin-packs values to fill lines
+    let input = "execute_process(COMMAND ${BREW_EXECUTABLE} --prefix llvm OUTPUT_VARIABLE LLVM_PREFIX OUTPUT_STRIP_TRAILING_WHITESPACE)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // COMMAND values should bin-pack on one line (they fit together)
+    assert!(result.contains("COMMAND ${BREW_EXECUTABLE} --prefix llvm\n"));
+    // Other keywords should format normally
+    assert!(result.contains("OUTPUT_VARIABLE LLVM_PREFIX\n"));
+    // Verify idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "CommandLine formatting must be idempotent");
+}
+
+#[test]
+fn test_command_bin_packs_wraps_long_lines() {
+    // Very long COMMAND wraps at line width
+    let input = "execute_process(COMMAND ${CMAKE_COMMAND} -E env VCPKG_ROOT=${VCPKG_ROOT} ${CMAKE_COMMAND} --build . --config Release --target install OUTPUT_VARIABLE result)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // Values should bin-pack across multiple lines
+    // First line: COMMAND + as many args as fit
+    assert!(result.contains("\tCOMMAND"));
+    // Should NOT have each arg on its own line (that's MultiValue behavior)
+    // Instead, multiple args per line where they fit
+    // Verify it's multiline (too long for one line)
+    assert!(result.contains('\n'));
+    // Verify idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "CommandLine wrapping must be idempotent");
+}
+
+#[test]
+fn test_command_bin_packs_even_when_input_multiline() {
+    // COMMAND bin-packs values even when input had them on separate lines
+    // (unless comments/blank lines are present, which would fall back to per-line)
+    let input = "add_custom_command(\n    OUTPUT output.txt\n    COMMAND\n        ${CMAKE_COMMAND}\n        -E\n        copy\n        input.txt\n        output.txt\n    VERBATIM\n)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // COMMAND values should bin-pack to fit on one line (no comments/blank lines to preserve)
+    assert!(result.contains("COMMAND ${CMAKE_COMMAND} -E copy input.txt output.txt\n"));
+    // Verify idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "CommandLine bin-packing must be idempotent");
+}
+
+#[test]
+fn test_command_single_arg_stays_inline() {
+    // COMMAND with single arg stays inline like SingleValue
+    let input = "add_test(NAME mytest COMMAND mytest WORKING_DIRECTORY ${CMAKE_BINARY_DIR})";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // COMMAND with 1 arg should stay inline with keyword
+    assert!(result.contains("COMMAND mytest"));
+    // Verify idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "CommandLine single arg must be idempotent");
+}
+
+#[test]
+fn test_command_add_custom_target_bin_packs() {
+    // add_custom_target COMMAND also bin-packs
+    let input = "add_custom_target(run_tests ALL COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --parallel 4 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // COMMAND values should bin-pack
+    assert!(result.contains("COMMAND"));
+    assert!(result.contains("${CMAKE_CTEST_COMMAND}"));
+    // Verify idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "add_custom_target CommandLine must be idempotent");
+}
