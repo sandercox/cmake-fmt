@@ -15,14 +15,11 @@ target_include_directories(mylib
 	PUBLIC
 		${CMAKE_CURRENT_SOURCE_DIR}/include
 		${CMAKE_CURRENT_SOURCE_DIR}/include2
-	PRIVATE
-		${CMAKE_CURRENT_SOURCE_DIR}/src
+	PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_compile_definitions(myapp
-	PRIVATE
-		$<$<CONFIG:Debug>:DEBUG_MODE>
-	PUBLIC
-		VERSION="${PROJECT_VERSION}"
+	PRIVATE $<$<CONFIG:Debug>:DEBUG_MODE>
+	PUBLIC VERSION="${PROJECT_VERSION}"
 )
 target_sources(mylib
 	PRIVATE
@@ -35,8 +32,7 @@ target_sources(mylib
 )
 add_library(mylib STATIC src/core.cpp src/utils.cpp src/parser.cpp)
 install(
-	TARGETS
-		mylib
+	TARGETS mylib
 	ARCHIVE
 	DESTINATION lib
 	LIBRARY

@@ -19,8 +19,7 @@ target_link_libraries(myapp
 		fmt::fmt
 		# System libraries
 		Threads::Threads
-	PRIVATE
-		internal_lib
+	PRIVATE internal_lib
 )
 
 # Test: Trailing comment on argument

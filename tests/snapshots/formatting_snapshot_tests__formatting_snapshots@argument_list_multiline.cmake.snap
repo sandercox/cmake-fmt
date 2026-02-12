@@ -23,8 +23,7 @@ set(GROUPED_SOURCES
 
 # Test: Multiline keyword-aware (ARGL-02)
 target_link_libraries(myapp
-	PRIVATE
-		lib1
+	PRIVATE lib1
 )
 
 # Test: First arg on same line (ARGL-03)

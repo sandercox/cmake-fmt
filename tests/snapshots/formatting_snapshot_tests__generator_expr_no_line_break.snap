@@ -3,6 +3,5 @@ source: tests/formatting_snapshot_tests.rs
 expression: output
 ---
 target_compile_options(myapp
-	PRIVATE
-		$<$<AND:$<BOOL:${ENABLE_LONG_FEATURE_NAME}>,$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>>:-Wall -Wextra -Wpedantic -Werror -Wno-unused-parameter -Wno-missing-field-initializers>
+	PRIVATE $<$<AND:$<BOOL:${ENABLE_LONG_FEATURE_NAME}>,$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>>:-Wall -Wextra -Wpedantic -Werror -Wno-unused-parameter -Wno-missing-field-initializers>
 )

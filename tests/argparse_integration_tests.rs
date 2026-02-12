@@ -221,8 +221,9 @@ my_build(VERBOSE SOURCES main.cpp util.cpp HEADERS main.h OUTPUT_DIR build)
 
     let result = setup_and_format(&files, "CMakeLists.txt", &config);
 
-    // Expected: VERBOSE is Flag, OUTPUT_DIR is SingleValue (inline), SOURCES/HEADERS are MultiValue (one per line)
-    let expected = "include(cmake/MyModule.cmake)\nmy_build(\n\tVERBOSE\n\tSOURCES\n\t\tmain.cpp\n\t\tutil.cpp\n\tHEADERS\n\t\tmain.h\n\tOUTPUT_DIR build\n)\n";
+    // Expected: VERBOSE is Flag, OUTPUT_DIR is SingleValue (inline), SOURCES/HEADERS are MultiValue
+    // Note: HEADERS has only 1 arg, so it stays inline (MultiValue single-arg behavior)
+    let expected = "include(cmake/MyModule.cmake)\nmy_build(\n\tVERBOSE\n\tSOURCES\n\t\tmain.cpp\n\t\tutil.cpp\n\tHEADERS main.h\n\tOUTPUT_DIR build\n)\n";
 
     assert_eq!(result, expected);
 }

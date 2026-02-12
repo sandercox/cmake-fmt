@@ -594,6 +594,32 @@ pub fn format_keyword_aware_args(
                     }
                 }
 
+                // MultiValue with exactly 1 arg: keep inline like SingleValue
+                Some(KeywordType::MultiValue) if section.args.len() == 1 => {
+                    // Add separator before the keyword
+                    if is_first_arg {
+                        is_first_arg = false;
+                        if signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.clone()));
+                        } else {
+                            docs.push(RcDoc::flat_alt(
+                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                                RcDoc::nil(),
+                            ));
+                        }
+                    } else {
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                            RcDoc::space(),
+                        ));
+                    }
+                    docs.push(RcDoc::text(keyword.clone()));
+                    // Single value inline with keyword
+                    docs.push(RcDoc::space());
+                    docs.push(RcDoc::text(section.args[0].clone()));
+                }
+
                 // MultiValue or SingleValue with >1 arg in force_multiline mode: vertical layout
                 _ => {
                     // Standard vertical keyword formatting

@@ -46,11 +46,11 @@ fn test_target_sources_keywords() {
     let input = "target_sources(mylib PRIVATE src/a.cpp src/b.cpp src/c.cpp src/d.cpp PUBLIC include/header.h)";
     let result = format_text(input, &default_config());
     // Should break with keywords on own line, values one-per-line underneath
+    // Note: PUBLIC has only 1 arg, so it stays inline (MultiValue single-arg behavior)
     assert!(result.contains("\tPRIVATE\n"));
     assert!(result.contains("\t\tsrc/a.cpp\n"));
     assert!(result.contains("\t\tsrc/d.cpp\n"));
-    assert!(result.contains("\tPUBLIC\n"));
-    assert!(result.contains("\t\tinclude/header.h\n"));
+    assert!(result.contains("\tPUBLIC include/header.h\n"));
 }
 
 #[test]
@@ -76,8 +76,8 @@ fn test_install_keywords() {
     let result = format_text(input, &default_config());
     // Should break due to length
     // When broken, keywords on own line with values underneath
-    assert!(result.contains("TARGETS\n"));
-    assert!(result.contains("\t\tmylib\n"));
+    // Note: TARGETS has only 1 arg, so it stays inline (MultiValue single-arg behavior)
+    assert!(result.contains("\tTARGETS mylib\n"));
     assert!(result.contains("ARCHIVE\n"));
     // DESTINATION is SingleValue, so it keeps value inline: "DESTINATION lib"
     assert!(result.contains("DESTINATION lib"));
@@ -109,9 +109,9 @@ fn test_keyword_aware_with_generator_expr() {
     assert!(result.contains("$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"));
     assert!(result.contains("$<INSTALL_INTERFACE:include>"));
     // When command breaks, all keywords on own line with values one-per-line underneath
+    // Note: PRIVATE has only 1 arg, so it stays inline (MultiValue single-arg behavior)
     assert!(result.contains("PUBLIC\n"));
-    assert!(result.contains("PRIVATE\n"));
-    assert!(result.contains("\t\t${CMAKE_CURRENT_SOURCE_DIR}/src\n"));
+    assert!(result.contains("\tPRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src\n"));
 }
 
 #[test]
@@ -119,11 +119,11 @@ fn test_target_compile_options_keywords() {
     let input = "target_compile_options(mylib PRIVATE -Wall -Wextra -Wpedantic -Werror PUBLIC -fPIC)";
     let result = format_text(input, &default_config());
     // Should break with keywords on own line, values one-per-line underneath
+    // Note: PUBLIC has only 1 arg, so it stays inline (MultiValue single-arg behavior)
     assert!(result.contains("\tPRIVATE\n"));
     assert!(result.contains("\t\t-Wall\n"));
     assert!(result.contains("\t\t-Werror\n"));
-    assert!(result.contains("\tPUBLIC\n"));
-    assert!(result.contains("\t\t-fPIC\n"));
+    assert!(result.contains("\tPUBLIC -fPIC\n"));
 }
 
 #[test]
@@ -131,11 +131,11 @@ fn test_target_compile_definitions_keywords() {
     let input = "target_compile_definitions(mylib PUBLIC MY_LIB_VERSION=1 MY_LIB_DEBUG PRIVATE INTERNAL_BUILD)";
     let result = format_text(input, &default_config());
     // Should break with keywords on own line, values one-per-line underneath
+    // Note: PRIVATE has only 1 arg, so it stays inline (MultiValue single-arg behavior)
     assert!(result.contains("\tPUBLIC\n"));
     assert!(result.contains("\t\tMY_LIB_VERSION=1\n"));
     assert!(result.contains("\t\tMY_LIB_DEBUG\n"));
-    assert!(result.contains("\tPRIVATE\n"));
-    assert!(result.contains("\t\tINTERNAL_BUILD\n"));
+    assert!(result.contains("\tPRIVATE INTERNAL_BUILD\n"));
 }
 
 // ============================================================================
@@ -429,11 +429,13 @@ fn test_keyword_arglist_multiline_stays_multiline() {
     let input = "target_link_libraries(myapp\n  PRIVATE\n    lib1\n)\n";
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
-    // User chose multiline, so values stay on separate lines
-    assert!(result.contains("PRIVATE\n"));
-    assert!(result.contains("lib1\n"));
-    // Should NOT be collapsed to: target_link_libraries(myapp PRIVATE lib1)
+    // User chose multiline, so command stays multiline
+    // Note: PRIVATE has only 1 arg, so it stays inline with value (MultiValue single-arg behavior)
+    assert!(result.contains("PRIVATE lib1\n"));
+    // Should NOT be collapsed to a single line with the target name
     assert!(!result.contains("myapp PRIVATE lib1)\n"));
+    // Command should still be multiline (not collapsed to one line)
+    assert!(result.contains("target_link_libraries(myapp\n"));
 }
 
 #[test]
@@ -636,8 +638,8 @@ fn test_install_targets_mode_formatting() {
     eprintln!("Result:\n{}", result);
 
     // Should format with TARGETS breaking (keywords on own line, values underneath)
-    assert!(result.contains("TARGETS\n"));
-    assert!(result.contains("\t\tmylib\n"));
+    // Note: TARGETS has only 1 arg, so it stays inline (MultiValue single-arg behavior)
+    assert!(result.contains("TARGETS mylib\n"));
     assert!(result.contains("RUNTIME"));
     assert!(result.contains("LIBRARY"));
     assert!(result.contains("ARCHIVE"));
@@ -1149,4 +1151,49 @@ fn test_set_source_files_properties_idempotency() {
         let pass2 = format_text(&pass1, &default_config());
         assert_eq!(pass1, pass2, "Idempotency failed for: {}", input);
     }
+}
+
+// ============================================================================
+// QUICK TASK 14: MultiValue Single-Arg Inline Formatting Tests
+// ============================================================================
+
+#[test]
+fn test_multivalue_single_arg_stays_inline() {
+    // PROGRAMS is MultiValue, but with exactly 1 arg it should stay inline like SingleValue
+    let input = "install(PROGRAMS ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/crashpad_handler DESTINATION bin COMPONENT crashpad)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // When command breaks (it's long enough to trigger multiline):
+    // PROGRAMS value should be inline with PROGRAMS keyword (not on next line)
+    // DESTINATION value should be inline with DESTINATION keyword (SingleValue behavior)
+    // COMPONENT value should be inline with COMPONENT keyword (SingleValue behavior)
+    assert!(result.contains("PROGRAMS ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/crashpad_handler\n"));
+    assert!(result.contains("DESTINATION bin\n"));
+    assert!(result.contains("COMPONENT crashpad\n"));
+
+    // Verify idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "MultiValue single-arg formatting must be idempotent");
+}
+
+#[test]
+fn test_multivalue_multiple_args_still_vertical() {
+    // PROGRAMS with 2+ args should still format vertically (regression guard)
+    // Use longer program names to ensure command breaks
+    let input = "install(PROGRAMS very_long_program_name_one very_long_program_name_two very_long_program_name_three DESTINATION bin)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+
+    // PROGRAMS should be on its own line with values underneath (vertical layout)
+    assert!(result.contains("\tPROGRAMS\n"));
+    assert!(result.contains("\t\tvery_long_program_name_one\n"));
+    assert!(result.contains("\t\tvery_long_program_name_two\n"));
+    assert!(result.contains("\t\tvery_long_program_name_three\n"));
+    // DESTINATION still SingleValue, stays inline
+    assert!(result.contains("DESTINATION bin\n"));
+
+    // Verify idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "MultiValue multi-arg formatting must be idempotent");
 }
