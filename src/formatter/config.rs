@@ -109,6 +109,165 @@ impl Default for ClosingStyle {
     }
 }
 
+impl FormatConfig {
+    /// Apply a single style override by key=value.
+    /// Returns Ok(()) on success, Err(warning_message) for invalid key/value.
+    pub fn apply_override(&mut self, key: &str, value: &str) -> Result<(), String> {
+        match key {
+            "indent_width" => {
+                match value.parse::<usize>() {
+                    Ok(v) => {
+                        self.indent_width = v;
+                        Ok(())
+                    }
+                    Err(_) => Err(format!("Invalid value for indent_width: {}", value)),
+                }
+            }
+            "max_line_length" => {
+                match value.parse::<usize>() {
+                    Ok(v) => {
+                        self.max_line_length = v;
+                        Ok(())
+                    }
+                    Err(_) => Err(format!("Invalid value for max_line_length: {}", value)),
+                }
+            }
+            "use_tabs" => {
+                match value.parse::<bool>() {
+                    Ok(v) => {
+                        self.use_tabs = v;
+                        Ok(())
+                    }
+                    Err(_) => Err(format!("Invalid value for use_tabs: {}", value)),
+                }
+            }
+            "command_case" => {
+                match value {
+                    "lowercase" => {
+                        self.command_case = CommandCase::Lowercase;
+                        Ok(())
+                    }
+                    "uppercase" => {
+                        self.command_case = CommandCase::Uppercase;
+                        Ok(())
+                    }
+                    "leave" => {
+                        self.command_case = CommandCase::Leave;
+                        Ok(())
+                    }
+                    _ => Err(format!(
+                        "Invalid value for command_case (expected lowercase, uppercase, or leave): {}",
+                        value
+                    )),
+                }
+            }
+            "max_blank_lines" => {
+                match value.parse::<usize>() {
+                    Ok(v) => {
+                        self.max_blank_lines = v;
+                        Ok(())
+                    }
+                    Err(_) => Err(format!("Invalid value for max_blank_lines: {}", value)),
+                }
+            }
+            "line_ending" => {
+                match value {
+                    "auto" => {
+                        self.line_ending = LineEnding::Auto;
+                        Ok(())
+                    }
+                    "lf" => {
+                        self.line_ending = LineEnding::Lf;
+                        Ok(())
+                    }
+                    "crlf" => {
+                        self.line_ending = LineEnding::CrLf;
+                        Ok(())
+                    }
+                    _ => Err(format!(
+                        "Invalid value for line_ending (expected auto, lf, or crlf): {}",
+                        value
+                    )),
+                }
+            }
+            "user_command_case" => {
+                match value {
+                    "lowercase" => {
+                        self.user_command_case = UserCommandCase::Lowercase;
+                        Ok(())
+                    }
+                    "uppercase" => {
+                        self.user_command_case = UserCommandCase::Uppercase;
+                        Ok(())
+                    }
+                    "leave" => {
+                        self.user_command_case = UserCommandCase::Leave;
+                        Ok(())
+                    }
+                    "infer" => {
+                        self.user_command_case = UserCommandCase::Infer;
+                        Ok(())
+                    }
+                    _ => Err(format!(
+                        "Invalid value for user_command_case (expected lowercase, uppercase, leave, or infer): {}",
+                        value
+                    )),
+                }
+            }
+            "closing_style" => {
+                match value {
+                    "leave" => {
+                        self.closing_style = ClosingStyle::Leave;
+                        Ok(())
+                    }
+                    "remove" => {
+                        self.closing_style = ClosingStyle::Remove;
+                        Ok(())
+                    }
+                    "force" => {
+                        self.closing_style = ClosingStyle::Force;
+                        Ok(())
+                    }
+                    _ => Err(format!(
+                        "Invalid value for closing_style (expected leave, remove, or force): {}",
+                        value
+                    )),
+                }
+            }
+            "source_grouping" => {
+                match value {
+                    "none" => {
+                        self.source_grouping = SourceGrouping::None;
+                        Ok(())
+                    }
+                    "headers_first" => {
+                        self.source_grouping = SourceGrouping::HeadersFirst;
+                        Ok(())
+                    }
+                    "sources_first" => {
+                        self.source_grouping = SourceGrouping::SourcesFirst;
+                        Ok(())
+                    }
+                    _ => Err(format!(
+                        "Invalid value for source_grouping (expected none, headers_first, or sources_first): {}",
+                        value
+                    )),
+                }
+            }
+            "force_break_keywords" => {
+                match value.parse::<bool>() {
+                    Ok(v) => {
+                        self.force_break_keywords = v;
+                        Ok(())
+                    }
+                    Err(_) => Err(format!("Invalid value for force_break_keywords: {}", value)),
+                }
+            }
+            _ => Err(format!("Unknown config key: {}", key)),
+        }
+    }
+}
+
 /// Source file grouping mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]

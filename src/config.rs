@@ -115,76 +115,8 @@ fn apply_style_overrides(config: &mut FormatConfig, style: &str) {
         let key = parts[0].trim();
         let value = parts[1].trim();
 
-        match key {
-            "indent_width" => {
-                match value.parse::<usize>() {
-                    Ok(v) => config.indent_width = v,
-                    Err(_) => eprintln!("Warning: Invalid value for indent_width: {}", value),
-                }
-            }
-            "max_line_length" => {
-                match value.parse::<usize>() {
-                    Ok(v) => config.max_line_length = v,
-                    Err(_) => eprintln!("Warning: Invalid value for max_line_length: {}", value),
-                }
-            }
-            "use_tabs" => {
-                match value.parse::<bool>() {
-                    Ok(v) => config.use_tabs = v,
-                    Err(_) => eprintln!("Warning: Invalid value for use_tabs: {}", value),
-                }
-            }
-            "command_case" => {
-                match value {
-                    "lowercase" => config.command_case = cmake_fmt::formatter::CommandCase::Lowercase,
-                    "uppercase" => config.command_case = cmake_fmt::formatter::CommandCase::Uppercase,
-                    "leave" => config.command_case = cmake_fmt::formatter::CommandCase::Leave,
-                    _ => eprintln!("Warning: Invalid value for command_case (expected lowercase, uppercase, or leave): {}", value),
-                }
-            }
-            "max_blank_lines" => {
-                match value.parse::<usize>() {
-                    Ok(v) => config.max_blank_lines = v,
-                    Err(_) => eprintln!("Warning: Invalid value for max_blank_lines: {}", value),
-                }
-            }
-            "line_ending" => {
-                match value {
-                    "auto" => config.line_ending = cmake_fmt::formatter::LineEnding::Auto,
-                    "lf" => config.line_ending = cmake_fmt::formatter::LineEnding::Lf,
-                    "crlf" => config.line_ending = cmake_fmt::formatter::LineEnding::CrLf,
-                    _ => eprintln!("Warning: Invalid value for line_ending (expected auto, lf, or crlf): {}", value),
-                }
-            }
-            "user_command_case" => {
-                match value {
-                    "lowercase" => config.user_command_case = cmake_fmt::formatter::UserCommandCase::Lowercase,
-                    "uppercase" => config.user_command_case = cmake_fmt::formatter::UserCommandCase::Uppercase,
-                    "leave" => config.user_command_case = cmake_fmt::formatter::UserCommandCase::Leave,
-                    "infer" => config.user_command_case = cmake_fmt::formatter::UserCommandCase::Infer,
-                    _ => eprintln!("Warning: Invalid value for user_command_case (expected lowercase, uppercase, leave, or infer): {}", value),
-                }
-            }
-            "closing_style" => {
-                match value {
-                    "leave" => config.closing_style = cmake_fmt::formatter::ClosingStyle::Leave,
-                    "remove" => config.closing_style = cmake_fmt::formatter::ClosingStyle::Remove,
-                    "force" => config.closing_style = cmake_fmt::formatter::ClosingStyle::Force,
-                    _ => eprintln!("Warning: Invalid value for closing_style (expected leave, remove, or force): {}", value),
-                }
-            }
-            "source_grouping" => {
-                match value {
-                    "none" => config.source_grouping = cmake_fmt::formatter::SourceGrouping::None,
-                    "headers_first" => config.source_grouping = cmake_fmt::formatter::SourceGrouping::HeadersFirst,
-                    "sources_first" => config.source_grouping = cmake_fmt::formatter::SourceGrouping::SourcesFirst,
-                    _ => eprintln!("Warning: Invalid value for source_grouping (expected none, headers_first, or sources_first): {}", value),
-                }
-            }
-            // command_grammars: Complex type, set via config file only (not --style CLI override)
-            _ => {
-                eprintln!("Warning: Unknown config key (ignored): {}", key);
-            }
+        if let Err(msg) = config.apply_override(key, value) {
+            eprintln!("Warning: {}", msg);
         }
     }
 }

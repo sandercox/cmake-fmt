@@ -1,7 +1,7 @@
 use std::fmt;
 
 /// Suppression directive types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Directive {
     /// Disable formatting for subsequent commands
     Off,
@@ -9,6 +9,8 @@ pub enum Directive {
     On,
     /// Skip formatting for the next command only
     Skip,
+    /// Style override (key=value)
+    Style { key: String, value: String },
 }
 
 /// Warnings produced during suppression tracking
@@ -77,7 +79,20 @@ pub fn parse_directive(comment: &str) -> Option<Directive> {
         "off" => Some(Directive::Off),
         "on" => Some(Directive::On),
         "skip" => Some(Directive::Skip),
-        _ => None,
+        _ => {
+            // Check for style override (key=value)
+            if let Some(eq_pos) = after_prefix.find('=') {
+                let key = after_prefix[..eq_pos].trim();
+                let value = after_prefix[eq_pos + 1..].trim();
+                if !key.is_empty() && !value.is_empty() {
+                    return Some(Directive::Style {
+                        key: key.to_string(),
+                        value: value.to_string(),
+                    });
+                }
+            }
+            None
+        }
     }
 }
 
@@ -105,6 +120,7 @@ impl SuppressionTracker {
     }
 
     /// Process a directive and update state
+    /// Note: Style directives should not be passed to this method
     pub fn process_directive(&mut self, directive: Directive, line: usize) {
         match directive {
             Directive::Off => {
@@ -130,6 +146,10 @@ impl SuppressionTracker {
             Directive::Skip => {
                 // Set skip flag for next command
                 self.skip_next = true;
+            }
+            Directive::Style { .. } => {
+                // Style directives are not suppression directives
+                // They should be handled separately in format_file
             }
         }
     }
@@ -313,5 +333,41 @@ mod tests {
             w3.to_string(),
             "line 20: warning: nested 'cmake-fmt: off' (already in suppressed region)"
         );
+    }
+
+    #[test]
+    fn test_parse_directive_style() {
+        // Basic style override
+        assert_eq!(
+            parse_directive("# cmake-fmt: indent_width=2"),
+            Some(Directive::Style {
+                key: "indent_width".to_string(),
+                value: "2".to_string(),
+            })
+        );
+
+        // Compact form
+        assert_eq!(
+            parse_directive("# cmake-fmt:indent_width=2"),
+            Some(Directive::Style {
+                key: "indent_width".to_string(),
+                value: "2".to_string(),
+            })
+        );
+
+        // Spaces around equals
+        assert_eq!(
+            parse_directive("# cmake-fmt: indent_width = 2"),
+            Some(Directive::Style {
+                key: "indent_width".to_string(),
+                value: "2".to_string(),
+            })
+        );
+
+        // Empty value returns None
+        assert_eq!(parse_directive("# cmake-fmt: indent_width="), None);
+
+        // No equals returns None (not a style override)
+        assert_eq!(parse_directive("# cmake-fmt: indent_width"), None);
     }
 }
