@@ -314,12 +314,33 @@ pub fn parse_keyword_sections_with_grammar(
                         current_section.args.last_mut().unwrap().push_str(&text);
                         saw_separator = false;
                     } else {
-                        // Track if first value is on a new line from its keyword
-                        if current_section.args.is_empty() && current_section.keyword.is_some() && saw_newline_since_keyword {
-                            current_section.values_on_new_line = true;
+                        // Enforce SingleValue consumption: if the current keyword is
+                        // SingleValue and already has its one value, overflow to a new
+                        // positional section. This mirrors cmake_parse_arguments behavior
+                        // where one_value_keywords consume exactly one argument.
+                        let at_capacity = matches!(
+                            current_section.keyword_type,
+                            Some(KeywordType::SingleValue)
+                        ) && current_section.args.len() >= 1;
+
+                        if at_capacity {
+                            sections.push(current_section);
+                            current_section = KeywordSection {
+                                keyword: None,
+                                args: vec![text],
+                                comments: Vec::new(),
+                                blank_lines: Vec::new(),
+                                keyword_type: None,
+                                values_on_new_line: false,
+                            };
+                        } else {
+                            // Track if first value is on a new line from its keyword
+                            if current_section.args.is_empty() && current_section.keyword.is_some() && saw_newline_since_keyword {
+                                current_section.values_on_new_line = true;
+                            }
+                            // Add as argument to current section
+                            current_section.args.push(text);
                         }
-                        // Add as argument to current section
-                        current_section.args.push(text);
                         saw_separator = false;
                     }
                 }

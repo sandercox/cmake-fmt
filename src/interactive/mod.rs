@@ -13,7 +13,7 @@ use std::path::Path;
 use tempfile::NamedTempFile;
 use std::io::Write;
 
-use crate::formatter::{format_text_with_diagnostics, FormatConfig};
+use crate::formatter::{format_text_with_diagnostics_and_path, FormatConfig};
 
 /// Result of interactive formatting session
 #[derive(Debug, Clone)]
@@ -40,7 +40,7 @@ pub fn run_interactive(file_path: &Path, config: &FormatConfig) -> Result<Intera
         .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
 
     // Format the text
-    let (formatted, _warnings) = format_text_with_diagnostics(&original, config);
+    let (formatted, _warnings) = format_text_with_diagnostics_and_path(&original, config, Some(file_path), false);
 
     // Check if already formatted
     if original == formatted {

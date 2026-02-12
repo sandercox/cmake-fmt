@@ -1,4 +1,5 @@
-use cmake_fmt::formatter::{format_text, CommandCase, FormatConfig};
+use cmake_fmt::formatter::{format_text, CommandCase, CommandGrammarConfig, FormatConfig};
+use std::collections::HashMap;
 
 fn default_config() -> FormatConfig {
     FormatConfig::default()
@@ -1282,4 +1283,72 @@ fn test_command_add_custom_target_bin_packs() {
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
     assert_eq!(result, pass2, "add_custom_target BinPack must be idempotent");
+}
+
+// ============================================================================
+// SINGLE VALUE KEYWORD CONSUMPTION TESTS
+// ============================================================================
+
+#[test]
+fn test_single_value_keyword_limits_consumption() {
+    // SingleValue keyword should consume exactly one value.
+    // Overflow args become positional (not nested under the keyword).
+    let mut grammar = CommandGrammarConfig::default();
+    grammar.one_value_keywords = vec!["OUTPUT".to_string(), "PLATFORM".to_string()];
+
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert("my_command".to_string(), grammar);
+
+    let config = FormatConfig {
+        command_grammars,
+        ..Default::default()
+    };
+
+    let input = "my_command(OUTPUT file.yml PLATFORM ${CI_PLATFORM} ${CI_ARCHITECTURE})";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+
+    // PLATFORM should keep its single value inline
+    assert!(result.contains("PLATFORM ${CI_PLATFORM}"));
+    // ${CI_ARCHITECTURE} should NOT be nested under PLATFORM
+    assert!(!result.contains("\t\t${CI_ARCHITECTURE}"));
+    // Idempotency
+    let pass2 = format_text(&result, &config);
+    assert_eq!(result, pass2, "SingleValue overflow must be idempotent");
+}
+
+#[test]
+fn test_single_value_overflow_multiline() {
+    // When the line is long enough to break, overflow args should appear at keyword indent level
+    let mut grammar = CommandGrammarConfig::default();
+    grammar.one_value_keywords = vec![
+        "OUTPUT".to_string(),
+        "PLATFORM".to_string(),
+        "ARCHITECTURE".to_string(),
+    ];
+
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert("generate_ci".to_string(), grammar);
+
+    let config = FormatConfig {
+        command_grammars,
+        ..Default::default()
+    };
+
+    let input = "generate_ci(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/run-ci-tests.yml PLATFORM ${CI_PLATFORM} ${CI_ARCHITECTURE})";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+
+    // Should break to multiline
+    assert!(result.contains("generate_ci(\n"));
+    // OUTPUT should have its single value inline
+    assert!(result.contains("OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/run-ci-tests.yml"));
+    // PLATFORM should have its single value inline
+    assert!(result.contains("PLATFORM ${CI_PLATFORM}"));
+    // ${CI_ARCHITECTURE} at keyword indent, not value indent
+    assert!(result.contains("\t${CI_ARCHITECTURE}\n"));
+    assert!(!result.contains("\t\t${CI_ARCHITECTURE}"));
+    // Idempotency
+    let pass2 = format_text(&result, &config);
+    assert_eq!(result, pass2, "SingleValue multiline overflow must be idempotent");
 }
