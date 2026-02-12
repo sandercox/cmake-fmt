@@ -31,7 +31,7 @@ fn setup_and_format(
     // Format the specified file
     let file_path = project_root.join(file_to_format);
     let content = fs::read_to_string(&file_path).unwrap();
-    let (formatted, _warnings) = format_text_with_diagnostics_and_path(&content, config, Some(&file_path));
+    let (formatted, _warnings) = format_text_with_diagnostics_and_path(&content, config, Some(&file_path), false);
     formatted
 }
 

@@ -18,6 +18,12 @@ fn test_cross_file_user_command_discovery() {
 
     let temp_dir = TempDir::new().unwrap();
 
+    // Create root CMakeLists.txt that references both files
+    create_file(
+        &temp_dir,
+        "CMakeLists.txt",
+        "add_subdirectory(src)\ninclude(cmake/helpers.cmake)\n",
+    );
     // Create project structure with function definition in one file
     create_file(
         &temp_dir,
@@ -35,7 +41,7 @@ fn test_cross_file_user_command_discovery() {
     let input = fs::read_to_string(&src_file).unwrap();
     let config = FormatConfig::default();
 
-    let (output, _warnings) = format_text_with_diagnostics_and_path(&input, &config, Some(&src_file));
+    let (output, _warnings) = format_text_with_diagnostics_and_path(&input, &config, Some(&src_file), false);
 
     // Verify the user command is recognized (name preserved with case)
     assert!(
@@ -46,21 +52,18 @@ fn test_cross_file_user_command_discovery() {
 }
 
 #[test]
-fn test_gitignore_respected() {
+fn test_unreferenced_files_not_scanned() {
     clear_project_scan_cache();
 
     let temp_dir = TempDir::new().unwrap();
 
-    // Initialize git repo (required for .gitignore to work with ignore crate)
-    std::process::Command::new("git")
-        .arg("init")
-        .current_dir(temp_dir.path())
-        .output()
-        .expect("Failed to initialize git repo");
-
-    // Create project with .gitignore excluding build/
-    create_file(&temp_dir, ".gitignore", "build/\n");
+    // Create project where build/ is not referenced by CMake dependency graph
     create_file(&temp_dir, ".cmake-fmt.toml", "");
+    create_file(
+        &temp_dir,
+        "CMakeLists.txt",
+        "add_subdirectory(src)\n",
+    );
     create_file(
         &temp_dir,
         "build/CMakeLists.txt",
@@ -68,29 +71,14 @@ fn test_gitignore_respected() {
     );
     create_file(&temp_dir, "src/CMakeLists.txt", "build_only_func(arg1)\n");
 
-    // Test that scanner doesn't include build/ directory files
-    let cmake_files = user_scanner::find_cmake_files(temp_dir.path());
+    // Test that scanner doesn't include unreferenced build/ directory files
+    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
 
-    // Convert to strings for easier checking
-    let file_paths: Vec<String> = cmake_files
-        .iter()
-        .map(|p| p.to_string_lossy().to_string())
-        .collect();
-
-    // Verify build/CMakeLists.txt is NOT in the results
-    let has_build_file = file_paths.iter().any(|p| p.contains("build") && p.contains("CMakeLists.txt"));
+    // Verify build_only_func is NOT found (build/ not referenced)
     assert!(
-        !has_build_file,
-        "Expected build/CMakeLists.txt to be excluded by .gitignore, but found it in: {:?}",
-        file_paths
-    );
-
-    // Verify src/CMakeLists.txt IS in the results
-    let has_src_file = file_paths.iter().any(|p| p.contains("src") && p.contains("CMakeLists.txt"));
-    assert!(
-        has_src_file,
-        "Expected src/CMakeLists.txt to be included, but not found in: {:?}",
-        file_paths
+        !user_commands.contains_key("build_only_func"),
+        "Expected build_only_func to NOT be found (unreferenced), but got: {:?}",
+        user_commands
     );
 }
 
@@ -105,7 +93,7 @@ fn test_config_file_determines_project_root() {
     create_file(
         &temp_dir,
         "project/CMakeLists.txt",
-        "function(project_func)\nendfunction()\n",
+        "add_subdirectory(sub)\nfunction(project_func)\nendfunction()\n",
     );
     create_file(&temp_dir, "project/sub/CMakeLists.txt", "project_func(arg1)\n");
     create_file(
@@ -127,7 +115,7 @@ fn test_config_file_determines_project_root() {
     );
 
     // Scan for user commands from that root
-    let user_commands = user_scanner::scan_project_commands(&project_root);
+    let user_commands = user_scanner::scan_project_commands(&project_root, false);
 
     // Verify project_func is found
     assert!(
@@ -160,12 +148,15 @@ fn test_no_config_file_fallback() {
     // Find project root starting from temp dir
     let project_root = user_scanner::find_project_root(temp_dir.path());
 
-    // Should fall back to the start directory itself
-    assert_eq!(
+    // Should either:
+    // 1. Find a config file in a parent directory (if one exists)
+    // 2. Fall back to the start directory itself (if no config found in ancestors)
+    // Either way, project_root should be an ancestor of or equal to start_path
+    assert!(
+        temp_dir.path().starts_with(&project_root) || project_root == temp_dir.path(),
+        "Expected project_root to be an ancestor of start path, got {:?} for start {:?}",
         project_root,
-        temp_dir.path(),
-        "Expected fallback to temp dir, got {:?}",
-        project_root
+        temp_dir.path()
     );
 }
 
@@ -175,6 +166,12 @@ fn test_malformed_file_skipped() {
 
     let temp_dir = TempDir::new().unwrap();
 
+    // Create root CMakeLists.txt that references both files
+    create_file(
+        &temp_dir,
+        "CMakeLists.txt",
+        "include(good.cmake)\ninclude(bad.cmake)\n",
+    );
     // Create project with both good and malformed files
     create_file(&temp_dir, ".cmake-fmt.toml", "");
     create_file(
@@ -186,7 +183,7 @@ fn test_malformed_file_skipped() {
     create_file(&temp_dir, "bad.cmake", "function(incomplete\n");
 
     // Scan should not crash and should find the good function
-    let user_commands = user_scanner::scan_project_commands(temp_dir.path());
+    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
 
     assert!(
         user_commands.contains_key("good_func"),
@@ -204,6 +201,12 @@ fn test_idempotency_with_project_scanning() {
 
     let temp_dir = TempDir::new().unwrap();
 
+    // Create root CMakeLists.txt that includes helpers.cmake
+    create_file(
+        &temp_dir,
+        "CMakeLists.txt",
+        "include(helpers.cmake)\n",
+    );
     // Create project with user command definition
     create_file(&temp_dir, ".cmake-fmt.toml", "");
     create_file(
@@ -218,14 +221,111 @@ fn test_idempotency_with_project_scanning() {
     let config = FormatConfig::default();
 
     // Format once
-    let (first_pass, _) = format_text_with_diagnostics_and_path(&input, &config, Some(&main_file));
+    let (first_pass, _) = format_text_with_diagnostics_and_path(&input, &config, Some(&main_file), false);
 
     // Format again (should be idempotent)
-    let (second_pass, _) = format_text_with_diagnostics_and_path(&first_pass, &config, Some(&main_file));
+    let (second_pass, _) = format_text_with_diagnostics_and_path(&first_pass, &config, Some(&main_file), false);
 
     assert_eq!(
         first_pass, second_pass,
         "Expected formatting to be idempotent.\nFirst pass:\n{}\nSecond pass:\n{}",
         first_pass, second_pass
+    );
+}
+
+#[test]
+fn test_add_subdirectory_chain() {
+    clear_project_scan_cache();
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create root with multiple subdirectories
+    create_file(
+        &temp_dir,
+        "CMakeLists.txt",
+        "add_subdirectory(liba)\nadd_subdirectory(libb)\n",
+    );
+    create_file(&temp_dir, ".cmake-fmt.toml", "");
+    create_file(
+        &temp_dir,
+        "liba/CMakeLists.txt",
+        "function(liba_func)\nendfunction()\n",
+    );
+    create_file(
+        &temp_dir,
+        "libb/CMakeLists.txt",
+        "function(libb_func)\nendfunction()\n",
+    );
+
+    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
+
+    // Verify both functions are found
+    assert!(
+        user_commands.contains_key("liba_func"),
+        "Expected liba_func to be found in: {:?}",
+        user_commands
+    );
+    assert!(
+        user_commands.contains_key("libb_func"),
+        "Expected libb_func to be found in: {:?}",
+        user_commands
+    );
+}
+
+#[test]
+fn test_include_chain() {
+    clear_project_scan_cache();
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create root that includes a.cmake
+    create_file(
+        &temp_dir,
+        "CMakeLists.txt",
+        "include(cmake/a.cmake)\n",
+    );
+    create_file(&temp_dir, ".cmake-fmt.toml", "");
+    // a.cmake has an unresolvable include (with variable) and a function
+    create_file(
+        &temp_dir,
+        "cmake/a.cmake",
+        "include(${CMAKE_CURRENT_LIST_DIR}/b.cmake)\nfunction(func_a)\nendfunction()\n",
+    );
+
+    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
+
+    // Verify func_a is found
+    assert!(
+        user_commands.contains_key("func_a"),
+        "Expected func_a to be found in: {:?}",
+        user_commands
+    );
+
+    // Test should not crash from unresolvable include
+}
+
+#[test]
+fn test_stray_cmake_file_not_found() {
+    clear_project_scan_cache();
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create root CMakeLists.txt with no references
+    create_file(&temp_dir, "CMakeLists.txt", "# Empty project\n");
+    create_file(&temp_dir, ".cmake-fmt.toml", "");
+    // Create stray file not referenced anywhere
+    create_file(
+        &temp_dir,
+        "stray.cmake",
+        "function(stray_func)\nendfunction()\n",
+    );
+
+    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
+
+    // Verify stray_func is NOT found (file not referenced)
+    assert!(
+        !user_commands.contains_key("stray_func"),
+        "Expected stray_func to NOT be found (unreferenced file), but got: {:?}",
+        user_commands
     );
 }

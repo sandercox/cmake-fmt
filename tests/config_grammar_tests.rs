@@ -98,7 +98,7 @@ multi_value_keywords = ["CONFIG_MULTI"]
     let config = crate::config::load_config_file(&config_file).unwrap();
 
     // Format the file - config grammar should be used, not auto-detected
-    let (output, _) = format_text_with_diagnostics_and_path(cmake_content, &config, Some(&cmake_file));
+    let (output, _) = format_text_with_diagnostics_and_path(cmake_content, &config, Some(&cmake_file), false);
 
     // Verify the config keywords are recognized (not the auto-detected ones)
     assert!(output.contains("CONFIG_FLAG") || output.contains("config_flag"));
