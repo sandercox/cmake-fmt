@@ -5,8 +5,13 @@ use cmake_fmt::formatter::{
 use cmake_fmt::formatter::grammar::{builtin_grammars, config_grammars_to_map};
 use std::collections::HashMap;
 use std::path::Path;
+use std::process::Command;
 use tempfile::TempDir;
 use std::fs;
+
+fn cmake_fmt_bin() -> String {
+    env!("CARGO_BIN_EXE_cmake-fmt").to_string()
+}
 
 #[test]
 fn test_export_builtin_grammars_produces_valid_toml() {
@@ -443,4 +448,124 @@ fn test_export_empty_command_grammars() {
     assert!(parsed_toml.get("grammar").is_some());
     let grammar_array = parsed_toml.get("grammar").unwrap().as_array().unwrap();
     assert!(grammar_array.is_empty());
+}
+
+#[test]
+fn test_export_grammar_warns_about_grammarless_commands() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let cmake_file = temp_dir.path().join("CMakeLists.txt");
+    let export_file = temp_dir.path().join("export.yaml");
+
+    // Create a .cmake-fmt.toml to mark this directory as a project root
+    // This prevents the scanner from finding other test files
+    fs::write(temp_dir.path().join(".cmake-fmt.toml"), "").expect("Failed to write config");
+
+    // Create a CMake file with mixed commands
+    let cmake_content = r#"
+function(my_helper_with_grammar)
+  cmake_parse_arguments(MY "" "OUTPUT" "SOURCES" ${ARGN})
+  message("Has grammar")
+endfunction()
+
+function(my_helper_no_grammar)
+  message("No grammar")
+endfunction()
+
+macro(another_grammarless_macro)
+  set(FOO "bar")
+endmacro()
+"#;
+    fs::write(&cmake_file, cmake_content).expect("Failed to write CMake file");
+
+    // Run --export-grammar
+    let output = Command::new(cmake_fmt_bin())
+        .arg("--export-grammar")
+        .arg(&export_file)
+        .arg(&cmake_file)
+        .output()
+        .expect("Failed to run cmake-fmt");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should warn about grammarless commands
+    assert!(stderr.contains("warning: no grammar found for custom command 'my_helper_no_grammar'"));
+    assert!(stderr.contains("warning: no grammar found for custom command 'another_grammarless_macro'"));
+    assert!(stderr.contains("2 custom command(s) have no grammar definition"));
+
+    // Should NOT warn about the command with grammar
+    assert!(!stderr.contains("my_helper_with_grammar"));
+}
+
+#[test]
+fn test_export_grammar_no_warnings_when_all_have_grammars() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let cmake_file = temp_dir.path().join("CMakeLists.txt");
+    let export_file = temp_dir.path().join("export.yaml");
+
+    // Create a .cmake-fmt.toml to mark this directory as a project root
+    // This prevents the scanner from finding other test files
+    fs::write(temp_dir.path().join(".cmake-fmt.toml"), "").expect("Failed to write config");
+
+    // Create a CMake file where all functions use cmake_parse_arguments
+    let cmake_content = r#"
+function(cmd_one)
+  cmake_parse_arguments(ONE "" "OUTPUT" "SOURCES" ${ARGN})
+endfunction()
+
+function(cmd_two)
+  cmake_parse_arguments(TWO "REQUIRED" "NAME" "FILES" ${ARGN})
+endfunction()
+"#;
+    fs::write(&cmake_file, cmake_content).expect("Failed to write CMake file");
+
+    // Run --export-grammar
+    let output = Command::new(cmake_fmt_bin())
+        .arg("--export-grammar")
+        .arg(&export_file)
+        .arg(&cmake_file)
+        .output()
+        .expect("Failed to run cmake-fmt");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should NOT contain any warnings about missing grammars
+    assert!(!stderr.contains("no grammar found"), "stderr contained unexpected warning: {}", stderr);
+    assert!(!stderr.contains("custom command(s) have no grammar definition"), "stderr: {}", stderr);
+}
+
+#[test]
+fn test_export_grammar_no_warnings_for_builtins() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let cmake_file = temp_dir.path().join("CMakeLists.txt");
+    let export_file = temp_dir.path().join("export.yaml");
+
+    // Create a .cmake-fmt.toml to mark this directory as a project root
+    // This prevents the scanner from finding other test files
+    fs::write(temp_dir.path().join(".cmake-fmt.toml"), "").expect("Failed to write config");
+
+    // Create a CMake file that only uses builtin commands
+    // (no custom function/macro definitions, only invocations)
+    let cmake_content = r#"
+project(MyProject)
+find_package(Boost REQUIRED COMPONENTS filesystem)
+add_executable(myapp main.cpp)
+target_link_libraries(myapp PRIVATE Boost::filesystem)
+"#;
+    fs::write(&cmake_file, cmake_content).expect("Failed to write CMake file");
+
+    // Run --export-grammar
+    let output = Command::new(cmake_fmt_bin())
+        .arg("--export-grammar")
+        .arg(&export_file)
+        .arg(&cmake_file)
+        .output()
+        .expect("Failed to run cmake-fmt");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should not warn about builtin commands
+    assert!(!stderr.contains("warning: no grammar found"), "stderr contained unexpected warning: {}", stderr);
+
+    // Should report that no custom grammars were detected
+    assert!(stderr.contains("No custom grammars detected"), "stderr: {}", stderr);
 }
