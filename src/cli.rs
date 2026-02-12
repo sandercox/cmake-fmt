@@ -53,6 +53,10 @@ pub struct Cli {
     /// Import additional grammar file(s) (can be specified multiple times)
     #[arg(long = "grammar-file", value_name = "FILE")]
     pub grammar_files: Vec<PathBuf>,
+
+    /// Show verbose output during file scanning and analysis
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 /// Print suppression warnings to stderr
@@ -114,6 +118,7 @@ fn export_custom_grammar_to_file(
     input_files: &[PathBuf],
     style_override: Option<&str>,
     grammar_files_arg: &[PathBuf],
+    verbose: bool,
 ) -> Result<ExitCode> {
     use anyhow::Context;
     use cmake_fmt::formatter::grammar::{builtin_grammars, config_grammars_to_map, get_project_user_commands, get_project_user_grammars};
@@ -127,7 +132,7 @@ fn export_custom_grammar_to_file(
     // Scan each input file for auto-detected grammars and config grammars
     for file in input_files {
         // Get auto-detected grammars from this file's project
-        let auto_detected = get_project_user_grammars(file);
+        let auto_detected = get_project_user_grammars(file, verbose);
 
         // Merge auto-detected (don't override existing)
         for (name, grammar) in auto_detected {
@@ -142,7 +147,7 @@ fn export_custom_grammar_to_file(
         merged_grammars.extend(config_grammar_map);
 
         // Collect all user command definitions
-        let user_cmds = get_project_user_commands(file);
+        let user_cmds = get_project_user_commands(file, verbose);
         all_user_commands.extend(user_cmds);
     }
 
@@ -276,10 +281,11 @@ pub fn run() -> Result<ExitCode> {
                 &expanded,
                 cli.style.as_deref(),
                 &cli.grammar_files,
+                cli.verbose,
             );
         }
 
-        process_files(&expanded, cli.style.as_deref(), &cli.grammar_files, cli.in_place, check_mode, diff_mode)
+        process_files(&expanded, cli.style.as_deref(), &cli.grammar_files, cli.in_place, check_mode, diff_mode, cli.verbose)
     }
 }
 
@@ -368,6 +374,7 @@ fn process_files(
     in_place: bool,
     check_mode: bool,
     diff_mode: bool,
+    verbose: bool,
 ) -> Result<ExitCode> {
     use std::io::{stdout, Write};
     use std::collections::HashMap;
@@ -400,7 +407,7 @@ fn process_files(
             crate::config::resolve_config(Some(file), style_override, grammar_files)
         });
 
-        match process_file(file, config, in_place, check_mode, diff_mode) {
+        match process_file(file, config, in_place, check_mode, diff_mode, verbose) {
             Ok(needs_formatting) => {
                 if needs_formatting {
                     any_need_formatting = true;
@@ -409,7 +416,7 @@ fn process_files(
                 // If default mode (stdout), write the formatted content
                 if let Some(ref mut handle) = stdout_handle {
                     let content = std::fs::read_to_string(file)?;
-                    let (formatted, warnings) = format_text_with_diagnostics_and_path(&content, config, Some(file.as_path()));
+                    let (formatted, warnings) = format_text_with_diagnostics_and_path(&content, config, Some(file.as_path()), verbose);
                     print_warnings(&warnings, &file.display().to_string());
                     write!(handle, "{}", formatted)?;
                 }
@@ -440,6 +447,7 @@ fn process_file(
     in_place: bool,
     check_mode: bool,
     diff_mode: bool,
+    verbose: bool,
 ) -> Result<bool> {
     use std::fs;
 
@@ -449,7 +457,7 @@ fn process_file(
     }
 
     let original = fs::read_to_string(path)?;
-    let (formatted, warnings) = format_text_with_diagnostics_and_path(&original, config, Some(path));
+    let (formatted, warnings) = format_text_with_diagnostics_and_path(&original, config, Some(path), verbose);
     print_warnings(&warnings, &path.display().to_string());
 
     if diff_mode {

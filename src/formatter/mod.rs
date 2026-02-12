@@ -44,6 +44,7 @@ pub fn detect_line_ending(input: &str) -> LineEnding {
 /// * `input` - The CMake source code to format
 /// * `config` - Formatting configuration
 /// * `file_path` - Optional file path for project-wide user command scanning
+/// * `verbose` - Show verbose output during file scanning (default: false)
 ///
 /// # Returns
 /// A tuple of (formatted_code, warnings) where formatted_code is guaranteed
@@ -53,6 +54,7 @@ pub fn format_text_with_diagnostics_and_path(
     input: &str,
     config: &FormatConfig,
     file_path: Option<&Path>,
+    verbose: bool,
 ) -> (String, Vec<SuppressionWarning>) {
     // Resolve effective line ending
     let effective_line_ending = match config.line_ending {
@@ -76,7 +78,7 @@ pub fn format_text_with_diagnostics_and_path(
 
     // Merge with project-wide definitions if file_path is provided
     let user_defs = if let Some(path) = file_path {
-        let mut merged = grammar::get_project_user_commands(path);
+        let mut merged = grammar::get_project_user_commands(path, verbose);
         // Single-file definitions override project-wide (local wins)
         merged.extend(single_file_defs);
         merged
@@ -87,7 +89,7 @@ pub fn format_text_with_diagnostics_and_path(
 
     // Get project-wide user grammars if file_path is provided
     let user_grammars = if let Some(path) = file_path {
-        grammar::get_project_user_grammars(path)
+        grammar::get_project_user_grammars(path, verbose)
     } else {
         std::collections::HashMap::new()
     };
@@ -143,7 +145,7 @@ pub fn format_text_with_diagnostics_and_path(
 /// to end with a single newline and warnings contains any suppression-related
 /// diagnostics
 pub fn format_text_with_diagnostics(input: &str, config: &FormatConfig) -> (String, Vec<SuppressionWarning>) {
-    format_text_with_diagnostics_and_path(input, config, None)
+    format_text_with_diagnostics_and_path(input, config, None, false)
 }
 
 /// Format CMake code with the given configuration
