@@ -30,6 +30,10 @@ pub struct FormatConfig {
     #[serde(default)]
     pub command_grammars: HashMap<String, CommandGrammarConfig>,
 
+    /// External grammar files to import (CLI or config)
+    #[serde(default)]
+    pub grammar_files: Vec<std::path::PathBuf>,
+
     /// Source file grouping mode for .h/.cpp pairs (default: None)
     pub source_grouping: SourceGrouping,
 }
@@ -47,6 +51,7 @@ impl Default for FormatConfig {
             closing_style: ClosingStyle::Remove,
             force_break_keywords: false,
             command_grammars: HashMap::new(),
+            grammar_files: Vec::new(),
             source_grouping: SourceGrouping::None,
         }
     }

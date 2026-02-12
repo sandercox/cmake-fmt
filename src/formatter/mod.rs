@@ -92,6 +92,29 @@ pub fn format_text_with_diagnostics_and_path(
     // Start with auto-detected grammars, then override with config grammars
     let mut merged_grammars = user_grammars;
     merged_grammars.extend(config_grammar_map);
+
+    // Load external grammar files (precedence: config > grammar_files > auto-detected)
+    for grammar_path in &config.grammar_files {
+        match std::fs::read_to_string(grammar_path) {
+            Ok(content) => {
+                match grammar::import_grammar_file(&content) {
+                    Ok(imported) => {
+                        // Imported grammars: insert only if not already present (config takes precedence)
+                        for (name, cg) in imported {
+                            merged_grammars.entry(name).or_insert(cg);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to parse grammar file {}: {}", grammar_path.display(), e);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to read grammar file {}: {}", grammar_path.display(), e);
+            }
+        }
+    }
+
     let user_grammars = merged_grammars;
 
     let (mut result, warnings) = cst_to_doc::format_cst(&cst, config, parse_input, &user_defs, &user_grammars);

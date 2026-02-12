@@ -41,6 +41,14 @@ pub struct Cli {
     /// Show all available style settings
     #[arg(long = "help-style")]
     pub help_style: bool,
+
+    /// Export all detected grammars to a TOML file
+    #[arg(long = "export-grammar", value_name = "FILE")]
+    pub export_grammar: Option<PathBuf>,
+
+    /// Import additional grammar file(s) (can be specified multiple times)
+    #[arg(long = "grammar-file", value_name = "FILE")]
+    pub grammar_files: Vec<PathBuf>,
 }
 
 /// Print suppression warnings to stderr
@@ -78,6 +86,23 @@ fn print_style_help() {
     println!("  command_case = \"lowercase\"");
 }
 
+/// Export grammars to a file
+fn export_grammar_to_file(path: &std::path::Path) -> Result<ExitCode> {
+    use anyhow::Context;
+    use cmake_fmt::formatter::grammar::builtin_grammars;
+    use cmake_fmt::formatter::export_grammars_to_toml;
+    use std::fs;
+
+    let grammars = builtin_grammars();
+    let toml_content = export_grammars_to_toml(&grammars);
+
+    fs::write(path, toml_content)
+        .with_context(|| format!("Failed to write grammar file: {}", path.display()))?;
+
+    eprintln!("Exported {} grammars to {}", grammars.len(), path.display());
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Run the CLI application
 pub fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
@@ -86,6 +111,11 @@ pub fn run() -> Result<ExitCode> {
     if cli.help_style {
         print_style_help();
         return Ok(ExitCode::SUCCESS);
+    }
+
+    // Handle --export-grammar
+    if let Some(ref export_path) = cli.export_grammar {
+        return export_grammar_to_file(export_path);
     }
 
     // Handle interactive mode first (if --interactive flag is set)
@@ -111,7 +141,7 @@ pub fn run() -> Result<ExitCode> {
         }
 
         // Resolve config for the file
-        let config = crate::config::resolve_config(Some(&cli.files[0]), cli.style.as_deref());
+        let config = crate::config::resolve_config(Some(&cli.files[0]), cli.style.as_deref(), &cli.grammar_files);
 
         // Run interactive mode
         match cmake_fmt::interactive::run_interactive(&cli.files[0], &config) {
@@ -134,7 +164,7 @@ pub fn run() -> Result<ExitCode> {
 
     if is_stdin {
         // For stdin, resolve config from current directory
-        let config = crate::config::resolve_config(None, cli.style.as_deref());
+        let config = crate::config::resolve_config(None, cli.style.as_deref(), &cli.grammar_files);
         process_stdin(&config, check_mode, diff_mode)
     } else {
         // Expand glob patterns
@@ -146,7 +176,7 @@ pub fn run() -> Result<ExitCode> {
             return Ok(ExitCode::SUCCESS);
         }
 
-        process_files(&expanded, cli.style.as_deref(), cli.in_place, check_mode, diff_mode)
+        process_files(&expanded, cli.style.as_deref(), &cli.grammar_files, cli.in_place, check_mode, diff_mode)
     }
 }
 
@@ -231,6 +261,7 @@ fn process_stdin(config: &FormatConfig, check_mode: bool, diff_mode: bool) -> Re
 fn process_files(
     files: &[PathBuf],
     style_override: Option<&str>,
+    grammar_files: &[PathBuf],
     in_place: bool,
     check_mode: bool,
     diff_mode: bool,
@@ -263,7 +294,7 @@ fn process_files(
         // Resolve config for this file (using cache for efficiency)
         let parent = file.parent().unwrap_or_else(|| std::path::Path::new("."));
         let config = config_cache.entry(parent.to_path_buf()).or_insert_with(|| {
-            crate::config::resolve_config(Some(file), style_override)
+            crate::config::resolve_config(Some(file), style_override, grammar_files)
         });
 
         match process_file(file, config, in_place, check_mode, diff_mode) {

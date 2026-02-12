@@ -58,11 +58,17 @@ pub fn load_config_file(path: &Path) -> Result<FormatConfig> {
 /// 1. Default values
 /// 2. Config file (if found)
 /// 3. CLI style overrides
+/// 4. CLI grammar files
 ///
 /// # Arguments
 /// * `file_path` - Path to the file being formatted (used to find config), or None for stdin
 /// * `style_override` - CLI style override string (e.g., "indent_width=4,max_line_length=120")
-pub fn resolve_config(file_path: Option<&Path>, style_override: Option<&str>) -> FormatConfig {
+/// * `grammar_files` - CLI grammar files to import
+pub fn resolve_config(
+    file_path: Option<&Path>,
+    style_override: Option<&str>,
+    grammar_files: &[PathBuf],
+) -> FormatConfig {
     let mut config = FormatConfig::default();
 
     // Determine search directory
@@ -75,8 +81,9 @@ pub fn resolve_config(file_path: Option<&Path>, style_override: Option<&str>) ->
     };
 
     // Try to find and load config file
-    if let Some(config_path) = find_config_file(search_dir) {
-        match load_config_file(&config_path) {
+    let config_path = find_config_file(search_dir);
+    if let Some(ref config_file_path) = config_path {
+        match load_config_file(config_file_path) {
             Ok(file_config) => {
                 config = file_config;
             }
@@ -87,10 +94,25 @@ pub fn resolve_config(file_path: Option<&Path>, style_override: Option<&str>) ->
         }
     }
 
+    // Resolve grammar_files paths relative to config file location
+    if let Some(ref config_file_path) = config_path {
+        let config_dir = config_file_path.parent().unwrap_or_else(|| Path::new("."));
+        config.grammar_files = config.grammar_files.iter().map(|p| {
+            if p.is_relative() {
+                config_dir.join(p)
+            } else {
+                p.clone()
+            }
+        }).collect();
+    }
+
     // Apply CLI style overrides
     if let Some(style) = style_override {
         apply_style_overrides(&mut config, style);
     }
+
+    // Add CLI grammar files
+    config.grammar_files.extend(grammar_files.iter().cloned());
 
     config
 }
