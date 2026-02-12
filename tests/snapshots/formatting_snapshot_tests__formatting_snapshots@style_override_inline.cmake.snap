@@ -1,0 +1,10 @@
+---
+source: tests/formatting_snapshot_tests.rs
+assertion_line: 14
+expression: output
+input_file: tests/format_fixtures/style_override_inline.cmake
+---
+# cmake-fmt: indent_width=2
+if(CONDITION)
+	set(MY_VAR value)
+endif()

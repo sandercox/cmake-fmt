@@ -325,3 +325,179 @@ fn test_suppression_idempotent_mixed() {
 // Note: The three new fixtures (suppression_block.cmake, suppression_skip.cmake,
 // suppression_mixed.cmake) are automatically picked up by the glob pattern in
 // formatting_snapshot_tests.rs. We run cargo insta test to generate snapshots.
+
+// ============================================================================
+// INLINE STYLE OVERRIDE TESTS
+// ============================================================================
+
+#[test]
+fn test_inline_style_override_indent_width() {
+    let mut config = FormatConfig::default();
+    config.use_tabs = false; // Use spaces so we can test indent_width
+    config.indent_width = 4; // Default
+
+    let input = r#"# cmake-fmt: indent_width=2
+if(CONDITION)
+    set(MY_VAR value)
+endif()
+"#;
+    let output = format_text(input, &config);
+
+    // Should use 2-space indentation (not 4)
+    assert!(output.contains("  set(MY_VAR value)"),
+        "Should use 2-space indentation after override");
+    assert!(!output.contains("    set(MY_VAR value)"),
+        "Should not use 4-space indentation");
+
+    // Directive should be preserved
+    assert!(output.contains("# cmake-fmt: indent_width=2"));
+}
+
+#[test]
+fn test_inline_style_override_max_line_length() {
+    let mut config = FormatConfig::default();
+    config.max_line_length = 80; // Default
+
+    let input = r#"# cmake-fmt: max_line_length=40
+target_link_libraries(mylib PUBLIC foo bar baz qux)
+"#;
+    let output = format_text(input, &config);
+
+    // Should break to multiline due to 40-char limit
+    assert!(output.contains("target_link_libraries(mylib\n") ||
+            output.contains("target_link_libraries(mylib\t"),
+        "Should break to multiline with 40-char limit");
+}
+
+#[test]
+fn test_inline_style_override_midfile() {
+    let mut config = FormatConfig::default();
+    config.use_tabs = false;
+    config.indent_width = 4;
+
+    let input = r#"if(FIRST)
+    set(VAR1 value)
+endif()
+
+# cmake-fmt: indent_width=2
+if(SECOND)
+    set(VAR2 value)
+endif()
+"#;
+    let output = format_text(input, &config);
+
+    // First block should use 4 spaces (original config)
+    assert!(output.contains("    set(VAR1 value)"),
+        "First block should use 4-space indentation");
+
+    // Second block should use 2 spaces (after override)
+    assert!(output.contains("  set(VAR2 value)"),
+        "Second block should use 2-space indentation after override");
+}
+
+#[test]
+fn test_inline_style_override_multiple() {
+    let mut config = FormatConfig::default();
+    config.use_tabs = true;
+    config.indent_width = 4;
+
+    let input = r#"# cmake-fmt: indent_width=2
+# cmake-fmt: use_tabs=false
+if(CONDITION)
+    set(MY_VAR value)
+endif()
+"#;
+    let output = format_text(input, &config);
+
+    // Should use 2 spaces (not tabs, not 4 spaces)
+    assert!(output.contains("  set(MY_VAR value)"),
+        "Should use 2-space indentation after both overrides");
+    assert!(!output.contains("\tset(MY_VAR value)"),
+        "Should not use tabs after use_tabs=false override");
+}
+
+#[test]
+fn test_inline_style_override_idempotent() {
+    let mut config = FormatConfig::default();
+    config.use_tabs = false;
+    config.indent_width = 4;
+
+    let input = r#"# cmake-fmt: indent_width=2
+if(CONDITION)
+    set(MY_VAR value)
+endif()
+"#;
+    let once = format_text(input, &config);
+    let twice = format_text(&once, &config);
+
+    assert_eq!(once, twice, "Style override formatting should be idempotent");
+}
+
+#[test]
+fn test_inline_style_override_with_suppression() {
+    let mut config = FormatConfig::default();
+    config.use_tabs = false;
+    config.indent_width = 4;
+
+    let input = r#"# cmake-fmt: indent_width=2
+if(CONDITION)
+    set(FORMATTED value)
+endif()
+
+# cmake-fmt: off
+if(  UGLY  )
+    set(  UGLY_VAR    value  )
+endif()
+# cmake-fmt: on
+
+if(BACK_TO_FORMATTED)
+    set(ALSO_FORMATTED value)
+endif()
+"#;
+    let output = format_text(input, &config);
+
+    // First block should use 2-space indentation (style override)
+    assert!(output.contains("  set(FORMATTED value)"),
+        "First block should use overridden indent_width");
+
+    // Suppressed block should preserve ugly formatting
+    assert!(output.contains("set(  UGLY_VAR    value  )"),
+        "Suppressed block should preserve original formatting");
+
+    // Last block should also use 2-space indentation (style override persists)
+    assert!(output.contains("  set(ALSO_FORMATTED value)"),
+        "Last block should still use overridden indent_width");
+}
+
+#[test]
+fn test_inline_style_override_invalid_key_no_crash() {
+    let config = FormatConfig::default();
+    let input = r#"# cmake-fmt: nonexistent_key=value
+set(MY_VAR value)
+"#;
+    // Should not crash, just warn
+    let output = format_text(input, &config);
+
+    // Comment should be preserved
+    assert!(output.contains("# cmake-fmt: nonexistent_key=value"));
+
+    // Command should be formatted normally
+    assert!(output.contains("set(MY_VAR value)"));
+}
+
+#[test]
+fn test_inline_style_override_preserved_in_output() {
+    let mut config = FormatConfig::default();
+    config.use_tabs = false;
+
+    let input = r#"# cmake-fmt: indent_width=2
+if(CONDITION)
+    set(MY_VAR value)
+endif()
+"#;
+    let output = format_text(input, &config);
+
+    // The style override comment itself should appear in output
+    assert!(output.contains("# cmake-fmt: indent_width=2"),
+        "Style override comment should be preserved in output");
+}

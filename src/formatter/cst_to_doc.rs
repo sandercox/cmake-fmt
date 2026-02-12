@@ -107,6 +107,9 @@ fn collect_trailing_comments(node: &SyntaxNode) -> std::collections::HashSet<Str
 
 /// Format the FILE node
 fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String, Vec<SuppressionWarning>) {
+    // Clone config so we can modify it based on style directives
+    let mut config = ctx.config.clone();
+
     let mut docs = Vec::new();
     let mut batch_strings = Vec::new();
     let mut current_indent: usize = 0;
@@ -160,7 +163,19 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                     .rfind(&lc.text[..])
                                     .unwrap_or(cmd_start);
                                 let line = line_number_at_offset(source, comment_offset);
-                                tracker.process_directive(directive, line);
+
+                                // Handle style directives separately
+                                match &directive {
+                                    super::suppression::Directive::Style { key, value } => {
+                                        if let Err(msg) = config.apply_override(key, value) {
+                                            eprintln!("Warning: {}", msg);
+                                        }
+                                    }
+                                    _ => {
+                                        // Only pass suppression directives to the tracker
+                                        tracker.process_directive(directive, line);
+                                    }
+                                }
                             }
                         }
 
@@ -180,7 +195,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                         // When leading comments exist, blank_line_before handles all gaps
                         // (including before the first comment), so skip blank_line_count.
                         if blank_line_count >= 2 && (!docs.is_empty() || !batch_strings.is_empty()) && !has_emittable_leading {
-                            let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, ctx.config.max_blank_lines);
+                            let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, config.max_blank_lines);
                             for _ in 0..blank_lines_to_emit {
                                 docs.push(RcDoc::hardline());
                             }
@@ -193,7 +208,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
                             if !is_suppressed {
                                 // Skip mode: emit formatted leading comments
-                                let indent_str = indent_string(current_indent, ctx.config);
+                                let indent_str = indent_string(current_indent, &config);
                                 for lc in &leading_comments {
                                     if !trailing_comments.contains(&lc.text) {
                                         if lc.blank_line_before && (!docs.is_empty() || !batch_strings.is_empty()) {
@@ -205,7 +220,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                 }
                             } else {
                                 // Suppressed region: emit raw leading comments
-                                let indent_str = indent_string(current_indent, ctx.config);
+                                let indent_str = indent_string(current_indent, &config);
                                 for lc in &leading_comments {
                                     if !trailing_comments.contains(&lc.text) {
                                         if lc.blank_line_before && (!docs.is_empty() || !batch_strings.is_empty()) {
@@ -219,7 +234,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
                             // Emit the command itself as raw text
                             let raw_text = child_node.text().to_string();
-                            let indent_str = indent_string(current_indent, ctx.config);
+                            let indent_str = indent_string(current_indent, &config);
                             let mut raw_doc = RcDoc::text(format!("{}{}", indent_str, raw_text.trim()));
 
                             // Preserve trailing comment (not part of command node)
@@ -234,7 +249,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                         }
 
                         // Normal formatting path: emit leading comments (skip if already handled as trailing)
-                        let indent_str = indent_string(current_indent, ctx.config);
+                        let indent_str = indent_string(current_indent, &config);
                         for lc in &leading_comments {
                             // Only emit if not already handled as a trailing comment
                             if !trailing_comments.contains(&lc.text) {
@@ -287,7 +302,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
                             // Create context for this command
                             let cmd_ctx = FormatContext {
-                                config: ctx.config,
+                                config: &config,
                                 indent_level: cmd_indent,
                                 user_defs: ctx.user_defs,
                                 user_grammars: ctx.user_grammars,
@@ -306,7 +321,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
                             // Check if we should render a batch to prevent deep nesting
                             if docs.len() >= BATCH_SIZE {
-                                let batch = render_batch(std::mem::take(&mut docs), ctx.config.max_line_length);
+                                let batch = render_batch(std::mem::take(&mut docs), config.max_line_length);
                                 batch_strings.push(batch);
                             }
 
@@ -329,7 +344,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                         // Emit accumulated blank lines before error
                         // But only if not first content
                         if blank_line_count >= 2 && (!docs.is_empty() || !batch_strings.is_empty()) {
-                            let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, ctx.config.max_blank_lines);
+                            let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, config.max_blank_lines);
                             for _ in 0..blank_lines_to_emit {
                                 docs.push(RcDoc::hardline());
                             }
@@ -356,18 +371,30 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                             // Process directives in standalone comments (not leading/trailing)
                             if let Some(directive) = parse_directive(&comment_text) {
                                 let line = line_number_at_offset(source, token.text_range().start().into());
-                                tracker.process_directive(directive, line);
+
+                                // Handle style directives separately
+                                match &directive {
+                                    super::suppression::Directive::Style { key, value } => {
+                                        if let Err(msg) = config.apply_override(key, value) {
+                                            eprintln!("Warning: {}", msg);
+                                        }
+                                    }
+                                    _ => {
+                                        // Only pass suppression directives to the tracker
+                                        tracker.process_directive(directive, line);
+                                    }
+                                }
                             }
                             // Emit accumulated blank lines before standalone comment
                             // But only if not first content
                             if blank_line_count >= 2 && (!docs.is_empty() || !batch_strings.is_empty()) {
-                                let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, ctx.config.max_blank_lines);
+                                let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, config.max_blank_lines);
                                 for _ in 0..blank_lines_to_emit {
                                     docs.push(RcDoc::hardline());
                                 }
                             }
 
-                            let indent_str = indent_string(current_indent, ctx.config);
+                            let indent_str = indent_string(current_indent, &config);
                             docs.push(RcDoc::text(format!("{}{}", indent_str, comment_text)));
                             docs.push(RcDoc::hardline());
                             blank_line_count = 0;
@@ -396,7 +423,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
     // Render any remaining docs in the final batch
     if !docs.is_empty() {
-        let batch = render_batch(docs, ctx.config.max_line_length);
+        let batch = render_batch(docs, config.max_line_length);
         batch_strings.push(batch);
     }
 
