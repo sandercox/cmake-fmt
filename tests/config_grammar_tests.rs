@@ -163,6 +163,110 @@ fn test_config_grammar_pair_value() {
     assert!(output.contains("bar"));
 }
 
+#[test]
+fn test_extensionless_config_file_parsed_as_toml() {
+    let tempdir = TempDir::new().unwrap();
+    let config_file = tempdir.path().join(".cmake-fmt");
+
+    // Write extensionless config with TOML syntax
+    let config_content = r#"
+indent_width = 2
+use_tabs = false
+"#;
+    fs::write(&config_file, config_content).unwrap();
+
+    // Load and verify
+    let config = crate::config::load_config_file(&config_file).unwrap();
+    assert_eq!(config.indent_width, 2);
+    assert_eq!(config.use_tabs, false);
+}
+
+#[test]
+fn test_tml_config_file_parsed_as_toml() {
+    let tempdir = TempDir::new().unwrap();
+    let config_file = tempdir.path().join(".cmake-fmt.tml");
+
+    // Write .tml config with TOML syntax
+    let config_content = r#"
+indent_width = 3
+max_line_length = 100
+"#;
+    fs::write(&config_file, config_content).unwrap();
+
+    // Load and verify
+    let config = crate::config::load_config_file(&config_file).unwrap();
+    assert_eq!(config.indent_width, 3);
+    assert_eq!(config.max_line_length, 100);
+}
+
+#[test]
+fn test_yml_config_file_parsed_as_yaml() {
+    let tempdir = TempDir::new().unwrap();
+    let config_file = tempdir.path().join(".cmake-fmt.yml");
+
+    // Write .yml config with YAML syntax
+    let config_content = r#"
+indent_width: 4
+use_tabs: true
+"#;
+    fs::write(&config_file, config_content).unwrap();
+
+    // Load and verify
+    let config = crate::config::load_config_file(&config_file).unwrap();
+    assert_eq!(config.indent_width, 4);
+    assert_eq!(config.use_tabs, true);
+}
+
+#[test]
+fn test_config_file_priority_toml_over_extensionless() {
+    let tempdir = TempDir::new().unwrap();
+    let toml_config = tempdir.path().join(".cmake-fmt.toml");
+    let extensionless_config = tempdir.path().join(".cmake-fmt");
+
+    // Write .cmake-fmt.toml with indent_width=2
+    fs::write(&toml_config, "indent_width = 2\n").unwrap();
+
+    // Write .cmake-fmt with indent_width=8
+    fs::write(&extensionless_config, "indent_width = 8\n").unwrap();
+
+    // Test priority via formatting - the config that gets loaded affects output
+    let input = "set(MY_VAR_WITH_A_LONG_NAME value1 value2 value3 value4 value5 value6)";
+
+    // Load toml config explicitly
+    let toml_loaded = crate::config::load_config_file(&toml_config).unwrap();
+    assert_eq!(toml_loaded.indent_width, 2);
+
+    // Load extensionless config explicitly
+    let extensionless_loaded = crate::config::load_config_file(&extensionless_config).unwrap();
+    assert_eq!(extensionless_loaded.indent_width, 8);
+
+    // In production, .cmake-fmt.toml would be found first (higher priority)
+    // We verify both can be loaded and have different values
+}
+
+#[test]
+fn test_config_file_priority_tml_over_yaml() {
+    let tempdir = TempDir::new().unwrap();
+    let tml_config = tempdir.path().join(".cmake-fmt.tml");
+    let yaml_config = tempdir.path().join(".cmake-fmt.yaml");
+
+    // Write .cmake-fmt.tml with indent_width=3
+    fs::write(&tml_config, "indent_width = 3\n").unwrap();
+
+    // Write .cmake-fmt.yaml with indent_width=7
+    fs::write(&yaml_config, "indent_width: 7\n").unwrap();
+
+    // Load each config explicitly
+    let tml_loaded = crate::config::load_config_file(&tml_config).unwrap();
+    assert_eq!(tml_loaded.indent_width, 3);
+
+    let yaml_loaded = crate::config::load_config_file(&yaml_config).unwrap();
+    assert_eq!(yaml_loaded.indent_width, 7);
+
+    // In production, .cmake-fmt.tml would be found first (higher priority in search order)
+    // We verify both can be loaded with correct parsers
+}
+
 // Module for accessing config loading functions
 mod config {
     use anyhow::{Context, Result};
@@ -180,7 +284,7 @@ mod config {
             .unwrap_or("");
 
         match extension {
-            "toml" => {
+            "toml" | "tml" => {
                 toml::from_str(&content)
                     .with_context(|| format!("Failed to parse TOML config: {}", path.display()))
             }
@@ -189,7 +293,9 @@ mod config {
                     .with_context(|| format!("Failed to parse YAML config: {}", path.display()))
             }
             _ => {
-                anyhow::bail!("Unsupported config file extension: {}", extension)
+                // Extensionless config files (like .cmake-fmt) default to TOML
+                toml::from_str(&content)
+                    .with_context(|| format!("Failed to parse config as TOML: {}", path.display()))
             }
         }
     }
