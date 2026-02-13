@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 const CONFIG_FILENAMES: &[&str] = &[
     ".cmake-fmt.toml",
     ".cmake-fmt.tml",
-    ".cmake-fmt",
     ".cmake-fmt.yaml",
     ".cmake-fmt.yml",
+    ".cmake-fmt",
 ];
 
 /// Find the project root by walking up the directory tree looking for a config file
@@ -18,9 +18,9 @@ const CONFIG_FILENAMES: &[&str] = &[
 /// Searches for config files in this priority order:
 /// 1. `.cmake-fmt.toml` (TOML)
 /// 2. `.cmake-fmt.tml` (TOML shorthand)
-/// 3. `.cmake-fmt` (extensionless, parsed as TOML)
-/// 4. `.cmake-fmt.yaml` (YAML)
-/// 5. `.cmake-fmt.yml` (YAML shorthand)
+/// 3. `.cmake-fmt.yaml` (YAML)
+/// 4. `.cmake-fmt.yml` (YAML shorthand)
+/// 5. `.cmake-fmt` (extensionless, parsed as YAML)
 ///
 /// Returns the directory containing the config file, or the start_path if none found
 pub fn find_project_root(start_path: &Path) -> PathBuf {

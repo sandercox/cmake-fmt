@@ -164,15 +164,12 @@ fn test_config_grammar_pair_value() {
 }
 
 #[test]
-fn test_extensionless_config_file_parsed_as_toml() {
+fn test_extensionless_config_file_parsed_as_yaml() {
     let tempdir = TempDir::new().unwrap();
     let config_file = tempdir.path().join(".cmake-fmt");
 
-    // Write extensionless config with TOML syntax
-    let config_content = r#"
-indent_width = 2
-use_tabs = false
-"#;
+    // Write extensionless config with YAML syntax (like clang-format)
+    let config_content = "indent_width: 2\nuse_tabs: false\n";
     fs::write(&config_file, config_content).unwrap();
 
     // Load and verify
@@ -226,8 +223,8 @@ fn test_config_file_priority_toml_over_extensionless() {
     // Write .cmake-fmt.toml with indent_width=2
     fs::write(&toml_config, "indent_width = 2\n").unwrap();
 
-    // Write .cmake-fmt with indent_width=8
-    fs::write(&extensionless_config, "indent_width = 8\n").unwrap();
+    // Write .cmake-fmt with indent_width=8 (YAML format)
+    fs::write(&extensionless_config, "indent_width: 8\n").unwrap();
 
     // Test priority via formatting - the config that gets loaded affects output
     let input = "set(MY_VAR_WITH_A_LONG_NAME value1 value2 value3 value4 value5 value6)";
@@ -293,9 +290,9 @@ mod config {
                     .with_context(|| format!("Failed to parse YAML config: {}", path.display()))
             }
             _ => {
-                // Extensionless config files (like .cmake-fmt) default to TOML
-                toml::from_str(&content)
-                    .with_context(|| format!("Failed to parse config as TOML: {}", path.display()))
+                // Extensionless config files (like .cmake-fmt) default to YAML
+                serde_yml::from_str(&content)
+                    .with_context(|| format!("Failed to parse config as YAML: {}", path.display()))
             }
         }
     }

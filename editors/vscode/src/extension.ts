@@ -29,11 +29,11 @@ function configureTaploSchema(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration('evenBetterToml');
   const associations: Record<string, string> = config.get('schema.associations') ?? {};
 
-  // File patterns for cmake-fmt config files (regex matched against file path)
+  // File patterns for cmake-fmt TOML config files (regex matched against file path)
+  // Extensionless .cmake-fmt is YAML, so not included here
   const patterns = [
     '\\.cmake-fmt\\.toml$',
     '\\.cmake-fmt\\.tml$',
-    '(^|/)\\.cmake-fmt$',
   ];
 
   let needsUpdate = false;
