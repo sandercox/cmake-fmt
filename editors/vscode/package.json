@@ -1,0 +1,50 @@
+{
+  "name": "cmake-fmt",
+  "displayName": "CMake Format",
+  "description": "Fast CMake formatter with grammar-aware formatting",
+  "version": "0.1.0",
+  "publisher": "cmake-fmt",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Formatters"
+  ],
+  "activationEvents": [
+    "onLanguage:cmake"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "CMake Format",
+      "properties": {
+        "cmakeFmt.binaryPath": {
+          "type": "string",
+          "default": "cmake-fmt",
+          "markdownDescription": "Path to the `cmake-fmt` binary. Can be an absolute path or a command in PATH.",
+          "scope": "machine-overridable"
+        },
+        "cmakeFmt.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable cmake-fmt formatting",
+          "scope": "resource"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.105.0",
+    "@types/node": "20.x",
+    "typescript": "^5.7.0",
+    "esbuild": "^0.24.0",
+    "@vscode/vsce": "^3.0.0"
+  }
+}
