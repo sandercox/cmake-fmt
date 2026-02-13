@@ -1,0 +1,100 @@
+name: Build VSIX
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-vsix:
+    name: Build ${{ matrix.vscode_target }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - vscode_target: linux-x64
+            rust_target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - vscode_target: linux-arm64
+            rust_target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+          - vscode_target: darwin-x64
+            rust_target: x86_64-apple-darwin
+            os: macos-latest
+            cross: true
+          - vscode_target: darwin-arm64
+            rust_target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+          - vscode_target: win32-x64
+            rust_target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+          - vscode_target: win32-arm64
+            rust_target: aarch64-pc-windows-msvc
+            os: windows-latest
+            cross: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: target/
+          key: rust-${{ matrix.rust_target }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-${{ matrix.rust_target }}-
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: runner.os == 'Linux' && matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Build Rust binary
+        run: cargo build --release --target ${{ matrix.rust_target }}
+
+      - name: Prepare extension binary
+        run: |
+          mkdir -p editors/vscode/bin
+          if [[ "${{ matrix.vscode_target }}" == win32-* ]]; then
+            cp "target/${{ matrix.rust_target }}/release/cmake-fmt.exe" editors/vscode/bin/
+          else
+            cp "target/${{ matrix.rust_target }}/release/cmake-fmt" editors/vscode/bin/
+            if [[ "${{ matrix.vscode_target }}" == "linux-arm64" ]]; then
+              aarch64-linux-gnu-strip editors/vscode/bin/cmake-fmt || true
+            else
+              strip editors/vscode/bin/cmake-fmt || true
+            fi
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install npm dependencies
+        run: npm --prefix editors/vscode install
+
+      - name: Package VSIX
+        run: cd editors/vscode && npx @vscode/vsce package --target ${{ matrix.vscode_target }}
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.vscode_target }}
+          path: editors/vscode/*.vsix
