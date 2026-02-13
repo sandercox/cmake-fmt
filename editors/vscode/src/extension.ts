@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { CMakeFormattingProvider, CMakeRangeFormattingProvider } from './formatter';
+import { createDiagnosticsProvider } from './diagnostics';
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('cmake-fmt extension activated');
@@ -21,15 +22,20 @@ export function activate(context: vscode.ExtensionContext) {
     cmakeRangeFormattingProvider
   );
 
+  // Register diagnostics for cmake-fmt directives in CMake files
+  createDiagnosticsProvider(context);
+
   context.subscriptions.push(fullDocDisposable, rangeDisposable);
 }
 
 function configureTaploSchema(context: vscode.ExtensionContext) {
-  const schemaPath = vscode.Uri.joinPath(context.extensionUri, 'schemas', 'cmake-fmt.schema.json').toString();
+  const schemaUri = vscode.Uri.joinPath(context.extensionUri, 'schemas', 'cmake-fmt.schema.json');
+  // Taplo needs file:// URI, not vscode-file:// URI
+  const schemaPath = schemaUri.scheme === 'file' ? schemaUri.toString() : schemaUri.fsPath;
   const config = vscode.workspace.getConfiguration('evenBetterToml');
   const associations: Record<string, string> = config.get('schema.associations') ?? {};
 
-  // File patterns for cmake-fmt TOML config files (regex matched against file path)
+  // File patterns for cmake-fmt TOML config files (regex matched against document URI)
   // Extensionless .cmake-fmt is YAML, so not included here
   const patterns = [
     '\\.cmake-fmt\\.toml$',

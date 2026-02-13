@@ -11,7 +11,9 @@
     "Formatters"
   ],
   "activationEvents": [
-    "onLanguage:cmake"
+    "onLanguage:cmake",
+    "onLanguage:toml",
+    "onLanguage:yaml"
   ],
   "main": "./dist/extension.js",
   "contributes": {
