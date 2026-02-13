@@ -4,7 +4,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use cmake_fmt::formatter::{format_text_with_diagnostics, format_text_with_diagnostics_and_path, FormatConfig, SuppressionWarning};
+use cmake_fmt::formatter::{format_text_with_diagnostics_and_path, FormatConfig, SuppressionWarning};
 
 /// Format CMake files
 #[derive(Parser)]
@@ -61,6 +61,10 @@ pub struct Cli {
     /// Show grammar file format and keyword types
     #[arg(long = "help-grammar", display_order = 901)]
     pub help_grammar: bool,
+
+    /// Treat stdin as if formatting this file (resolves config/grammar from its path)
+    #[arg(long = "assume-filename", value_name = "PATH")]
+    pub assume_filename: Option<PathBuf>,
 }
 
 /// Print suppression warnings to stderr
@@ -317,6 +321,12 @@ pub fn run() -> Result<ExitCode> {
     // Determine if we're processing stdin or files
     let is_stdin = cli.files.is_empty() || (cli.files.len() == 1 && cli.files[0] == PathBuf::from("-"));
 
+    // Validate --assume-filename is only used with stdin
+    if cli.assume_filename.is_some() && !is_stdin {
+        eprintln!("error: --assume-filename can only be used with stdin input");
+        return Ok(ExitCode::FAILURE);
+    }
+
     if is_stdin {
         // Handle --export-grammar with stdin (error)
         if cli.export_grammar.is_some() {
@@ -324,9 +334,18 @@ pub fn run() -> Result<ExitCode> {
             return Ok(ExitCode::FAILURE);
         }
 
-        // For stdin, resolve config from current directory
-        let config = crate::config::resolve_config(None, cli.style.as_deref(), &cli.grammar_files);
-        process_stdin(&config, check_mode, diff_mode)
+        // Canonicalize assume_filename if provided
+        let assume_path = cli.assume_filename.as_ref().map(|p| {
+            if p.is_relative() {
+                std::env::current_dir().unwrap_or_default().join(p)
+            } else {
+                p.clone()
+            }
+        });
+
+        // For stdin, resolve config from assume_filename path or current directory
+        let config = crate::config::resolve_config(assume_path.as_deref(), cli.style.as_deref(), &cli.grammar_files);
+        process_stdin(&config, check_mode, diff_mode, assume_path.as_deref())
     } else {
         // Expand glob patterns
         let expanded = expand_files(&cli.files)?;
@@ -399,25 +418,33 @@ fn expand_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 }
 
 /// Process stdin to stdout
-fn process_stdin(config: &FormatConfig, check_mode: bool, diff_mode: bool) -> Result<ExitCode> {
+fn process_stdin(
+    config: &FormatConfig,
+    check_mode: bool,
+    diff_mode: bool,
+    assume_path: Option<&std::path::Path>,
+) -> Result<ExitCode> {
     use std::io::{stdin, stdout, Read, Write};
 
     let mut input = String::new();
     stdin().lock().read_to_string(&mut input)?;
 
-    let (formatted, warnings) = format_text_with_diagnostics(&input, config);
-    print_warnings(&warnings, "stdin");
+    let (formatted, warnings) = format_text_with_diagnostics_and_path(&input, config, assume_path, false);
+    let label = assume_path
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "stdin".to_string());
+    print_warnings(&warnings, &label);
 
     if diff_mode {
         if input != formatted {
-            cmake_fmt::diff::print_colored_diff(&input, &formatted, "stdin");
+            cmake_fmt::diff::print_colored_diff(&input, &formatted, &label);
             Ok(ExitCode::from(1))
         } else {
             Ok(ExitCode::SUCCESS)
         }
     } else if check_mode {
         if input != formatted {
-            eprintln!("Would reformat: stdin");
+            eprintln!("Would reformat: {}", label);
             Ok(ExitCode::from(1))
         } else {
             Ok(ExitCode::SUCCESS)
