@@ -40,7 +40,7 @@
         "cmakeFmt.binaryPath": {
           "type": "string",
           "default": "cmake-fmt",
-          "markdownDescription": "Path to the `cmake-fmt` binary. Can be an absolute path or a command in PATH.",
+          "markdownDescription": "Path to the `cmake-fmt` binary. When set to the default (`cmake-fmt`), the extension uses the bundled binary. Set an absolute path or command name to override.",
           "scope": "resource"
         },
         "cmakeFmt.enable": {

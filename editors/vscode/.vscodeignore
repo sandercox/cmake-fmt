@@ -6,3 +6,4 @@ out/**
 tsconfig.json
 esbuild.js
 **/*.map
+scripts/**

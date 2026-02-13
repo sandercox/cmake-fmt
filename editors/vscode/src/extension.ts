@@ -1,9 +1,12 @@
 import * as vscode from 'vscode';
-import { CMakeFormattingProvider, CMakeRangeFormattingProvider } from './formatter';
+import { CMakeFormattingProvider, CMakeRangeFormattingProvider, initFormatter } from './formatter';
 import { createDiagnosticsProvider } from './diagnostics';
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('cmake-fmt extension activated');
+
+  // Resolve cmake-fmt binary (bundled or user-configured)
+  initFormatter(context.extensionPath);
 
   // Configure TOML schema association for Even Better TOML extension (taplo)
   configureTaploSchema(context);

@@ -1,6 +1,51 @@
 import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
+
+let resolvedBinaryPath: string = 'cmake-fmt';
+
+/**
+ * Resolves the cmake-fmt binary path with priority:
+ * 1. User-configured cmakeFmt.binaryPath (if changed from default)
+ * 2. Bundled binary at <extensionPath>/bin/cmake-fmt[.exe]
+ * 3. Bare "cmake-fmt" (PATH fallback)
+ */
+export function initFormatter(extensionPath: string): void {
+  function resolve(): void {
+    const config = vscode.workspace.getConfiguration('cmakeFmt');
+    const configured = config.get<string>('binaryPath', 'cmake-fmt');
+
+    // If user has set a custom path, use it
+    if (configured !== 'cmake-fmt') {
+      resolvedBinaryPath = path.normalize(configured);
+      return;
+    }
+
+    // Try bundled binary
+    const ext = process.platform === 'win32' ? '.exe' : '';
+    const bundledPath = path.join(extensionPath, 'bin', `cmake-fmt${ext}`);
+
+    if (fs.existsSync(bundledPath)) {
+      if (process.platform !== 'win32') {
+        fs.chmodSync(bundledPath, 0o755);
+      }
+      resolvedBinaryPath = bundledPath;
+      return;
+    }
+
+    // Fall back to PATH
+    resolvedBinaryPath = 'cmake-fmt';
+  }
+
+  resolve();
+
+  vscode.workspace.onDidChangeConfiguration((e) => {
+    if (e.affectsConfiguration('cmakeFmt.binaryPath')) {
+      resolve();
+    }
+  });
+}
 
 /**
  * Shared CLI formatting function used by both full-document and range providers.
@@ -12,11 +57,8 @@ async function formatWithCli(
   token: vscode.CancellationToken
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const config = vscode.workspace.getConfiguration('cmakeFmt');
-    const binaryPath = path.normalize(config.get<string>('binaryPath', 'cmake-fmt'));
-
     // Spawn cmake-fmt with provided arguments
-    const childProcess = spawn(binaryPath, args);
+    const childProcess = spawn(resolvedBinaryPath, args);
 
     let stdout = '';
     let stderr = '';
