@@ -78,13 +78,17 @@ pub fn format_cst(
 }
 
 /// Render a batch of docs to a String
+///
+/// `width` is the target line length. A value of 0 means unlimited (never wrap).
 fn render_batch(docs: Vec<RcDoc<'static, ()>>, width: usize) -> String {
     if docs.is_empty() {
         return String::new();
     }
     let doc = RcDoc::concat(docs);
     let mut output = Vec::new();
-    doc.render(width, &mut output)
+    // 0 means unlimited — use usize::MAX so the pretty printer never wraps
+    let effective_width = if width == 0 { usize::MAX } else { width };
+    doc.render(effective_width, &mut output)
         .expect("rendering to Vec should not fail");
     String::from_utf8(output)
         .expect("formatted output should be valid UTF-8")

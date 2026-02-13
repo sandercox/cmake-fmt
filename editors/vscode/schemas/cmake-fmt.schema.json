@@ -8,8 +8,8 @@
     "max_line_length": {
       "type": "integer",
       "default": 80,
-      "minimum": 1,
-      "description": "Maximum line length before wrapping"
+      "minimum": 0,
+      "description": "Maximum line length before wrapping. Set to 0 for unlimited (never wrap)."
     },
     "indent_width": {
       "type": "integer",

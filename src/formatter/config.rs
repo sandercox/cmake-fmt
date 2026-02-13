@@ -5,7 +5,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct FormatConfig {
-    /// Maximum line length before breaking (default: 80)
+    /// Maximum line length before breaking (default: 80, 0 = unlimited)
     pub max_line_length: usize,
     /// Number of spaces/tabs per indent level (default: 4)
     pub indent_width: usize,

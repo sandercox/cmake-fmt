@@ -108,7 +108,7 @@ function validateDirective(
       if (!/^\d+$/.test(value)) {
         diagnostics.push(new vscode.Diagnostic(
           valRange,
-          `Invalid value for '${key}': expected a positive integer, got '${value}'`,
+          `Invalid value for '${key}': expected a non-negative integer, got '${value}'`,
           vscode.DiagnosticSeverity.Error,
         ));
       }
