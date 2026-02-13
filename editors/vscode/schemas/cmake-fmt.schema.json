@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "cmake-fmt Configuration",
+  "description": "Configuration schema for cmake-fmt formatter. Supports both TOML and YAML formats. For TOML validation in VS Code, configure the Even Better TOML extension (tamasfe.even-better-toml) with evenBetterToml.schema.associations in workspace settings. YAML validation is automatically enabled for .cmake-fmt.yaml and .cmake-fmt.yml files.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "max_line_length": {
+      "type": "integer",
+      "default": 80,
+      "minimum": 1,
+      "description": "Maximum line length before wrapping"
+    },
+    "indent_width": {
+      "type": "integer",
+      "default": 4,
+      "minimum": 0,
+      "description": "Spaces per indent level"
+    },
+    "use_tabs": {
+      "type": "boolean",
+      "default": true,
+      "description": "Use tabs instead of spaces for indentation"
+    },
+    "command_case": {
+      "type": "string",
+      "enum": ["lowercase", "uppercase", "leave"],
+      "default": "lowercase",
+      "description": "Builtin command name casing transformation"
+    },
+    "user_command_case": {
+      "type": "string",
+      "enum": ["lowercase", "uppercase", "leave", "infer"],
+      "default": "infer",
+      "description": "User-defined command name casing. 'infer' analyzes function()/macro() definitions to determine casing."
+    },
+    "max_blank_lines": {
+      "type": "integer",
+      "default": 1,
+      "minimum": 0,
+      "description": "Maximum consecutive blank lines allowed"
+    },
+    "line_ending": {
+      "type": "string",
+      "enum": ["auto", "lf", "crlf"],
+      "default": "auto",
+      "description": "Line ending style. 'auto' detects from input (majority wins, defaults to LF)."
+    },
+    "closing_style": {
+      "type": "string",
+      "enum": ["leave", "remove", "force"],
+      "default": "remove",
+      "description": "Block closer argument handling. 'leave' preserves arguments, 'remove' strips them (modernize), 'force' adds them to match openers."
+    },
+    "force_break_keywords": {
+      "type": "boolean",
+      "default": false,
+      "description": "Force keyword-aware commands to use multiline layout regardless of line length"
+    },
+    "source_grouping": {
+      "type": "string",
+      "enum": ["none", "headers_first", "sources_first"],
+      "default": "none",
+      "description": "Source file grouping mode for .h/.cpp pairs. 'none' puts each file on its own line, 'headers_first' and 'sources_first' group pairs on the same line."
+    },
+    "grammar_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "External grammar file paths to import. Paths can be relative to config file or absolute."
+    },
+    "command_grammars": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/commandGrammar"
+      },
+      "description": "Manual command grammar definitions. Map of command name to grammar configuration."
+    }
+  },
+  "$defs": {
+    "commandGrammar": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Flag keywords (no values consumed, e.g., REQUIRED, OPTIONAL)"
+        },
+        "one_value_keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Single-value keywords (consumes exactly one value, e.g., VERSION, DESTINATION)"
+        },
+        "multi_value_keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Multi-value keywords (consumes values until next keyword, e.g., FILES, TARGETS)"
+        },
+        "pair_value_keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Pair-value keywords (consumes alternating key/value pairs, e.g., PROPERTIES)"
+        },
+        "bin_pack_keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Bin-pack keywords (packs values to fill lines, e.g., SOURCES for compact lists)"
+        }
+      }
+    }
+  }
+}
