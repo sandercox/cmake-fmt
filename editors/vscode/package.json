@@ -15,6 +15,23 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "languages": [
+      {
+        "id": "toml",
+        "filenames": [".cmake-fmt"],
+        "filenamePatterns": ["*.cmake-fmt.toml", "*.cmake-fmt.tml"]
+      },
+      {
+        "id": "yaml",
+        "filenamePatterns": ["*.cmake-fmt.yaml", "*.cmake-fmt.yml"]
+      }
+    ],
+    "yamlValidation": [
+      {
+        "fileMatch": ["*.cmake-fmt.yaml", "*.cmake-fmt.yml"],
+        "url": "./schemas/cmake-fmt.schema.json"
+      }
+    ],
     "configuration": {
       "title": "CMake Format",
       "properties": {
