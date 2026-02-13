@@ -22,7 +22,7 @@
           "type": "string",
           "default": "cmake-fmt",
           "markdownDescription": "Path to the `cmake-fmt` binary. Can be an absolute path or a command in PATH.",
-          "scope": "machine-overridable"
+          "scope": "resource"
         },
         "cmakeFmt.enable": {
           "type": "boolean",
