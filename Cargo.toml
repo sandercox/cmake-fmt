@@ -24,6 +24,7 @@ supports-color = "3.0"
 enable-ansi-support = "0.2"
 console = "0.16.2"
 ignore = "0.4"
+rayon = "1.11"
 
 [dev-dependencies]
 insta = { version = "1.46", features = ["yaml", "glob"] }

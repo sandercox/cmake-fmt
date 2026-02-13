@@ -3,6 +3,9 @@ use clap::Parser;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use rayon::prelude::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use cmake_fmt::formatter::{format_text_with_diagnostics_and_path, FormatConfig, SuppressionWarning};
 
@@ -469,50 +472,149 @@ fn process_files(
     use std::io::{stdout, Write};
     use std::collections::HashMap;
 
-    let mut any_need_formatting = false;
-    let mut stdout_handle = if !in_place && !check_mode && !diff_mode {
-        Some(stdout().lock())
+    // Detect stdout mode - this must remain sequential to avoid interleaved output
+    let stdout_mode = !in_place && !check_mode && !diff_mode;
+
+    if stdout_mode {
+        // SEQUENTIAL PATH: stdout mode
+        let mut stdout_handle = stdout().lock();
+        let mut config_cache: HashMap<PathBuf, FormatConfig> = HashMap::new();
+
+        for file in files {
+            // Validate file exists
+            if !file.exists() {
+                eprintln!("Warning: File not found: {}", file.display());
+                continue;
+            }
+
+            if !file.is_file() {
+                eprintln!("Warning: Not a file: {}", file.display());
+                continue;
+            }
+
+            // Resolve config for this file (using cache for efficiency)
+            let parent = file.parent().unwrap_or_else(|| std::path::Path::new("."));
+            let config = config_cache.entry(parent.to_path_buf()).or_insert_with(|| {
+                crate::config::resolve_config(Some(file), style_override, grammar_files)
+            });
+
+            // Format and write to stdout
+            let content = std::fs::read_to_string(file)?;
+            let (formatted, warnings) = format_text_with_diagnostics_and_path(&content, config, Some(file.as_path()), verbose);
+            print_warnings(&warnings, &file.display().to_string());
+            write!(stdout_handle, "{}", formatted)?;
+        }
+
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    // PARALLEL PATH: in-place, check, or diff mode
+
+    // Step 1: Pre-populate config cache (by parent directory)
+    let mut config_cache: HashMap<PathBuf, FormatConfig> = HashMap::new();
+    for file in files {
+        let parent = file.parent().unwrap_or_else(|| std::path::Path::new(".")).to_path_buf();
+        config_cache.entry(parent).or_insert_with(|| {
+            crate::config::resolve_config(Some(file), style_override, grammar_files)
+        });
+    }
+    let config_cache = Arc::new(config_cache);
+
+    // Step 2: Pre-populate grammar cache (deduplicate by project root)
+    let mut project_roots = std::collections::HashSet::new();
+    for file in files {
+        if file.exists() && file.is_file() {
+            let parent = file.parent().unwrap_or_else(|| std::path::Path::new("."));
+            let project_root = cmake_fmt::formatter::grammar::user_scanner::find_project_root(parent);
+            project_roots.insert(project_root);
+        }
+    }
+
+    // Populate grammar cache for each unique project root
+    for project_root in &project_roots {
+        let _ = cmake_fmt::formatter::grammar::get_project_user_grammars(project_root, verbose);
+    }
+
+    // Step 3: Determine if we should use parallel processing
+    let use_parallel = files.len() >= 4;
+
+    // Step 4: Setup progress tracking (only if parallel and enough files)
+    let total = files.len();
+    let completed = Arc::new(AtomicUsize::new(0));
+
+    let progress_handle = if use_parallel {
+        let progress_counter = Arc::clone(&completed);
+        Some(std::thread::spawn(move || {
+            loop {
+                let current = progress_counter.load(Ordering::Relaxed);
+                if current >= total {
+                    break;
+                }
+                eprint!("\rFormatting {}/{} files", current, total);
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            eprintln!("\rFormatted {}/{} files   ", total, total);
+        }))
     } else {
         None
     };
 
-    // Cache configs by parent directory to avoid redundant file system walks
-    let mut config_cache: HashMap<PathBuf, FormatConfig> = HashMap::new();
+    // Step 5: Process files (parallel or sequential based on threshold)
+    let diff_lock = Arc::new(std::sync::Mutex::new(()));
 
-    for file in files {
+    let process_file_closure = |file: &PathBuf| -> Result<bool> {
         // Validate file exists
         if !file.exists() {
             eprintln!("Warning: File not found: {}", file.display());
-            continue;
+            completed.fetch_add(1, Ordering::Relaxed);
+            return Ok(false);
         }
 
         if !file.is_file() {
             eprintln!("Warning: Not a file: {}", file.display());
-            continue;
+            completed.fetch_add(1, Ordering::Relaxed);
+            return Ok(false);
         }
 
-        // Resolve config for this file (using cache for efficiency)
+        // Look up config from pre-populated cache
         let parent = file.parent().unwrap_or_else(|| std::path::Path::new("."));
-        let config = config_cache.entry(parent.to_path_buf()).or_insert_with(|| {
-            crate::config::resolve_config(Some(file), style_override, grammar_files)
-        });
+        let config = config_cache.get(&parent.to_path_buf())
+            .expect("Config should be pre-populated");
 
-        match process_file(file, config, in_place, check_mode, diff_mode, verbose) {
+        // For diff mode, serialize output to prevent interleaving
+        let result = if diff_mode {
+            let _guard = diff_lock.lock().unwrap();
+            process_file(file, config, in_place, check_mode, diff_mode, verbose)
+        } else {
+            process_file(file, config, in_place, check_mode, diff_mode, verbose)
+        };
+
+        completed.fetch_add(1, Ordering::Relaxed);
+        result
+    };
+
+    let results: Vec<Result<bool>> = if use_parallel {
+        files.par_iter().map(process_file_closure).collect()
+    } else {
+        files.iter().map(process_file_closure).collect()
+    };
+
+    // Step 6: Wait for progress thread to complete
+    if let Some(handle) = progress_handle {
+        handle.join().unwrap();
+    }
+
+    // Step 7: Aggregate results
+    let mut any_need_formatting = false;
+    for result in results {
+        match result {
             Ok(needs_formatting) => {
                 if needs_formatting {
                     any_need_formatting = true;
                 }
-
-                // If default mode (stdout), write the formatted content
-                if let Some(ref mut handle) = stdout_handle {
-                    let content = std::fs::read_to_string(file)?;
-                    let (formatted, warnings) = format_text_with_diagnostics_and_path(&content, config, Some(file.as_path()), verbose);
-                    print_warnings(&warnings, &file.display().to_string());
-                    write!(handle, "{}", formatted)?;
-                }
             }
             Err(e) => {
-                eprintln!("Error processing {}: {:#}", file.display(), e);
+                eprintln!("Error processing file: {:#}", e);
             }
         }
     }
