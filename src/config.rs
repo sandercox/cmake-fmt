@@ -3,22 +3,34 @@ use cmake_fmt::formatter::FormatConfig;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Supported config file names in priority order
+///
+/// TOML variants are checked first, then YAML variants
+const CONFIG_FILENAMES: &[&str] = &[
+    ".cmake-fmt.toml",
+    ".cmake-fmt.tml",
+    ".cmake-fmt",
+    ".cmake-fmt.yaml",
+    ".cmake-fmt.yml",
+];
+
 /// Find a config file by walking up the directory tree
 ///
-/// Searches for `.cmake-fmt.toml` first, then `.cmake-fmt.yaml`
+/// Searches for config files in this priority order:
+/// 1. `.cmake-fmt.toml` (TOML)
+/// 2. `.cmake-fmt.tml` (TOML shorthand)
+/// 3. `.cmake-fmt` (extensionless, parsed as TOML)
+/// 4. `.cmake-fmt.yaml` (YAML)
+/// 5. `.cmake-fmt.yml` (YAML shorthand)
+///
 /// Returns the first config file found, or None if no config file exists
 pub fn find_config_file(start_dir: &Path) -> Option<PathBuf> {
     for ancestor in start_dir.ancestors() {
-        // Check for TOML config first
-        let toml_path = ancestor.join(".cmake-fmt.toml");
-        if toml_path.exists() && toml_path.is_file() {
-            return Some(toml_path);
-        }
-
-        // Check for YAML config
-        let yaml_path = ancestor.join(".cmake-fmt.yaml");
-        if yaml_path.exists() && yaml_path.is_file() {
-            return Some(yaml_path);
+        for filename in CONFIG_FILENAMES {
+            let config_path = ancestor.join(filename);
+            if config_path.exists() && config_path.is_file() {
+                return Some(config_path);
+            }
         }
     }
     None
@@ -26,7 +38,7 @@ pub fn find_config_file(start_dir: &Path) -> Option<PathBuf> {
 
 /// Load a config file from disk
 ///
-/// Supports both TOML (.toml) and YAML (.yaml, .yml) formats
+/// Supports TOML (.toml, .tml, extensionless) and YAML (.yaml, .yml) formats
 pub fn load_config_file(path: &Path) -> Result<FormatConfig> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read config file: {}", path.display()))?;
@@ -38,7 +50,7 @@ pub fn load_config_file(path: &Path) -> Result<FormatConfig> {
         .unwrap_or("");
 
     match extension {
-        "toml" => {
+        "toml" | "tml" => {
             toml::from_str(&content)
                 .with_context(|| format!("Failed to parse TOML config: {}", path.display()))
         }
@@ -47,7 +59,9 @@ pub fn load_config_file(path: &Path) -> Result<FormatConfig> {
                 .with_context(|| format!("Failed to parse YAML config: {}", path.display()))
         }
         _ => {
-            anyhow::bail!("Unsupported config file extension: {}", extension)
+            // Extensionless config files (like .cmake-fmt) default to TOML
+            toml::from_str(&content)
+                .with_context(|| format!("Failed to parse config as TOML: {}", path.display()))
         }
     }
 }

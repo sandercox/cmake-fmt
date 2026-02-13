@@ -83,7 +83,7 @@ fn print_warnings(warnings: &[SuppressionWarning], file_label: &str) {
 
 /// Print all available style settings
 fn print_style_help() {
-    println!("Available style settings for --style and config files (.cmake-fmt.toml / .cmake-fmt.yaml):");
+    println!("Available style settings for --style and config files (.cmake-fmt.toml / .cmake-fmt.yaml / .cmake-fmt):");
     println!();
     println!("  {:<25} {:<15} {:<15} {}", "Setting", "Type", "Default", "Values");
     println!("  {:<25} {:<15} {:<15} {}", "-------", "----", "-------", "------");
