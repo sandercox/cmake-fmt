@@ -6,6 +6,7 @@ mod cmake_rules;
 mod comments;
 mod suppression;
 mod user_commands;
+pub mod line_ranges;
 
 pub use config::{ClosingStyle, CommandCase, CommandGrammarConfig, FormatConfig, LineEnding, SourceGrouping, UserCommandCase};
 pub use grammar::{
@@ -15,6 +16,7 @@ pub use grammar::{
     GrammarRegistry, KeywordType,
 };
 pub use suppression::SuppressionWarning;
+pub use line_ranges::{LineRange, format_with_line_ranges, parse_line_ranges};
 
 use crate::cst::parse_text;
 use std::path::Path;

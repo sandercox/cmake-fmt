@@ -7,7 +7,7 @@ use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use cmake_fmt::formatter::{format_text_with_diagnostics_and_path, FormatConfig, SuppressionWarning};
+use cmake_fmt::formatter::{format_text_with_diagnostics_and_path, format_with_line_ranges, parse_line_ranges, LineRange, FormatConfig, SuppressionWarning};
 
 /// Format CMake files
 #[derive(Parser)]
@@ -34,7 +34,7 @@ pub struct Cli {
     pub diff: bool,
 
     /// Interactive mode: review formatting changes hunk-by-hunk
-    #[arg(long, conflicts_with_all = ["in_place", "check", "dry_run", "diff"])]
+    #[arg(long, conflicts_with_all = ["in_place", "check", "dry_run", "diff", "line_ranges"])]
     pub interactive: bool,
 
     /// Override config inline (e.g., "indent_width=4,max_line_length=100")
@@ -68,6 +68,10 @@ pub struct Cli {
     /// Treat stdin as if formatting this file (resolves config/grammar from its path)
     #[arg(long = "assume-filename", value_name = "PATH")]
     pub assume_filename: Option<PathBuf>,
+
+    /// Format only specific line ranges (e.g., "1:5,10:15")
+    #[arg(long = "line-ranges", value_name = "RANGES")]
+    pub line_ranges: Option<String>,
 }
 
 /// Print suppression warnings to stderr
@@ -280,6 +284,19 @@ pub fn run() -> Result<ExitCode> {
         return export_all_grammar_to_file(export_path);
     }
 
+    // Parse and validate --line-ranges if provided
+    let parsed_line_ranges = if let Some(ref ranges_str) = cli.line_ranges {
+        match parse_line_ranges(ranges_str) {
+            Ok(ranges) => Some(ranges),
+            Err(e) => {
+                eprintln!("error: {}", e);
+                return Ok(ExitCode::FAILURE);
+            }
+        }
+    } else {
+        None
+    };
+
     // Handle interactive mode first (if --interactive flag is set)
     if cli.interactive {
         // Determine if stdin input is specified
@@ -348,7 +365,7 @@ pub fn run() -> Result<ExitCode> {
 
         // For stdin, resolve config from assume_filename path or current directory
         let config = crate::config::resolve_config(assume_path.as_deref(), cli.style.as_deref(), &cli.grammar_files);
-        process_stdin(&config, check_mode, diff_mode, assume_path.as_deref())
+        process_stdin(&config, check_mode, diff_mode, assume_path.as_deref(), parsed_line_ranges.as_deref())
     } else {
         // Expand glob patterns
         let expanded = expand_files(&cli.files)?;
@@ -357,6 +374,12 @@ pub fn run() -> Result<ExitCode> {
         if expanded.is_empty() {
             eprintln!("No files found");
             return Ok(ExitCode::SUCCESS);
+        }
+
+        // Validate --line-ranges with multiple files
+        if parsed_line_ranges.is_some() && expanded.len() > 1 {
+            eprintln!("error: --line-ranges can only be used with a single file");
+            return Ok(ExitCode::FAILURE);
         }
 
         // Handle --export-grammar (exports custom grammars from input files)
@@ -370,7 +393,7 @@ pub fn run() -> Result<ExitCode> {
             );
         }
 
-        process_files(&expanded, cli.style.as_deref(), &cli.grammar_files, cli.in_place, check_mode, diff_mode, cli.verbose)
+        process_files(&expanded, cli.style.as_deref(), &cli.grammar_files, cli.in_place, check_mode, diff_mode, cli.verbose, parsed_line_ranges.as_deref())
     }
 }
 
@@ -426,13 +449,18 @@ fn process_stdin(
     check_mode: bool,
     diff_mode: bool,
     assume_path: Option<&std::path::Path>,
+    line_ranges: Option<&[LineRange]>,
 ) -> Result<ExitCode> {
     use std::io::{stdin, stdout, Read, Write};
 
     let mut input = String::new();
     stdin().lock().read_to_string(&mut input)?;
 
-    let (formatted, warnings) = format_text_with_diagnostics_and_path(&input, config, assume_path, false);
+    let (formatted, warnings) = if let Some(ranges) = line_ranges {
+        format_with_line_ranges(&input, config, ranges, assume_path, false)
+    } else {
+        format_text_with_diagnostics_and_path(&input, config, assume_path, false)
+    };
     let label = assume_path
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "stdin".to_string());
@@ -468,6 +496,7 @@ fn process_files(
     check_mode: bool,
     diff_mode: bool,
     verbose: bool,
+    line_ranges: Option<&[LineRange]>,
 ) -> Result<ExitCode> {
     use std::io::{stdout, Write};
     use std::collections::HashMap;
@@ -500,7 +529,11 @@ fn process_files(
 
             // Format and write to stdout
             let content = std::fs::read_to_string(file)?;
-            let (formatted, warnings) = format_text_with_diagnostics_and_path(&content, config, Some(file.as_path()), verbose);
+            let (formatted, warnings) = if let Some(ranges) = line_ranges {
+                format_with_line_ranges(&content, config, ranges, Some(file.as_path()), verbose)
+            } else {
+                format_text_with_diagnostics_and_path(&content, config, Some(file.as_path()), verbose)
+            };
             print_warnings(&warnings, &file.display().to_string());
             write!(stdout_handle, "{}", formatted)?;
         }
@@ -584,9 +617,9 @@ fn process_files(
         // For diff mode, serialize output to prevent interleaving
         let result = if diff_mode {
             let _guard = diff_lock.lock().unwrap();
-            process_file(file, config, in_place, check_mode, diff_mode, verbose)
+            process_file(file, config, in_place, check_mode, diff_mode, verbose, line_ranges)
         } else {
-            process_file(file, config, in_place, check_mode, diff_mode, verbose)
+            process_file(file, config, in_place, check_mode, diff_mode, verbose, line_ranges)
         };
 
         completed.fetch_add(1, Ordering::Relaxed);
@@ -640,6 +673,7 @@ fn process_file(
     check_mode: bool,
     diff_mode: bool,
     verbose: bool,
+    line_ranges: Option<&[LineRange]>,
 ) -> Result<bool> {
     use std::fs;
 
@@ -649,7 +683,11 @@ fn process_file(
     }
 
     let original = fs::read_to_string(path)?;
-    let (formatted, warnings) = format_text_with_diagnostics_and_path(&original, config, Some(path), verbose);
+    let (formatted, warnings) = if let Some(ranges) = line_ranges {
+        format_with_line_ranges(&original, config, ranges, Some(path), verbose)
+    } else {
+        format_text_with_diagnostics_and_path(&original, config, Some(path), verbose)
+    };
     print_warnings(&warnings, &path.display().to_string());
 
     if diff_mode {
