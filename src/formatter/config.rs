@@ -5,6 +5,8 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct FormatConfig {
+    /// Completely skip formatting and return input unchanged (default: false)
+    pub disable_format: bool,
     /// Maximum line length before breaking (default: 80, 0 = unlimited)
     pub max_line_length: usize,
     /// Number of spaces/tabs per indent level (default: 4)
@@ -47,6 +49,7 @@ pub struct FormatConfig {
 impl Default for FormatConfig {
     fn default() -> Self {
         Self {
+            disable_format: false,
             max_line_length: 80,
             indent_width: 4,
             use_tabs: true,
@@ -282,6 +285,15 @@ impl FormatConfig {
                         "Invalid value for sort_sources (expected none or alphabetical): {}",
                         value
                     )),
+                }
+            }
+            "disable_format" => {
+                match value.parse::<bool>() {
+                    Ok(v) => {
+                        self.disable_format = v;
+                        Ok(())
+                    }
+                    Err(_) => Err(format!("Invalid value for disable_format: {}", value)),
                 }
             }
             "force_break_keywords" => {

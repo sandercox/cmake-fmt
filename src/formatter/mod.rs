@@ -58,6 +58,11 @@ pub fn format_text_with_diagnostics_and_path(
     file_path: Option<&Path>,
     verbose: bool,
 ) -> (String, Vec<SuppressionWarning>) {
+    // Early return if formatting is disabled
+    if config.disable_format {
+        return (input.to_string(), Vec::new());
+    }
+
     // Resolve effective line ending
     let effective_line_ending = match config.line_ending {
         LineEnding::Auto => detect_line_ending(input),
