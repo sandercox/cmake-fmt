@@ -23,19 +23,41 @@ fn is_source_file(name: &str) -> bool {
     name.rsplit('.').next().map_or(false, |ext| SOURCE_EXTS.contains(&ext))
 }
 
-/// Normalize whitespace in line comments to a single space after `#`.
+/// Normalize whitespace in line comments according to the specified style.
 /// Only affects line comments (not bracket comments).
-/// Examples: "#\t\tfoo" -> "# foo", "#no-space" -> "# no-space", "#" -> "#"
-fn normalize_comment_whitespace(comment: &str) -> String {
-    if let Some(content) = comment.strip_prefix('#') {
-        let trimmed = content.trim_start();
-        if trimmed.is_empty() {
-            "#".to_string()
-        } else {
-            format!("# {}", trimmed)
+/// Examples:
+///   - Leave: "#\t\tfoo" -> "#\t\tfoo" (unchanged)
+///   - HashSpace: "#\t\tfoo" -> "# foo", "#no-space" -> "# no-space", "#" -> "#"
+///   - HashNoSpace: "#  foo" -> "#foo", "#" -> "#"
+pub fn normalize_comment_whitespace(comment: &str, style: super::config::CommentStyle) -> String {
+    use super::config::CommentStyle;
+
+    match style {
+        CommentStyle::Leave => comment.to_string(),
+        CommentStyle::HashSpace => {
+            if let Some(content) = comment.strip_prefix('#') {
+                let trimmed = content.trim_start();
+                if trimmed.is_empty() {
+                    "#".to_string()
+                } else {
+                    format!("# {}", trimmed)
+                }
+            } else {
+                comment.to_string()
+            }
         }
-    } else {
-        comment.to_string()
+        CommentStyle::HashNoSpace => {
+            if let Some(content) = comment.strip_prefix('#') {
+                let trimmed = content.trim_start();
+                if trimmed.is_empty() {
+                    "#".to_string()
+                } else {
+                    format!("#{}", trimmed)
+                }
+            } else {
+                comment.to_string()
+            }
+        }
     }
 }
 
@@ -266,7 +288,8 @@ pub struct KeywordSection {
 /// Parse an argument list into keyword sections with optional grammar guidance
 pub fn parse_keyword_sections_with_grammar(
     arg_list: &ArgumentList,
-    grammar: Option<&CommandGrammar>
+    grammar: Option<&CommandGrammar>,
+    comment_style: super::config::CommentStyle,
 ) -> Vec<KeywordSection> {
     let mut sections = Vec::new();
     let mut current_section = KeywordSection {
@@ -370,7 +393,7 @@ pub fn parse_keyword_sections_with_grammar(
                     saw_separator = true;
                     // Normalize whitespace in line comments (not bracket comments)
                     let text = if token.kind() == SyntaxKind::COMMENT {
-                        normalize_comment_whitespace(&text)
+                        normalize_comment_whitespace(&text, comment_style)
                     } else {
                         text
                     };
@@ -421,7 +444,7 @@ pub fn parse_keyword_sections_with_grammar(
 /// Parse an argument list into keyword sections (backward compatibility wrapper)
 #[allow(dead_code)]
 pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
-    parse_keyword_sections_with_grammar(arg_list, None)
+    parse_keyword_sections_with_grammar(arg_list, None, super::config::CommentStyle::HashSpace)
 }
 
 /// Check if a string looks like a filename (has extension or path separator)

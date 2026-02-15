@@ -62,6 +62,12 @@
       "default": true,
       "description": "Ensure file ends with a newline. When false, the formatter will not append a trailing newline."
     },
+    "comment_style": {
+      "type": "string",
+      "enum": ["leave", "hash_space", "hash_no_space"],
+      "default": "hash_space",
+      "description": "Comment whitespace normalization style. 'leave' preserves original whitespace, 'hash_space' normalizes to '# text', 'hash_no_space' normalizes to '#text'."
+    },
     "source_grouping": {
       "type": "string",
       "enum": ["none", "headers_first", "sources_first"],
