@@ -1,5 +1,6 @@
 ---
 source: tests/formatting_snapshot_tests.rs
+assertion_line: 14
 expression: output
 input_file: tests/format_fixtures/generator_expr_edge_cases.cmake
 ---
@@ -28,6 +29,7 @@ set(COMPLEX_FLAGS
 # Extra-Long Generator Expressions (>200 chars)
 # ----------------------------------------------------------------------------
 # CRITICAL: Must NOT break across lines despite length
+
 target_compile_options(myapp
 	PRIVATE $<$<AND:$<BOOL:${ENABLE_LONG_FEATURE_NAME}>,$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>>:-Wall -Wextra -Wpedantic -Werror -Wno-unused-parameter -Wno-missing-field-initializers>
 )

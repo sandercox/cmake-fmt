@@ -1,5 +1,6 @@
 ---
 source: tests/formatting_snapshot_tests.rs
+assertion_line: 14
 expression: output
 input_file: tests/format_fixtures/comment_edge_cases.cmake
 ---
@@ -60,6 +61,7 @@ set(FIRST first)
 # Block of comments
 # describing the next
 # command in detail
+
 set(SECOND second)
 
 # ----------------------------------------------------------------------------

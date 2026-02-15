@@ -1,10 +1,12 @@
 ---
 source: tests/formatting_snapshot_tests.rs
+assertion_line: 14
 expression: output
 input_file: tests/format_fixtures/comments_mixed.cmake
 ---
 # File header comment
 # Another header line
+
 cmake_minimum_required(VERSION 3.20)
 
 # Section: Project setup

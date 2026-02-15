@@ -1,5 +1,6 @@
 ---
 source: tests/formatting_snapshot_tests.rs
+assertion_line: 14
 expression: output
 input_file: tests/format_fixtures/suppression_block.cmake
 ---
@@ -11,4 +12,5 @@ set(FORMATTED_VAR value)
 set(  UGLY_VAR    value1   value2  )
 message(   "unformatted"   )
 # cmake-fmt: on
+
 set(BACK_TO_NORMAL value)

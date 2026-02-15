@@ -1068,3 +1068,53 @@ fn test_disable_format_false_still_formats() {
     assert_ne!(result, input, "disable_format=false (default) should still format input");
     assert_eq!(result, "set(FOO BAR)\n", "Expected properly formatted output");
 }
+
+// ============================================================================
+// BLANK LINE AFTER LEADING COMMENT TESTS
+// ============================================================================
+
+/// Blank line between a leading comment and its command should be preserved
+#[test]
+fn test_blank_line_after_leading_comment_preserved() {
+    let input = "# Leading comment\n\nset(FOO bar)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, "# Leading comment\n\nset(FOO bar)\n",
+        "Blank line between comment and command should be preserved");
+}
+
+/// Blank line before AND after a leading comment should both be preserved
+#[test]
+fn test_blank_lines_before_and_after_leading_comment() {
+    let input = "set(A a)\n\n# Comment\n\nset(B b)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, "set(A a)\n\n# Comment\n\nset(B b)\n",
+        "Both blank lines (before and after comment) should be preserved");
+}
+
+/// No blank line between comment and command: should stay tight
+#[test]
+fn test_no_blank_line_after_leading_comment_unchanged() {
+    let input = "# Leading comment\nset(FOO bar)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, "# Leading comment\nset(FOO bar)\n",
+        "No blank line should be inserted when none existed");
+}
+
+/// Idempotency: formatting blank-line-after-comment twice yields same result
+#[test]
+fn test_blank_line_after_leading_comment_idempotent() {
+    let inputs = vec![
+        "# Comment\n\nset(FOO bar)\n",
+        "set(A a)\n\n# Comment\n\nset(B b)\n",
+        "# Comment\nset(FOO bar)\n",
+    ];
+    let config = default_config();
+    for input in inputs {
+        let once = format_text(input, &config);
+        let twice = format_text(&once, &config);
+        assert_eq!(once, twice, "Formatting should be idempotent for input: {:?}", input);
+    }
+}
