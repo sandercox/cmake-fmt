@@ -209,6 +209,66 @@ fn test_trailing_comment_after_keyword_aware_command() {
     assert!(result.contains("# private only"));
 }
 
+#[test]
+fn test_pre_keyword_comments_preserved() {
+    let input = "set_source_files_properties(\n\n    # wui/patch/cord/cord_anchor.cpp\n    wui/patch/node/node_view.cpp\n    wui/skin/skin.cpp\n    PROPERTIES COMPILE_FLAGS /wd4996\n)\n";
+    let result = format_text(input, &default_config());
+    // Comment must be preserved in the pre-keyword section
+    assert!(result.contains("# wui/patch/cord/cord_anchor.cpp"), "Comment was dropped from pre-keyword section");
+    // Both source files must be present
+    assert!(result.contains("wui/patch/node/node_view.cpp"));
+    assert!(result.contains("wui/skin/skin.cpp"));
+    // Keyword section must still be present
+    assert!(result.contains("PROPERTIES COMPILE_FLAGS /wd4996"));
+}
+
+#[test]
+fn test_pre_keyword_blank_lines_preserved() {
+    let input = "set_source_files_properties(\n\n    src/a.cpp\n    src/b.cpp\n    PROPERTIES COMPILE_FLAGS /wd4996\n)\n";
+    let result = format_text(input, &default_config());
+    // Blank line should be preserved (appears as double newline in output)
+    assert!(result.contains("\n\n"), "Blank line in pre-keyword section was dropped");
+    assert!(result.contains("src/a.cpp"));
+    assert!(result.contains("src/b.cpp"));
+}
+
+#[test]
+fn test_trailing_inline_comment_preserved() {
+    let input = "target_link_libraries(wui PUBLIC\n    juce::JUCE\n    rj::rj\n    wire_common::wire_common\n    WireDev # For Clock enum...but I'd rather not\n    WireResources\n)\n";
+    let result = format_text(input, &default_config());
+    // Trailing comment must stay on the same line as WireDev
+    assert!(result.contains("WireDev # For Clock enum"),
+        "Trailing inline comment was moved away from its argument. Got:\n{}", result);
+    // WireResources must be on a separate line, not preceded by the comment
+    let lines: Vec<&str> = result.lines().collect();
+    let wiredev_line = lines.iter().find(|l| l.contains("WireDev")).unwrap();
+    assert!(wiredev_line.contains("# For Clock enum"),
+        "Comment not on same line as WireDev. WireDev line: {}", wiredev_line);
+}
+
+#[test]
+fn test_trailing_inline_comment_simple_args() {
+    let input = "set(FLAGS\n    -Wall\n    -Wextra # Extra warnings\n    -Wpedantic\n)\n";
+    let result = format_text(input, &default_config());
+    // Trailing comment must stay on same line as -Wextra
+    assert!(result.contains("-Wextra # Extra warnings"),
+        "Trailing comment moved away from -Wextra. Got:\n{}", result);
+}
+
+#[test]
+fn test_leading_comment_own_line_still_works() {
+    let input = "set(SOURCES\n    src/main.cpp\n    # Core library sources\n    src/core.cpp\n)\n";
+    let result = format_text(input, &default_config());
+    // Leading comment should be on its own line, before src/core.cpp
+    let lines: Vec<&str> = result.lines().collect();
+    let comment_idx = lines.iter().position(|l| l.contains("# Core library sources")).unwrap();
+    let core_idx = lines.iter().position(|l| l.contains("src/core.cpp")).unwrap();
+    assert!(comment_idx < core_idx, "Leading comment should appear before src/core.cpp");
+    // Comment should NOT be on the same line as src/main.cpp
+    let main_line = lines.iter().find(|l| l.contains("src/main.cpp")).unwrap();
+    assert!(!main_line.contains("#"), "Leading comment should not be on main.cpp's line");
+}
+
 // ============================================================================
 // BLANK LINE NORMALIZATION TESTS
 // ============================================================================
