@@ -116,10 +116,16 @@ pub fn format_with_line_ranges(
     let mut result = result_lines.join(separator);
 
     // Step 6: Preserve final newline behavior
-    if input.ends_with("\r\n") || input.ends_with('\n') {
-        if !result.ends_with(separator) {
-            result.push_str(separator);
+    if config.final_newline {
+        // When final_newline is true, preserve input's newline behavior
+        if input.ends_with("\r\n") || input.ends_with('\n') {
+            if !result.ends_with(separator) {
+                result.push_str(separator);
+            }
         }
+    } else {
+        // When final_newline is false, do NOT add a trailing newline
+        // (result already has correct content from splice operation)
     }
 
     (result, warnings)

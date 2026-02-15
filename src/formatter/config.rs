@@ -24,6 +24,8 @@ pub struct FormatConfig {
     pub closing_style: ClosingStyle,
     /// Force keyword-aware commands to use multiline layout regardless of line length (default: false)
     pub force_break_keywords: bool,
+    /// Ensure file ends with a newline (default: true)
+    pub final_newline: bool,
 
     /// Manual command grammar definitions
     /// Map of command name -> grammar definition
@@ -52,6 +54,7 @@ impl Default for FormatConfig {
             line_ending: LineEnding::Auto,
             closing_style: ClosingStyle::Remove,
             force_break_keywords: false,
+            final_newline: true,
             command_grammars: HashMap::new(),
             grammar_files: Vec::new(),
             source_grouping: SourceGrouping::None,
@@ -285,6 +288,15 @@ impl FormatConfig {
                         Ok(())
                     }
                     Err(_) => Err(format!("Invalid value for force_break_keywords: {}", value)),
+                }
+            }
+            "final_newline" => {
+                match value.parse::<bool>() {
+                    Ok(v) => {
+                        self.final_newline = v;
+                        Ok(())
+                    }
+                    Err(_) => Err(format!("Invalid value for final_newline: {}", value)),
                 }
             }
             _ => Err(format!("Unknown config key: {}", key)),

@@ -50,8 +50,8 @@ pub fn detect_line_ending(input: &str) -> LineEnding {
 ///
 /// # Returns
 /// A tuple of (formatted_code, warnings) where formatted_code is guaranteed
-/// to end with a single newline and warnings contains any suppression-related
-/// diagnostics
+/// to end with a single newline (when final_newline is true) and warnings
+/// contains any suppression-related diagnostics
 pub fn format_text_with_diagnostics_and_path(
     input: &str,
     config: &FormatConfig,
@@ -144,8 +144,8 @@ pub fn format_text_with_diagnostics_and_path(
 ///
 /// # Returns
 /// A tuple of (formatted_code, warnings) where formatted_code is guaranteed
-/// to end with a single newline and warnings contains any suppression-related
-/// diagnostics
+/// to end with a single newline (when final_newline is true) and warnings
+/// contains any suppression-related diagnostics
 pub fn format_text_with_diagnostics(input: &str, config: &FormatConfig) -> (String, Vec<SuppressionWarning>) {
     format_text_with_diagnostics_and_path(input, config, None, false)
 }
@@ -158,13 +158,14 @@ pub fn format_text_with_diagnostics(input: &str, config: &FormatConfig) -> (Stri
 ///
 /// # Returns
 /// Formatted CMake code as a String, guaranteed to end with a single newline
+/// (when final_newline is true)
 pub fn format_text(input: &str, config: &FormatConfig) -> String {
     let (result, _warnings) = format_text_with_diagnostics(input, config);
     result
 }
 
 /// Post-process rendered output: strip trailing whitespace and normalize ending
-pub(crate) fn post_process_rendered_output(result: &str) -> String {
+pub(crate) fn post_process_rendered_output(result: &str, final_newline: bool) -> String {
     // Strip trailing whitespace from each line (the pretty crate can produce
     // indentation on otherwise-blank lines when nest() wraps line() breaks)
     let result: String = result
@@ -180,7 +181,11 @@ pub(crate) fn post_process_rendered_output(result: &str) -> String {
     if trimmed.is_empty() {
         String::new()
     } else if !trimmed.ends_with('\n') {
-        format!("{}\n", trimmed)
+        if final_newline {
+            format!("{}\n", trimmed)
+        } else {
+            trimmed.to_string()
+        }
     } else {
         trimmed.to_string()
     }
