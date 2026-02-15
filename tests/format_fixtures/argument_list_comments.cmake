@@ -40,3 +40,13 @@ set(DOCUMENTED_LIST
   ]=]
   value2
 )
+
+# Test: Comments with irregular whitespace inside argument lists
+set(TABBED_COMMENTS
+  #		tab-indented comment
+  value1
+  #    multiple spaces comment
+  value2
+  #no-space comment
+  value3
+)

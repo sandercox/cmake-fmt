@@ -1,6 +1,5 @@
 ---
 source: tests/formatting_snapshot_tests.rs
-assertion_line: 14
 expression: output
 input_file: tests/format_fixtures/argument_list_comments.cmake
 ---
@@ -44,4 +43,14 @@ set(DOCUMENTED_LIST
   This value is special
   ]=]
 	value2
+)
+
+# Test: Comments with irregular whitespace inside argument lists
+set(TABBED_COMMENTS
+	# tab-indented comment
+	value1
+	# multiple spaces comment
+	value2
+	# no-space comment
+	value3
 )

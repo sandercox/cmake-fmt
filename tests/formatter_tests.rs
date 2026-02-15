@@ -887,3 +887,71 @@ fn test_final_newline_true_preserves_existing_behavior() {
     let result = format_text(input, &config);
     assert_eq!(result, "set(FOO bar)\n", "final_newline=true (default) should preserve single trailing newline");
 }
+
+// ============================================================================
+// COMMENT WHITESPACE NORMALIZATION TESTS
+// ============================================================================
+
+#[test]
+fn test_comment_tabs_normalized_to_single_space() {
+    let input = "set(SOURCES\n\t#\t\tfilename.hpp\n\tvalue\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert!(result.contains("# filename.hpp"), "Tab whitespace in comment should be normalized. Got: {}", result);
+    assert!(!result.contains("#\t"), "No tabs should remain in comment. Got: {}", result);
+}
+
+#[test]
+fn test_comment_already_normalized_unchanged() {
+    let input = "set(SOURCES\n\t# already normal\n\tvalue\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert!(result.contains("# already normal"), "Already-normalized comment should stay the same. Got: {}", result);
+}
+
+#[test]
+fn test_comment_no_space_after_hash() {
+    let input = "set(SOURCES\n\t#no-space\n\tvalue\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert!(result.contains("# no-space"), "Comment without space after hash should get one. Got: {}", result);
+}
+
+#[test]
+fn test_comment_hash_only_stays_bare() {
+    let input = "set(SOURCES\n\t#\n\tvalue\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    // The hash-only comment should remain as "#" (no trailing space)
+    // Check it does NOT become "# " (hash + space)
+    for line in result.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') && !trimmed.starts_with("#[") && trimmed.len() <= 1 {
+            assert_eq!(trimmed, "#", "Hash-only comment should stay as '#'. Got: '{}'", trimmed);
+        }
+    }
+}
+
+#[test]
+fn test_trailing_comment_whitespace_normalized() {
+    let input = "set(FLAGS\n\t-Wall #   extra spaces comment\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert!(result.contains("# extra spaces comment"), "Trailing comment whitespace should be normalized. Got: {}", result);
+}
+
+#[test]
+fn test_bracket_comment_inside_arglist_unchanged() {
+    let input = "set(LIST\n\tvalue1\n\t#[=[\n  Keep   this   spacing\n  ]=]\n\tvalue2\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert!(result.contains("Keep   this   spacing"), "Bracket comment content should be preserved. Got: {}", result);
+}
+
+#[test]
+fn test_comment_multiple_spaces_normalized() {
+    let input = "set(SOURCES\n\t#     lots   of   spaces\n\tvalue\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert!(result.contains("# lots   of   spaces"), "Only leading whitespace after # should be normalized, internal spacing preserved. Got: {}", result);
+}
