@@ -23,6 +23,22 @@ fn is_source_file(name: &str) -> bool {
     name.rsplit('.').next().map_or(false, |ext| SOURCE_EXTS.contains(&ext))
 }
 
+/// Normalize whitespace in line comments to a single space after `#`.
+/// Only affects line comments (not bracket comments).
+/// Examples: "#\t\tfoo" -> "# foo", "#no-space" -> "# no-space", "#" -> "#"
+fn normalize_comment_whitespace(comment: &str) -> String {
+    if let Some(content) = comment.strip_prefix('#') {
+        let trimmed = content.trim_start();
+        if trimmed.is_empty() {
+            "#".to_string()
+        } else {
+            format!("# {}", trimmed)
+        }
+    } else {
+        comment.to_string()
+    }
+}
+
 /// Extract the base name (without extension) from a file path
 fn base_name(name: &str) -> Option<&str> {
     // Handle paths: take the last component, then strip extension
@@ -352,6 +368,12 @@ pub fn parse_keyword_sections_with_grammar(
                 // Track comments
                 SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
                     saw_separator = true;
+                    // Normalize whitespace in line comments (not bracket comments)
+                    let text = if token.kind() == SyntaxKind::COMMENT {
+                        normalize_comment_whitespace(&text)
+                    } else {
+                        text
+                    };
                     if consecutive_newlines == 0 && !current_section.args.is_empty() {
                         // Same line as previous arg (trailing inline comment)
                         let arg_index = current_section.args.len() - 1;
