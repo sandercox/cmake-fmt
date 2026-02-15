@@ -45,6 +45,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Sync package.json version from Cargo.toml
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          cd editors/vscode && node -e "const p=require('./package.json'); p.version='$VERSION'; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n')"
+          echo "Synced package.json version to $VERSION"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:

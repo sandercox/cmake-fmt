@@ -2,7 +2,7 @@
   "name": "cmake-fmt",
   "displayName": "CMake Format",
   "description": "Fast CMake formatter with grammar-aware formatting",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "publisher": "cmake-fmt",
   "engines": {
     "vscode": "^1.105.0"
