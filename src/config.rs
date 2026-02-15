@@ -41,43 +41,6 @@ pub fn find_config_files(start_dir: &Path) -> Vec<PathBuf> {
     config_files
 }
 
-/// Find a config file by walking up the directory tree (backward compatible wrapper)
-///
-/// Returns the first (nearest) config file found, or None if no config file exists
-pub fn find_config_file(start_dir: &Path) -> Option<PathBuf> {
-    find_config_files(start_dir).first().cloned()
-}
-
-/// Load a config file from disk
-///
-/// Supports TOML (.toml, .tml) and YAML (.yaml, .yml, extensionless) formats
-pub fn load_config_file(path: &Path) -> Result<FormatConfig> {
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read config file: {}", path.display()))?;
-
-    // Determine format from extension
-    let extension = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
-
-    match extension {
-        "toml" | "tml" => {
-            toml::from_str(&content)
-                .with_context(|| format!("Failed to parse TOML config: {}", path.display()))
-        }
-        "yaml" | "yml" => {
-            serde_yml::from_str(&content)
-                .with_context(|| format!("Failed to parse YAML config: {}", path.display()))
-        }
-        _ => {
-            // Extensionless config files (like .cmake-fmt) default to YAML (like clang-format)
-            serde_yml::from_str(&content)
-                .with_context(|| format!("Failed to parse config as YAML: {}", path.display()))
-        }
-    }
-}
-
 /// Load a config file as a raw TOML table for merging
 ///
 /// Supports TOML and YAML formats, converting YAML to TOML table representation
