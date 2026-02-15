@@ -1,5 +1,6 @@
 ---
 source: tests/formatting_snapshot_tests.rs
+assertion_line: 14
 expression: output
 input_file: tests/format_fixtures/argument_list_comments.cmake
 ---
@@ -25,8 +26,7 @@ target_link_libraries(myapp
 # Test: Trailing comment on argument
 set(FLAGS
 	-Wall
-	-Wextra
-	# Extra warnings
+	-Wextra # Extra warnings
 	-Wpedantic
 )
 

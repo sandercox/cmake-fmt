@@ -236,6 +236,8 @@ pub struct KeywordSection {
     /// Comments with their positions: (position_after_arg_index, comment_text)
     /// position_after_arg_index = 0 means before first arg, 1 means after first arg, etc.
     pub comments: Vec<(usize, String)>,
+    /// Trailing inline comments: (arg_index, comment_text) - comment on same line after arg
+    pub trailing_comments: Vec<(usize, String)>,
     /// Blank line positions: indices after which a blank line appears
     pub blank_lines: Vec<usize>,
     /// The type of the keyword (if known from grammar)
@@ -255,6 +257,7 @@ pub fn parse_keyword_sections_with_grammar(
         keyword: None,
         args: Vec::new(),
         comments: Vec::new(),
+        trailing_comments: Vec::new(),
         blank_lines: Vec::new(),
         keyword_type: None,
         values_on_new_line: false,
@@ -302,6 +305,7 @@ pub fn parse_keyword_sections_with_grammar(
                             keyword: Some(text),
                             args: Vec::new(),
                             comments: Vec::new(),
+                            trailing_comments: Vec::new(),
                             blank_lines: Vec::new(),
                             keyword_type: kw_type,
                             values_on_new_line: false,
@@ -329,6 +333,7 @@ pub fn parse_keyword_sections_with_grammar(
                                 keyword: None,
                                 args: vec![text],
                                 comments: Vec::new(),
+                                trailing_comments: Vec::new(),
                                 blank_lines: Vec::new(),
                                 keyword_type: None,
                                 values_on_new_line: false,
@@ -346,11 +351,17 @@ pub fn parse_keyword_sections_with_grammar(
                 }
                 // Track comments
                 SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
-                    consecutive_newlines = 0;
                     saw_separator = true;
-                    // Position is after the current arg count
-                    let position = current_section.args.len();
-                    current_section.comments.push((position, text));
+                    if consecutive_newlines == 0 && !current_section.args.is_empty() {
+                        // Same line as previous arg (trailing inline comment)
+                        let arg_index = current_section.args.len() - 1;
+                        current_section.trailing_comments.push((arg_index, text));
+                    } else {
+                        // Own line (leading comment before next arg)
+                        let position = current_section.args.len();
+                        current_section.comments.push((position, text));
+                    }
+                    consecutive_newlines = 0;
                 }
                 // Track newlines for blank line detection
                 SyntaxKind::NEWLINE => {
@@ -478,6 +489,7 @@ pub fn sort_source_args(section: &mut KeywordSection) {
     // then sort and reassemble
     let mut new_args: Vec<String> = Vec::with_capacity(section.args.len());
     let mut new_comments: Vec<(usize, String)> = Vec::new();
+    let mut new_trailing_comments: Vec<(usize, String)> = Vec::new();
 
     // First, preserve args before sort_start (e.g., target name in add_executable)
     for idx in 0..sort_start {
@@ -489,15 +501,22 @@ pub fn sort_source_args(section: &mut KeywordSection) {
             new_comments.push((new_args.len(), comment));
         }
         new_args.push(section.args[idx].clone());
+        // Preserve trailing comments for this arg
+        for (tc_idx, tc_text) in &section.trailing_comments {
+            if *tc_idx == idx {
+                new_trailing_comments.push((new_args.len() - 1, tc_text.clone()));
+            }
+        }
     }
 
     // Now process sortable segments
     for seg in &segments {
-        // Collect entries: each entry is (sort_key, arg, comments_before)
+        // Collect entries: each entry is (sort_key, arg, comments_before, trailing_comment)
         struct SortEntry {
             sort_key: String,
             arg: String,
             comments: Vec<String>, // comments positioned before this arg
+            trailing_comment: Option<String>, // trailing comment on same line as this arg
         }
 
         let mut entries: Vec<SortEntry> = Vec::new();
@@ -508,6 +527,11 @@ pub fn sort_source_args(section: &mut KeywordSection) {
                 .filter(|(pos, _)| *pos == idx)
                 .map(|(_, text)| text.clone())
                 .collect();
+
+            // Collect trailing comment at this arg index
+            let trailing_comment = section.trailing_comments.iter()
+                .find(|(tc_idx, _)| *tc_idx == idx)
+                .map(|(_, text)| text.clone());
 
             let arg = &section.args[idx];
 
@@ -526,6 +550,7 @@ pub fn sort_source_args(section: &mut KeywordSection) {
                 sort_key,
                 arg: arg.clone(),
                 comments: comments_at_pos,
+                trailing_comment,
             });
         }
 
@@ -535,7 +560,7 @@ pub fn sort_source_args(section: &mut KeywordSection) {
         // Sort entries by sort key (stable sort preserves order of equal keys)
         entries.sort_by(|a, b| a.sort_key.cmp(&b.sort_key));
 
-        // Reassemble into new_args and new_comments
+        // Reassemble into new_args, new_comments, and new_trailing_comments
         let base = new_args.len();
         for (i, entry) in entries.iter().enumerate() {
             let pos = base + i;
@@ -543,6 +568,9 @@ pub fn sort_source_args(section: &mut KeywordSection) {
                 new_comments.push((pos, comment.clone()));
             }
             new_args.push(entry.arg.clone());
+            if let Some(trailing) = &entry.trailing_comment {
+                new_trailing_comments.push((pos, trailing.clone()));
+            }
         }
     }
 
@@ -555,6 +583,7 @@ pub fn sort_source_args(section: &mut KeywordSection) {
 
     section.args = new_args;
     section.comments = new_comments;
+    section.trailing_comments = new_trailing_comments;
 }
 
 /// Format arguments for a keyword-aware command
@@ -664,6 +693,7 @@ pub fn format_keyword_aware_args(
                         // or when there are comments/blank lines that can't go inline
                         let use_per_line = section.values_on_new_line
                             || !section.comments.is_empty()
+                            || !section.trailing_comments.is_empty()
                             || !section.blank_lines.is_empty();
 
                         if use_per_line {
@@ -699,6 +729,12 @@ pub fn format_keyword_aware_args(
                                     ));
                                 }
                                 docs.push(RcDoc::text(arg.clone()));
+                                // Emit trailing comment if present
+                                for (tc_idx, tc_text) in &section.trailing_comments {
+                                    if *tc_idx == arg_idx {
+                                        docs.push(RcDoc::text(format!(" {}", tc_text)));
+                                    }
+                                }
                             }
                             while let Some((_, comment)) = comment_iter.next() {
                                 if signals.force_multiline {
@@ -714,12 +750,18 @@ pub fn format_keyword_aware_args(
                             }
                         } else {
                             // Values on same line as keyword: flat_alt inherits from outer group
-                            for arg in &section.args {
+                            for (arg_idx, arg) in section.args.iter().enumerate() {
                                 docs.push(RcDoc::flat_alt(
                                     RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
                                     RcDoc::space(),
                                 ));
                                 docs.push(RcDoc::text(arg.clone()));
+                                // Emit trailing comment if present
+                                for (tc_idx, tc_text) in &section.trailing_comments {
+                                    if *tc_idx == arg_idx {
+                                        docs.push(RcDoc::text(format!(" {}", tc_text)));
+                                    }
+                                }
                             }
                         }
                     }
@@ -783,6 +825,7 @@ pub fn format_keyword_aware_args(
                         let pairs: Vec<_> = section.args.chunks(2).collect();
                         let use_per_line = section.values_on_new_line
                             || !section.comments.is_empty()
+                            || !section.trailing_comments.is_empty()
                             || !section.blank_lines.is_empty();
 
                         if pairs.len() == 1 {
@@ -883,7 +926,7 @@ pub fn format_keyword_aware_args(
 
                     // Values: bin-pack using per-value groups
                     if !section.args.is_empty() {
-                        let has_annotations = !section.comments.is_empty() || !section.blank_lines.is_empty();
+                        let has_annotations = !section.comments.is_empty() || !section.trailing_comments.is_empty() || !section.blank_lines.is_empty();
 
                         if has_annotations {
                             // Fall back to per-line (same as MultiValue) to preserve comment positions
@@ -953,6 +996,7 @@ pub fn format_keyword_aware_args(
                         let (effective_args, effective_blank_lines) = if config.source_grouping != super::config::SourceGrouping::None
                             && matches!(section.keyword_type, Some(KeywordType::MultiValue) | Some(KeywordType::BinPack) | None)
                             && section.comments.is_empty()
+                            && section.trailing_comments.is_empty()
                         {
                             group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, config.source_grouping)
                         } else {
@@ -1002,6 +1046,12 @@ pub fn format_keyword_aware_args(
                                     ));
                                 }
                                 docs.push(RcDoc::text(arg.clone()));
+                                // Emit trailing comment if present
+                                for (tc_idx, tc_text) in &section.trailing_comments {
+                                    if *tc_idx == arg_idx {
+                                        docs.push(RcDoc::text(format!(" {}", tc_text)));
+                                    }
+                                }
                             }
 
                             while let Some((_, comment)) = comment_iter.next() {
@@ -1018,12 +1068,18 @@ pub fn format_keyword_aware_args(
                             }
                         } else {
                             // Values on same line as keyword: flat_alt inherits from outer group
-                            for arg in &effective_args {
+                            for (arg_idx, arg) in effective_args.iter().enumerate() {
                                 docs.push(RcDoc::flat_alt(
                                     RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
                                     RcDoc::space(),
                                 ));
                                 docs.push(RcDoc::text(arg.clone()));
+                                // Emit trailing comment if present (should be rare since use_per_line checks trailing_comments)
+                                for (tc_idx, tc_text) in &section.trailing_comments {
+                                    if *tc_idx == arg_idx {
+                                        docs.push(RcDoc::text(format!(" {}", tc_text)));
+                                    }
+                                }
                             }
                         }
                     }
@@ -1036,18 +1092,47 @@ pub fn format_keyword_aware_args(
             // pre-keyword args (a file list), all go on separate lines.
 
             // Apply source grouping if enabled
-            // Disable grouping when comments are present to preserve their positions
+            // Disable grouping when comments or trailing comments are present to preserve their positions
             // Blank lines are preserved as segment boundaries
-            let effective_args = if config.source_grouping != super::config::SourceGrouping::None
+            let (effective_args, effective_blank_lines) = if config.source_grouping != super::config::SourceGrouping::None
                 && section.comments.is_empty()
+                && section.trailing_comments.is_empty()
             {
-                group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, config.source_grouping).0
+                group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, config.source_grouping)
             } else {
-                section.args.clone()
+                (section.args.clone(), section.blank_lines.clone())
             };
 
             let is_list = effective_args.len() > 1;
-            for (_j, arg) in effective_args.iter().enumerate() {
+            let mut comment_iter = section.comments.iter().peekable();
+
+            for (arg_idx, arg) in effective_args.iter().enumerate() {
+                // Emit comments before this argument
+                while let Some((pos, comment)) = comment_iter.peek() {
+                    if *pos == arg_idx {
+                        if signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.clone()));
+                        } else {
+                            docs.push(RcDoc::flat_alt(
+                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                                RcDoc::space(),
+                            ));
+                        }
+                        docs.push(RcDoc::text(comment.clone()));
+                        comment_iter.next();
+                        is_first_arg = false;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Check for blank line before this argument
+                if effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                    docs.push(RcDoc::hardline());
+                    is_first_arg = false;
+                }
+
                 if is_first_arg && !is_list {
                     // Single pre-keyword arg: keep inline with command
                     is_first_arg = false;
@@ -1076,6 +1161,26 @@ pub fn format_keyword_aware_args(
                     }
                 }
                 docs.push(RcDoc::text(arg.clone()));
+                // Emit trailing comment if present
+                for (tc_idx, tc_text) in &section.trailing_comments {
+                    if *tc_idx == arg_idx {
+                        docs.push(RcDoc::text(format!(" {}", tc_text)));
+                    }
+                }
+            }
+
+            // Emit trailing comments (after last argument)
+            while let Some((_, comment)) = comment_iter.next() {
+                if signals.force_multiline {
+                    docs.push(RcDoc::hardline());
+                    docs.push(RcDoc::text(keyword_indent.clone()));
+                } else {
+                    docs.push(RcDoc::flat_alt(
+                        RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                        RcDoc::space(),
+                    ));
+                }
+                docs.push(RcDoc::text(comment.clone()));
             }
         }
     }
@@ -1177,6 +1282,12 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
                 }
             }
             docs.push(RcDoc::text(arg.clone()));
+            // Emit trailing comment if present
+            for (tc_idx, tc_text) in &section.trailing_comments {
+                if *tc_idx == arg_idx {
+                    docs.push(RcDoc::text(format!(" {}", tc_text)));
+                }
+            }
             is_first_arg = false;
         }
 
