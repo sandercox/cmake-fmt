@@ -218,7 +218,13 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                         if lc.blank_line_before && (!docs.is_empty() || !batch_strings.is_empty()) {
                                             docs.push(RcDoc::hardline());
                                         }
-                                        docs.push(RcDoc::text(format!("{}{}", indent_str, lc.text)));
+                                        // Normalize line comments (not bracket comments)
+                                        let text = if !lc.text.starts_with("#[") {
+                                            cmake_rules::normalize_comment_whitespace(&lc.text, config.comment_style)
+                                        } else {
+                                            lc.text.clone()
+                                        };
+                                        docs.push(RcDoc::text(format!("{}{}", indent_str, text)));
                                         docs.push(RcDoc::hardline());
                                     }
                                 }
@@ -230,7 +236,13 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                         if lc.blank_line_before && (!docs.is_empty() || !batch_strings.is_empty()) {
                                             docs.push(RcDoc::hardline());
                                         }
-                                        docs.push(RcDoc::text(format!("{}{}", indent_str, lc.text)));
+                                        // Normalize line comments (not bracket comments)
+                                        let text = if !lc.text.starts_with("#[") {
+                                            cmake_rules::normalize_comment_whitespace(&lc.text, config.comment_style)
+                                        } else {
+                                            lc.text.clone()
+                                        };
+                                        docs.push(RcDoc::text(format!("{}{}", indent_str, text)));
                                         docs.push(RcDoc::hardline());
                                     }
                                 }
@@ -243,7 +255,13 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
                             // Preserve trailing comment (not part of command node)
                             if let Some(trailing_comment) = comments::extract_trailing_comment(&child_node) {
-                                raw_doc = raw_doc.append(RcDoc::space()).append(RcDoc::text(trailing_comment));
+                                // Normalize line comments (not bracket comments)
+                                let text = if !trailing_comment.starts_with("#[") {
+                                    cmake_rules::normalize_comment_whitespace(&trailing_comment, config.comment_style)
+                                } else {
+                                    trailing_comment
+                                };
+                                raw_doc = raw_doc.append(RcDoc::space()).append(RcDoc::text(text));
                             }
 
                             docs.push(raw_doc);
@@ -260,7 +278,13 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                 if lc.blank_line_before && (!docs.is_empty() || !batch_strings.is_empty()) {
                                     docs.push(RcDoc::hardline());
                                 }
-                                docs.push(RcDoc::text(format!("{}{}", indent_str, lc.text)));
+                                // Normalize line comments (not bracket comments)
+                                let text = if !lc.text.starts_with("#[") {
+                                    cmake_rules::normalize_comment_whitespace(&lc.text, config.comment_style)
+                                } else {
+                                    lc.text.clone()
+                                };
+                                docs.push(RcDoc::text(format!("{}{}", indent_str, text)));
                                 docs.push(RcDoc::hardline());
                             }
                         }
@@ -331,7 +355,13 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
                             // Check for trailing comment
                             if let Some(trailing_comment) = comments::extract_trailing_comment(&child_node) {
-                                cmd_doc = cmd_doc.append(RcDoc::space()).append(RcDoc::text(trailing_comment));
+                                // Normalize line comments (not bracket comments)
+                                let text = if !trailing_comment.starts_with("#[") {
+                                    cmake_rules::normalize_comment_whitespace(&trailing_comment, config.comment_style)
+                                } else {
+                                    trailing_comment
+                                };
+                                cmd_doc = cmd_doc.append(RcDoc::space()).append(RcDoc::text(text));
                             }
 
                             docs.push(cmd_doc);
@@ -413,7 +443,13 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                             }
 
                             let indent_str = indent_string(current_indent, &config);
-                            docs.push(RcDoc::text(format!("{}{}", indent_str, comment_text)));
+                            // Normalize line comments (not bracket comments)
+                            let text = if token.kind() == SyntaxKind::COMMENT {
+                                cmake_rules::normalize_comment_whitespace(&comment_text, config.comment_style)
+                            } else {
+                                comment_text
+                            };
+                            docs.push(RcDoc::text(format!("{}{}", indent_str, text)));
                             docs.push(RcDoc::hardline());
                             blank_line_count = 0;
                         } else {

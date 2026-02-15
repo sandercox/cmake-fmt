@@ -1,4 +1,4 @@
-use cmake_fmt::formatter::{CommandCase, FormatConfig, UserCommandCase};
+use cmake_fmt::formatter::{CommandCase, CommentStyle, FormatConfig, UserCommandCase};
 use cmake_fmt::formatter::format_text;
 
 // Helper to create default config
@@ -954,4 +954,90 @@ fn test_comment_multiple_spaces_normalized() {
     let config = default_config();
     let result = format_text(input, &config);
     assert!(result.contains("# lots   of   spaces"), "Only leading whitespace after # should be normalized, internal spacing preserved. Got: {}", result);
+}
+
+// Test comment_style=leave preserves original whitespace
+#[test]
+fn test_comment_style_leave_preserves_original() {
+    let input = "set(SOURCES\n\t#no-space\n\tvalue\n)\n";
+    let config = FormatConfig {
+        comment_style: CommentStyle::Leave,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.contains("#no-space"), "comment_style=leave should preserve original '#no-space'. Got: {}", result);
+    assert!(!result.contains("# no-space"), "comment_style=leave should NOT normalize to '# no-space'. Got: {}", result);
+}
+
+// Test comment_style=hash_no_space removes space after hash
+#[test]
+fn test_comment_style_hash_no_space() {
+    let input = "set(SOURCES\n\t# has space\n\tvalue\n)\n";
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashNoSpace,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.contains("#has space"), "comment_style=hash_no_space should strip space after hash. Got: {}", result);
+    assert!(!result.contains("# has space"), "comment_style=hash_no_space should NOT keep space after hash. Got: {}", result);
+}
+
+// Test comment_style=hash_space is default
+#[test]
+fn test_comment_style_hash_space_is_default() {
+    let input = "set(SOURCES\n\t#no-space\n\tvalue\n)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert!(result.contains("# no-space"), "default config should normalize to '# no-space'. Got: {}", result);
+}
+
+// Test comment_style=leave preserves tabs
+#[test]
+fn test_comment_style_leave_preserves_tabs() {
+    let input = "set(SOURCES\n\t#\t\ttabbed\n\tvalue\n)\n";
+    let config = FormatConfig {
+        comment_style: CommentStyle::Leave,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.contains("#\t\ttabbed"), "comment_style=leave should preserve tabs. Got: {}", result);
+}
+
+// Test comment_style=hash_no_space handles hash-only comments
+#[test]
+fn test_comment_style_hash_no_space_hash_only() {
+    let input = "set(SOURCES\n\t#\n\tvalue\n)\n";
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashNoSpace,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    // Hash-only comments should remain as just "#"
+    let lines: Vec<&str> = result.lines().collect();
+    let comment_line = lines.iter().find(|l| l.trim() == "#");
+    assert!(comment_line.is_some(), "Hash-only comment should remain as '#'. Got: {}", result);
+}
+
+// Test standalone comments respect comment_style
+#[test]
+fn test_standalone_comment_respects_comment_style() {
+    let input = "#no-space standalone\nset(X value)\n";
+    let config = FormatConfig {
+        comment_style: CommentStyle::Leave,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.starts_with("#no-space standalone"), "Standalone comment should preserve original with comment_style=leave. Got: {}", result);
+}
+
+// Test trailing comments respect comment_style
+#[test]
+fn test_trailing_comment_respects_comment_style() {
+    let input = "set(X value) #no-space trailing\n";
+    let config = FormatConfig {
+        comment_style: CommentStyle::Leave,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.contains("#no-space trailing"), "Trailing comment should preserve original with comment_style=leave. Got: {}", result);
 }

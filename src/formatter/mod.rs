@@ -8,7 +8,7 @@ mod suppression;
 mod user_commands;
 pub mod line_ranges;
 
-pub use config::{ClosingStyle, CommandCase, CommandGrammarConfig, FormatConfig, LineEnding, SortSources, SourceGrouping, UserCommandCase};
+pub use config::{ClosingStyle, CommandCase, CommentStyle, CommandGrammarConfig, FormatConfig, LineEnding, SortSources, SourceGrouping, UserCommandCase};
 pub use grammar::{
     detect_grammar_format, export_command_grammars, export_command_grammars_to_toml,
     export_command_grammars_to_yaml, export_grammars, export_grammars_to_toml,
