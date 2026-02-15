@@ -424,39 +424,74 @@ pub fn sort_source_args(section: &mut KeywordSection) {
         return;
     }
 
-    // Check if ALL args look like filenames. If any don't, skip sorting entirely
-    // for this section (mixed content like set(VAR_NAME file1.cpp file2.cpp) -
-    // the first arg is a variable name, not sortable with filenames)
-    // Exception: for keyword sections (keyword is Some), the args are just values
-    // For pre-keyword sections (keyword is None), first arg might be target name
-    // We handle this by only sorting sections where keyword is Some,
-    // OR where ALL args look like filenames.
-    let all_filenames = section.args.iter().all(|a| looks_like_filename(a));
-    if !all_filenames && section.keyword.is_none() {
-        return;
-    }
-    // For keyword sections, only sort if there are filenames to sort
-    if section.keyword.is_some() && !section.args.iter().any(|a| looks_like_filename(a)) {
-        return;
-    }
+    // Determine the range of args to sort
+    // For keyword sections (keyword is Some), sort all args
+    // For pre-keyword sections (keyword is None):
+    //   - If all args are filenames, sort all
+    //   - If first arg is not a filename but rest are (e.g., add_executable(target src1 src2)),
+    //     sort starting from index 1 (preserve target name)
+    //   - Otherwise, skip sorting
+    let (sort_start, _all_filenames) = if section.keyword.is_some() {
+        // Keyword section: sort all if any are filenames
+        let has_filenames = section.args.iter().any(|a| looks_like_filename(a));
+        if !has_filenames {
+            return;
+        }
+        (0, true)
+    } else {
+        // Pre-keyword section: check if we should sort
+        let all_filenames = section.args.iter().all(|a| looks_like_filename(a));
+        if all_filenames {
+            // All are filenames, sort all
+            (0, true)
+        } else if section.args.len() > 1 {
+            // Check if first is not a filename but rest are (common pattern: target_name + sources)
+            let first_not_filename = !looks_like_filename(&section.args[0]);
+            let rest_are_filenames = section.args[1..].iter().all(|a| looks_like_filename(a));
+            if first_not_filename && rest_are_filenames {
+                // Sort starting from index 1 (preserve first arg as target name)
+                (1, false)
+            } else {
+                // Mixed content, skip sorting
+                return;
+            }
+        } else {
+            // Only one arg, nothing to sort
+            return;
+        }
+    };
 
-    // Split into segments by blank lines
+    // Split into segments by blank lines, but only for the sortable range
     let mut segments: Vec<std::ops::Range<usize>> = Vec::new();
-    let mut seg_start = 0;
+    let mut seg_start = sort_start;
     for &bl in &section.blank_lines {
         if bl > seg_start && bl <= section.args.len() {
             segments.push(seg_start..bl);
             seg_start = bl;
         }
     }
-    segments.push(seg_start..section.args.len());
+    if seg_start < section.args.len() {
+        segments.push(seg_start..section.args.len());
+    }
 
     // For each segment, build sortable entries (arg + associated comments)
     // then sort and reassemble
     let mut new_args: Vec<String> = Vec::with_capacity(section.args.len());
     let mut new_comments: Vec<(usize, String)> = Vec::new();
-    // blank_lines positions remain the same (they're structural boundaries)
 
+    // First, preserve args before sort_start (e.g., target name in add_executable)
+    for idx in 0..sort_start {
+        let comments_at_pos: Vec<String> = section.comments.iter()
+            .filter(|(pos, _)| *pos == idx)
+            .map(|(_, text)| text.clone())
+            .collect();
+        for comment in comments_at_pos {
+            new_comments.push((new_args.len(), comment));
+        }
+        new_args.push(section.args[idx].clone());
+    }
+
+    // Now process sortable segments
     for seg in &segments {
         // Collect entries: each entry is (sort_key, arg, comments_before)
         struct SortEntry {
