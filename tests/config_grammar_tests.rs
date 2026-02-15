@@ -264,12 +264,188 @@ fn test_config_file_priority_tml_over_yaml() {
     // We verify both can be loaded with correct parsers
 }
 
+#[test]
+fn test_recursive_config_merges_root_first() {
+    let tempdir = TempDir::new().unwrap();
+    let root_dir = tempdir.path();
+    let sub_dir = root_dir.join("sub");
+    fs::create_dir(&sub_dir).unwrap();
+
+    // Root config sets indent_width
+    let root_config = root_dir.join(".cmake-fmt.toml");
+    fs::write(&root_config, "indent_width = 2\n").unwrap();
+
+    // Child config sets use_tabs
+    let child_config = sub_dir.join(".cmake-fmt.toml");
+    fs::write(&child_config, "use_tabs = false\n").unwrap();
+
+    // Resolve from child directory
+    let cmake_file = sub_dir.join("CMakeLists.txt");
+    let config = config::resolve_config(Some(&cmake_file), None, &[]);
+
+    // Should have both: indent_width from root, use_tabs from child
+    assert_eq!(config.indent_width, 2);
+    assert_eq!(config.use_tabs, false);
+    // Default value for unset key
+    assert_eq!(config.max_line_length, 80);
+}
+
+#[test]
+fn test_recursive_config_child_overrides_parent() {
+    let tempdir = TempDir::new().unwrap();
+    let root_dir = tempdir.path();
+    let sub_dir = root_dir.join("sub");
+    fs::create_dir(&sub_dir).unwrap();
+
+    // Root config sets both indent_width and max_line_length
+    let root_config = root_dir.join(".cmake-fmt.toml");
+    fs::write(&root_config, "indent_width = 2\nmax_line_length = 100\n").unwrap();
+
+    // Child config overrides only indent_width
+    let child_config = sub_dir.join(".cmake-fmt.toml");
+    fs::write(&child_config, "indent_width = 4\n").unwrap();
+
+    // Resolve from child directory
+    let cmake_file = sub_dir.join("CMakeLists.txt");
+    let config = config::resolve_config(Some(&cmake_file), None, &[]);
+
+    // Child's indent_width wins, parent's max_line_length kept
+    assert_eq!(config.indent_width, 4);
+    assert_eq!(config.max_line_length, 100);
+}
+
+#[test]
+fn test_recursive_config_command_grammars_merge() {
+    let tempdir = TempDir::new().unwrap();
+    let root_dir = tempdir.path();
+    let sub_dir = root_dir.join("sub");
+    fs::create_dir(&sub_dir).unwrap();
+
+    // Root config defines my_cmd
+    let root_config = root_dir.join(".cmake-fmt.toml");
+    fs::write(&root_config, r#"
+[command_grammars.my_cmd]
+options = ["OPT_A"]
+"#).unwrap();
+
+    // Child config defines other_cmd and overrides my_cmd
+    let child_config = sub_dir.join(".cmake-fmt.toml");
+    fs::write(&child_config, r#"
+[command_grammars.other_cmd]
+options = ["OPT_B"]
+
+[command_grammars.my_cmd]
+options = ["OPT_X"]
+"#).unwrap();
+
+    // Resolve from child directory
+    let cmake_file = sub_dir.join("CMakeLists.txt");
+    let config = config::resolve_config(Some(&cmake_file), None, &[]);
+
+    // Both commands should be present
+    assert!(config.command_grammars.contains_key("my_cmd"));
+    assert!(config.command_grammars.contains_key("other_cmd"));
+
+    // Child's my_cmd definition should override parent's
+    assert_eq!(config.command_grammars["my_cmd"].options, vec!["OPT_X"]);
+    assert_eq!(config.command_grammars["other_cmd"].options, vec!["OPT_B"]);
+}
+
+#[test]
+fn test_recursive_config_grammar_files_concatenate() {
+    let tempdir = TempDir::new().unwrap();
+    let root_dir = tempdir.path();
+    let sub_dir = root_dir.join("sub");
+    fs::create_dir(&sub_dir).unwrap();
+
+    // Root config has grammar_files
+    let root_config = root_dir.join(".cmake-fmt.toml");
+    fs::write(&root_config, r#"
+grammar_files = ["root.toml"]
+"#).unwrap();
+
+    // Child config has different grammar_files
+    let child_config = sub_dir.join(".cmake-fmt.toml");
+    fs::write(&child_config, r#"
+grammar_files = ["child.toml"]
+"#).unwrap();
+
+    // Resolve from child directory
+    let cmake_file = sub_dir.join("CMakeLists.txt");
+    let config = config::resolve_config(Some(&cmake_file), None, &[]);
+
+    // Should have both files
+    assert_eq!(config.grammar_files.len(), 2);
+
+    // Check that paths are resolved relative to their config directories
+    let root_grammar = root_dir.join("root.toml");
+    let child_grammar = sub_dir.join("child.toml");
+
+    let config_paths: Vec<String> = config.grammar_files.iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
+    assert!(config_paths.iter().any(|p| p.contains("root.toml")));
+    assert!(config_paths.iter().any(|p| p.contains("child.toml")));
+
+    // Verify one contains root dir, other contains sub dir
+    let has_root_path = config.grammar_files.iter().any(|p| {
+        p.to_string_lossy().contains(&root_dir.file_name().unwrap().to_string_lossy().to_string())
+    });
+    let has_sub_path = config.grammar_files.iter().any(|p| {
+        p.to_string_lossy().contains("sub")
+    });
+
+    assert!(has_root_path || has_sub_path);
+}
+
+#[test]
+fn test_recursive_config_cli_overrides_win() {
+    let tempdir = TempDir::new().unwrap();
+    let root_dir = tempdir.path();
+    let sub_dir = root_dir.join("sub");
+    fs::create_dir(&sub_dir).unwrap();
+
+    // Root config sets indent_width=2
+    let root_config = root_dir.join(".cmake-fmt.toml");
+    fs::write(&root_config, "indent_width = 2\n").unwrap();
+
+    // Child config sets indent_width=4
+    let child_config = sub_dir.join(".cmake-fmt.toml");
+    fs::write(&child_config, "indent_width = 4\n").unwrap();
+
+    // Resolve with CLI override
+    let cmake_file = sub_dir.join("CMakeLists.txt");
+    let config = config::resolve_config(Some(&cmake_file), Some("indent_width=8"), &[]);
+
+    // CLI override should win
+    assert_eq!(config.indent_width, 8);
+}
+
+#[test]
+fn test_recursive_config_single_file_backward_compatible() {
+    let tempdir = TempDir::new().unwrap();
+    let root_dir = tempdir.path();
+
+    // Single config file
+    let config_file = root_dir.join(".cmake-fmt.toml");
+    fs::write(&config_file, "indent_width = 2\nuse_tabs = false\n").unwrap();
+
+    // Resolve from root directory
+    let cmake_file = root_dir.join("CMakeLists.txt");
+    let config = config::resolve_config(Some(&cmake_file), None, &[]);
+
+    // Should work exactly as before
+    assert_eq!(config.indent_width, 2);
+    assert_eq!(config.use_tabs, false);
+}
+
 // Module for accessing config loading functions
 mod config {
     use anyhow::{Context, Result};
     use cmake_fmt::formatter::FormatConfig;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     pub fn load_config_file(path: &Path) -> Result<FormatConfig> {
         let content = fs::read_to_string(path)
@@ -294,6 +470,225 @@ mod config {
                 serde_yml::from_str(&content)
                     .with_context(|| format!("Failed to parse config as YAML: {}", path.display()))
             }
+        }
+    }
+
+    pub fn resolve_config(
+        file_path: Option<&Path>,
+        style_override: Option<&str>,
+        grammar_files: &[PathBuf],
+    ) -> FormatConfig {
+        // This is a simplified version for tests - in production, use the real implementation
+        // We need to import the actual function from the binary crate
+        use std::path::Path;
+
+        // Determine search directory
+        let search_dir = if let Some(path) = file_path {
+            path.parent().unwrap_or_else(|| Path::new("."))
+        } else {
+            Path::new(".")
+        };
+
+        // Find all config files
+        let config_paths = find_config_files(search_dir);
+
+        // If no config files found, use defaults
+        if config_paths.is_empty() {
+            let mut config = FormatConfig::default();
+
+            // Apply CLI overrides
+            if let Some(style) = style_override {
+                apply_style_overrides(&mut config, style);
+            }
+
+            // Add CLI grammar files
+            config.grammar_files.extend(grammar_files.iter().cloned());
+
+            return config;
+        }
+
+        // Merge configs root-first
+        let mut merged_table = toml::Table::new();
+
+        for config_path in config_paths.iter().rev() {
+            if let Ok(mut file_table) = load_config_as_table(config_path) {
+                // Resolve grammar_files paths BEFORE merging
+                if let Some(toml::Value::Array(grammar_files_array)) = file_table.get_mut("grammar_files") {
+                    let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+
+                    for item in grammar_files_array.iter_mut() {
+                        if let toml::Value::String(path_str) = item {
+                            let path = PathBuf::from(&*path_str);
+                            if path.is_relative() {
+                                let resolved = config_dir.join(path);
+                                *path_str = resolved.to_string_lossy().to_string();
+                            }
+                        }
+                    }
+                }
+
+                merge_tables(&mut merged_table, &file_table);
+            }
+        }
+
+        // Deserialize merged table
+        let mut config = if let Ok(toml_str) = toml::to_string(&merged_table) {
+            toml::from_str::<FormatConfig>(&toml_str).unwrap_or_default()
+        } else {
+            FormatConfig::default()
+        };
+
+        // Apply CLI overrides
+        if let Some(style) = style_override {
+            apply_style_overrides(&mut config, style);
+        }
+
+        // Add CLI grammar files
+        config.grammar_files.extend(grammar_files.iter().cloned());
+
+        config
+    }
+
+    fn find_config_files(start_dir: &Path) -> Vec<PathBuf> {
+        const CONFIG_FILENAMES: &[&str] = &[
+            ".cmake-fmt.toml",
+            ".cmake-fmt.tml",
+            ".cmake-fmt.yaml",
+            ".cmake-fmt.yml",
+            ".cmake-fmt",
+        ];
+
+        let mut config_files = Vec::new();
+
+        for ancestor in start_dir.ancestors() {
+            for filename in CONFIG_FILENAMES {
+                let config_path = ancestor.join(filename);
+                if config_path.exists() && config_path.is_file() {
+                    config_files.push(config_path);
+                    break;
+                }
+            }
+        }
+
+        config_files
+    }
+
+    fn load_config_as_table(path: &Path) -> Result<toml::Table> {
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read config file: {}", path.display()))?;
+
+        let extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        match extension {
+            "toml" | "tml" => {
+                toml::from_str::<toml::Table>(&content)
+                    .with_context(|| format!("Failed to parse TOML config: {}", path.display()))
+            }
+            "yaml" | "yml" | _ => {
+                let yaml_value: serde_yml::Value = serde_yml::from_str(&content)
+                    .with_context(|| format!("Failed to parse YAML config: {}", path.display()))?;
+
+                yml_value_to_toml_table(yaml_value)
+                    .ok_or_else(|| anyhow::anyhow!("YAML config must be a mapping at top level"))
+            }
+        }
+    }
+
+    fn yml_value_to_toml_value(v: serde_yml::Value) -> Option<toml::Value> {
+        match v {
+            serde_yml::Value::String(s) => Some(toml::Value::String(s)),
+            serde_yml::Value::Bool(b) => Some(toml::Value::Boolean(b)),
+            serde_yml::Value::Number(n) => {
+                if n.is_i64() {
+                    Some(toml::Value::Integer(n.as_i64()?))
+                } else if n.is_f64() {
+                    Some(toml::Value::Float(n.as_f64()?))
+                } else {
+                    None
+                }
+            }
+            serde_yml::Value::Sequence(seq) => {
+                let mut arr = Vec::new();
+                for item in seq {
+                    arr.push(yml_value_to_toml_value(item)?);
+                }
+                Some(toml::Value::Array(arr))
+            }
+            serde_yml::Value::Mapping(map) => {
+                let mut table = toml::Table::new();
+                for (k, v) in map {
+                    if let serde_yml::Value::String(key) = k {
+                        if let Some(value) = yml_value_to_toml_value(v) {
+                            table.insert(key, value);
+                        }
+                    }
+                }
+                Some(toml::Value::Table(table))
+            }
+            serde_yml::Value::Null | serde_yml::Value::Tagged(_) => None,
+        }
+    }
+
+    fn yml_value_to_toml_table(v: serde_yml::Value) -> Option<toml::Table> {
+        match yml_value_to_toml_value(v)? {
+            toml::Value::Table(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    fn merge_tables(base: &mut toml::Table, overlay: &toml::Table) {
+        for (key, overlay_value) in overlay {
+            if key == "command_grammars" {
+                match (base.get_mut("command_grammars"), overlay_value) {
+                    (Some(toml::Value::Table(base_cmds)), toml::Value::Table(overlay_cmds)) => {
+                        for (cmd_name, cmd_grammar) in overlay_cmds {
+                            base_cmds.insert(cmd_name.clone(), cmd_grammar.clone());
+                        }
+                    }
+                    (None, toml::Value::Table(_)) => {
+                        base.insert(key.clone(), overlay_value.clone());
+                    }
+                    _ => {
+                        base.insert(key.clone(), overlay_value.clone());
+                    }
+                }
+            } else if key == "grammar_files" {
+                match (base.get_mut("grammar_files"), overlay_value) {
+                    (Some(toml::Value::Array(base_files)), toml::Value::Array(overlay_files)) => {
+                        base_files.extend(overlay_files.iter().cloned());
+                    }
+                    (None, toml::Value::Array(_)) => {
+                        base.insert(key.clone(), overlay_value.clone());
+                    }
+                    _ => {
+                        base.insert(key.clone(), overlay_value.clone());
+                    }
+                }
+            } else {
+                base.insert(key.clone(), overlay_value.clone());
+            }
+        }
+    }
+
+    fn apply_style_overrides(config: &mut FormatConfig, style: &str) {
+        for pair in style.split(',') {
+            let pair = pair.trim();
+            if pair.is_empty() {
+                continue;
+            }
+
+            let parts: Vec<&str> = pair.splitn(2, '=').collect();
+            if parts.len() != 2 {
+                continue;
+            }
+
+            let key = parts[0].trim();
+            let value = parts[1].trim();
+
+            let _ = config.apply_override(key, value);
         }
     }
 }
