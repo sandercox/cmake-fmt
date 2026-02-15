@@ -1041,3 +1041,30 @@ fn test_trailing_comment_respects_comment_style() {
     let result = format_text(input, &config);
     assert!(result.contains("#no-space trailing"), "Trailing comment should preserve original with comment_style=leave. Got: {}", result);
 }
+
+// ============================================================================
+// DISABLE_FORMAT TESTS
+// ============================================================================
+
+#[test]
+fn test_disable_format_returns_input_unchanged() {
+    let input = "set(  FOO   BAR  )\n";
+    let config = FormatConfig {
+        disable_format: true,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert_eq!(result, input, "disable_format=true should return input unchanged");
+}
+
+#[test]
+fn test_disable_format_false_still_formats() {
+    let input = "set(  FOO   BAR  )\n";
+    let config = FormatConfig {
+        disable_format: false,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert_ne!(result, input, "disable_format=false (default) should still format input");
+    assert_eq!(result, "set(FOO BAR)\n", "Expected properly formatted output");
+}

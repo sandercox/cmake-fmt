@@ -87,6 +87,7 @@ fn print_style_help() {
     println!();
     println!("  {:<25} {:<15} {:<15} {}", "Setting", "Type", "Default", "Values");
     println!("  {:<25} {:<15} {:<15} {}", "-------", "----", "-------", "------");
+    println!("  {:<25} {:<15} {:<15} {}", "disable_format", "boolean", "false", "true, false — skip formatting entirely");
     println!("  {:<25} {:<15} {:<15} {}", "indent_width", "integer", "4", "Number of spaces per indent level");
     println!("  {:<25} {:<15} {:<15} {}", "max_line_length", "integer", "80", "Max line length (0 = unlimited)");
     println!("  {:<25} {:<15} {:<15} {}", "use_tabs", "boolean", "true", "true, false");

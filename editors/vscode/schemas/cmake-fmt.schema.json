@@ -5,6 +5,11 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "disable_format": {
+      "type": "boolean",
+      "default": false,
+      "description": "Completely skip formatting and return input unchanged. Place a config with disable_format = true in a subdirectory to exclude that subtree from formatting."
+    },
     "max_line_length": {
       "type": "integer",
       "default": 80,
