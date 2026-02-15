@@ -97,6 +97,7 @@ fn print_style_help() {
     println!("  {:<25} {:<15} {:<15} {}", "closing_style", "enum", "remove", "leave, remove, force");
     println!("  {:<25} {:<15} {:<15} {}", "force_break_keywords", "boolean", "false", "true, false");
     println!("  {:<25} {:<15} {:<15} {}", "source_grouping", "enum", "none", "none, headers_first, sources_first");
+    println!("  {:<25} {:<15} {:<15} {}", "sort_sources", "enum", "none", "none, alphabetical");
     println!();
     println!("CLI usage:  cmake-fmt --style \"indent_width=4,max_line_length=120\" <file>");
     println!();

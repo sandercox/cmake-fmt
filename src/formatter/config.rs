@@ -36,6 +36,8 @@ pub struct FormatConfig {
 
     /// Source file grouping mode for .h/.cpp pairs (default: None)
     pub source_grouping: SourceGrouping,
+    /// Source file sorting mode (default: None)
+    pub sort_sources: SortSources,
 }
 
 impl Default for FormatConfig {
@@ -53,6 +55,7 @@ impl Default for FormatConfig {
             command_grammars: HashMap::new(),
             grammar_files: Vec::new(),
             source_grouping: SourceGrouping::None,
+            sort_sources: SortSources::None,
         }
     }
 }
@@ -259,6 +262,22 @@ impl FormatConfig {
                     )),
                 }
             }
+            "sort_sources" => {
+                match value {
+                    "none" => {
+                        self.sort_sources = SortSources::None;
+                        Ok(())
+                    }
+                    "alphabetical" => {
+                        self.sort_sources = SortSources::Alphabetical;
+                        Ok(())
+                    }
+                    _ => Err(format!(
+                        "Invalid value for sort_sources (expected none or alphabetical): {}",
+                        value
+                    )),
+                }
+            }
             "force_break_keywords" => {
                 match value.parse::<bool>() {
                     Ok(v) => {
@@ -286,6 +305,22 @@ pub enum SourceGrouping {
 }
 
 impl Default for SourceGrouping {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+/// Source file sorting mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortSources {
+    /// No sorting (default) - preserve original order
+    None,
+    /// Sort filenames alphabetically (case-insensitive)
+    Alphabetical,
+}
+
+impl Default for SortSources {
     fn default() -> Self {
         Self::None
     }

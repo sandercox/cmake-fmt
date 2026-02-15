@@ -391,6 +391,137 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
     parse_keyword_sections_with_grammar(arg_list, None)
 }
 
+/// Check if a string looks like a filename (has extension or path separator)
+fn looks_like_filename(s: &str) -> bool {
+    // Must contain a dot with extension, or path separators
+    // Exclude CMake variables like ${VAR}, generator expressions $<...>
+    if s.starts_with("${") || s.starts_with("$<") || s.starts_with("$ENV{") || s.starts_with("$CACHE{") {
+        return false;
+    }
+    // Check for file extension (dot followed by at least 1 char, not at start)
+    if let Some(dot_pos) = s.rfind('.') {
+        if dot_pos > 0 && dot_pos < s.len() - 1 {
+            return true;
+        }
+    }
+    // Check for path separators
+    s.contains('/') || s.contains('\\')
+}
+
+/// Sort source file arguments within a section, respecting blank line boundaries
+/// and keeping comments in sync with their associated filenames.
+///
+/// Rules:
+/// - Only sort items that look like filenames (have extensions or path separators)
+/// - Blank lines create separate sortable segments
+/// - Comments at position N are associated with the filename at position N
+///   (i.e., comment before a filename moves with that filename)
+/// - Paired entries from source_grouping (e.g., "foo.h foo.cpp") sort as a unit
+///   using their first component as sort key
+/// - Case-insensitive sort
+pub fn sort_source_args(section: &mut KeywordSection) {
+    if section.args.is_empty() {
+        return;
+    }
+
+    // Check if ALL args look like filenames. If any don't, skip sorting entirely
+    // for this section (mixed content like set(VAR_NAME file1.cpp file2.cpp) -
+    // the first arg is a variable name, not sortable with filenames)
+    // Exception: for keyword sections (keyword is Some), the args are just values
+    // For pre-keyword sections (keyword is None), first arg might be target name
+    // We handle this by only sorting sections where keyword is Some,
+    // OR where ALL args look like filenames.
+    let all_filenames = section.args.iter().all(|a| looks_like_filename(a));
+    if !all_filenames && section.keyword.is_none() {
+        return;
+    }
+    // For keyword sections, only sort if there are filenames to sort
+    if section.keyword.is_some() && !section.args.iter().any(|a| looks_like_filename(a)) {
+        return;
+    }
+
+    // Split into segments by blank lines
+    let mut segments: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut seg_start = 0;
+    for &bl in &section.blank_lines {
+        if bl > seg_start && bl <= section.args.len() {
+            segments.push(seg_start..bl);
+            seg_start = bl;
+        }
+    }
+    segments.push(seg_start..section.args.len());
+
+    // For each segment, build sortable entries (arg + associated comments)
+    // then sort and reassemble
+    let mut new_args: Vec<String> = Vec::with_capacity(section.args.len());
+    let mut new_comments: Vec<(usize, String)> = Vec::new();
+    // blank_lines positions remain the same (they're structural boundaries)
+
+    for seg in &segments {
+        // Collect entries: each entry is (sort_key, arg, comments_before)
+        struct SortEntry {
+            sort_key: String,
+            arg: String,
+            comments: Vec<String>, // comments positioned before this arg
+        }
+
+        let mut entries: Vec<SortEntry> = Vec::new();
+
+        for idx in seg.clone() {
+            // Collect comments at this position (positioned before this arg)
+            let comments_at_pos: Vec<String> = section.comments.iter()
+                .filter(|(pos, _)| *pos == idx)
+                .map(|(_, text)| text.clone())
+                .collect();
+
+            let arg = &section.args[idx];
+
+            // Check if this is a commented-out filename in the comments
+            // (handled by keeping comments associated with args)
+
+            // Sort key: case-insensitive, use first component for paired entries
+            let sort_key = if arg.contains(' ') {
+                // Paired entry (e.g., "foo.h foo.cpp") - sort by first component
+                arg.split_whitespace().next().unwrap_or(arg).to_lowercase()
+            } else {
+                arg.to_lowercase()
+            };
+
+            entries.push(SortEntry {
+                sort_key,
+                arg: arg.clone(),
+                comments: comments_at_pos,
+            });
+        }
+
+        // Also collect comments that are at position == seg.end (trailing comments of segment)
+        // These go after the last entry
+
+        // Sort entries by sort key (stable sort preserves order of equal keys)
+        entries.sort_by(|a, b| a.sort_key.cmp(&b.sort_key));
+
+        // Reassemble into new_args and new_comments
+        let base = new_args.len();
+        for (i, entry) in entries.iter().enumerate() {
+            let pos = base + i;
+            for comment in &entry.comments {
+                new_comments.push((pos, comment.clone()));
+            }
+            new_args.push(entry.arg.clone());
+        }
+    }
+
+    // Handle trailing comments (comments at position == args.len())
+    for (pos, text) in &section.comments {
+        if *pos == section.args.len() {
+            new_comments.push((new_args.len(), text.clone()));
+        }
+    }
+
+    section.args = new_args;
+    section.comments = new_comments;
+}
+
 /// Format arguments for a keyword-aware command
 pub fn format_keyword_aware_args(
     arg_list: &ArgumentList,
@@ -410,6 +541,14 @@ pub fn format_keyword_aware_args(
     // Config override: force_break_keywords always forces multiline
     if config.force_break_keywords {
         signals.force_multiline = true;
+    }
+
+    // Apply sorting if enabled (do this BEFORE source grouping)
+    let mut sections = sections; // make mutable
+    if config.sort_sources != super::config::SortSources::None {
+        for section in &mut sections {
+            sort_source_args(section);
+        }
     }
 
     // Check if we have any actual keywords (not just pre-keyword args)
@@ -938,6 +1077,15 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
     if !force_multiline {
         docs.push(RcDoc::flat_alt(RcDoc::nil(), RcDoc::nil()));
     }
+
+    // Apply sorting if enabled (do this BEFORE source grouping)
+    let mut sections_owned: Vec<KeywordSection> = sections.to_vec();
+    if config.sort_sources != super::config::SortSources::None {
+        for section in &mut sections_owned {
+            sort_source_args(section);
+        }
+    }
+    let sections = &sections_owned;
 
     // Collect all args and comments from all sections
     for section in sections {

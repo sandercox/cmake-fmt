@@ -9,6 +9,8 @@ pub enum Directive {
     On,
     /// Skip formatting for the next command only
     Skip,
+    /// Disable sorting for the next command only
+    NoSort,
     /// Style override (key=value)
     Style { key: String, value: String },
 }
@@ -79,6 +81,7 @@ pub fn parse_directive(comment: &str) -> Option<Directive> {
         "off" => Some(Directive::Off),
         "on" => Some(Directive::On),
         "skip" => Some(Directive::Skip),
+        "no-sort" => Some(Directive::NoSort),
         _ => {
             // Check for style override (key=value)
             if let Some(eq_pos) = after_prefix.find('=') {
@@ -104,6 +107,8 @@ pub struct SuppressionTracker {
     start_line: Option<usize>,
     /// Whether the next command should be skipped
     skip_next: bool,
+    /// Whether sorting should be skipped for the next command
+    skip_sort_next: bool,
     /// Accumulated warnings
     warnings: Vec<SuppressionWarning>,
 }
@@ -115,6 +120,7 @@ impl SuppressionTracker {
             active: false,
             start_line: None,
             skip_next: false,
+            skip_sort_next: false,
             warnings: Vec::new(),
         }
     }
@@ -147,6 +153,10 @@ impl SuppressionTracker {
                 // Set skip flag for next command
                 self.skip_next = true;
             }
+            Directive::NoSort => {
+                // Set no-sort flag for next command
+                self.skip_sort_next = true;
+            }
             Directive::Style { .. } => {
                 // Style directives are not suppression directives
                 // They should be handled separately in format_file
@@ -167,6 +177,16 @@ impl SuppressionTracker {
     /// Clear the skip flag (after consuming it)
     pub fn clear_skip(&mut self) {
         self.skip_next = false;
+    }
+
+    /// Check if sorting should be skipped for the next command
+    pub fn should_skip_sort_next(&self) -> bool {
+        self.skip_sort_next
+    }
+
+    /// Clear the skip sort flag (after consuming it)
+    pub fn clear_skip_sort(&mut self) {
+        self.skip_sort_next = false;
     }
 
     /// Finalize tracking and check for unclosed regions
@@ -216,6 +236,12 @@ mod tests {
     fn test_parse_directive_skip() {
         assert_eq!(parse_directive("# cmake-fmt: skip"), Some(Directive::Skip));
         assert_eq!(parse_directive("# cmake-fmt:skip"), Some(Directive::Skip));
+    }
+
+    #[test]
+    fn test_parse_directive_no_sort() {
+        assert_eq!(parse_directive("# cmake-fmt: no-sort"), Some(Directive::NoSort));
+        assert_eq!(parse_directive("# cmake-fmt:no-sort"), Some(Directive::NoSort));
     }
 
     #[test]

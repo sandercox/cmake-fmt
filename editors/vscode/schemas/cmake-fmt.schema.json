@@ -63,6 +63,12 @@
       "default": "none",
       "description": "Source file grouping mode for .h/.cpp pairs. 'none' puts each file on its own line, 'headers_first' and 'sources_first' group pairs on the same line."
     },
+    "sort_sources": {
+      "type": "string",
+      "enum": ["none", "alphabetical"],
+      "default": "none",
+      "description": "Auto-sort filenames in set/add_executable/add_library/target_sources commands. 'none' preserves original order, 'alphabetical' sorts case-insensitively. Use '# cmake-fmt: no-sort' to disable for a single statement."
+    },
     "grammar_files": {
       "type": "array",
       "items": {

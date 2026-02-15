@@ -304,9 +304,23 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                 current_indent
                             };
 
+                            // Handle no-sort directive: temporarily disable sorting for this command
+                            let should_skip_sort = tracker.should_skip_sort_next();
+                            let temp_config;
+                            let effective_config = if should_skip_sort {
+                                tracker.clear_skip_sort();
+                                temp_config = FormatConfig {
+                                    sort_sources: super::config::SortSources::None,
+                                    ..config.clone()
+                                };
+                                &temp_config
+                            } else {
+                                &config
+                            };
+
                             // Create context for this command
                             let cmd_ctx = FormatContext {
-                                config: &config,
+                                config: effective_config,
                                 indent_level: cmd_indent,
                                 user_defs: ctx.user_defs,
                                 user_grammars: ctx.user_grammars,
