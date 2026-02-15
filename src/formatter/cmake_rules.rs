@@ -699,6 +699,10 @@ pub fn format_keyword_aware_args(
                         if use_per_line {
                             let mut comment_iter = section.comments.iter().peekable();
                             for (arg_idx, arg) in section.args.iter().enumerate() {
+                                // Blank line before comments to preserve ordering
+                                if section.blank_lines.contains(&arg_idx) && signals.force_multiline {
+                                    docs.push(RcDoc::hardline());
+                                }
                                 while let Some((pos, comment)) = comment_iter.peek() {
                                     if *pos == arg_idx {
                                         if signals.force_multiline {
@@ -715,9 +719,6 @@ pub fn format_keyword_aware_args(
                                     } else {
                                         break;
                                     }
-                                }
-                                if section.blank_lines.contains(&arg_idx) && signals.force_multiline {
-                                    docs.push(RcDoc::hardline());
                                 }
                                 if signals.force_multiline {
                                     docs.push(RcDoc::hardline());
@@ -1014,6 +1015,11 @@ pub fn format_keyword_aware_args(
                             let mut comment_iter = section.comments.iter().peekable();
 
                             for (arg_idx, arg) in effective_args.iter().enumerate() {
+                                // Blank line before comments to preserve ordering
+                                if effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                                    docs.push(RcDoc::hardline());
+                                }
+
                                 while let Some((pos, comment)) = comment_iter.peek() {
                                     if *pos == arg_idx {
                                         if signals.force_multiline {
@@ -1030,10 +1036,6 @@ pub fn format_keyword_aware_args(
                                     } else {
                                         break;
                                     }
-                                }
-
-                                if effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
-                                    docs.push(RcDoc::hardline());
                                 }
 
                                 if signals.force_multiline {
@@ -1107,6 +1109,12 @@ pub fn format_keyword_aware_args(
             let mut comment_iter = section.comments.iter().peekable();
 
             for (arg_idx, arg) in effective_args.iter().enumerate() {
+                // Check for blank line before this argument (before comments to preserve ordering)
+                if effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                    docs.push(RcDoc::hardline());
+                    is_first_arg = false;
+                }
+
                 // Emit comments before this argument
                 while let Some((pos, comment)) = comment_iter.peek() {
                     if *pos == arg_idx {
@@ -1125,12 +1133,6 @@ pub fn format_keyword_aware_args(
                     } else {
                         break;
                     }
-                }
-
-                // Check for blank line before this argument
-                if effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
-                    docs.push(RcDoc::hardline());
-                    is_first_arg = false;
                 }
 
                 if is_first_arg && !is_list {
