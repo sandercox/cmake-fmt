@@ -840,3 +840,50 @@ fn test_blank_line_between_commands_across_batch_boundary() {
             .unwrap_or_else(|| "VAR_259 not found".to_string())
     );
 }
+
+// ============================================================================
+// FINAL_NEWLINE TESTS
+// ============================================================================
+
+#[test]
+fn test_final_newline_true_default() {
+    let input = "set(FOO bar)";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, "set(FOO bar)\n", "Default config should add trailing newline");
+}
+
+#[test]
+fn test_final_newline_false_no_trailing_newline() {
+    let input = "set(FOO bar)\n";
+    let mut config = default_config();
+    config.final_newline = false;
+    let result = format_text(input, &config);
+    assert_eq!(result, "set(FOO bar)", "final_newline=false should not add trailing newline");
+}
+
+#[test]
+fn test_final_newline_false_empty_input() {
+    let input = "";
+    let mut config = default_config();
+    config.final_newline = false;
+    let result = format_text(input, &config);
+    assert_eq!(result, "", "Empty input should remain empty regardless of final_newline");
+}
+
+#[test]
+fn test_final_newline_false_multiline() {
+    let input = "set(A b)\nset(C d)\n";
+    let mut config = default_config();
+    config.final_newline = false;
+    let result = format_text(input, &config);
+    assert_eq!(result, "set(A b)\nset(C d)", "final_newline=false should not add trailing newline on multiline");
+}
+
+#[test]
+fn test_final_newline_true_preserves_existing_behavior() {
+    let input = "set(FOO bar)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, "set(FOO bar)\n", "final_newline=true (default) should preserve single trailing newline");
+}

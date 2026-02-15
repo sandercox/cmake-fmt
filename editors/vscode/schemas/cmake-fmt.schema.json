@@ -57,6 +57,11 @@
       "default": false,
       "description": "Force keyword-aware commands to use multiline layout regardless of line length"
     },
+    "final_newline": {
+      "type": "boolean",
+      "default": true,
+      "description": "Ensure file ends with a newline. When false, the formatter will not append a trailing newline."
+    },
     "source_grouping": {
       "type": "string",
       "enum": ["none", "headers_first", "sources_first"],
