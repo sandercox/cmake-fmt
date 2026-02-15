@@ -9,9 +9,9 @@ use super::cst_to_doc::detect_argument_formatting_signals;
 use super::grammar::{CommandGrammar, KeywordType};
 
 /// Recognized header extensions
-const HEADER_EXTS: &[&str] = &["h", "hh", "hpp", "hxx", "h++", "H"];
+const HEADER_EXTS: &[&str] = &["h", "hh", "hpp", "hxx", "h++", "H", "vert"];
 /// Recognized source extensions
-const SOURCE_EXTS: &[&str] = &["c", "cc", "cpp", "cxx", "c++", "C", "m", "mm"];
+const SOURCE_EXTS: &[&str] = &["c", "cc", "cpp", "cxx", "c++", "C", "m", "mm", "frag"];
 
 /// Check if a filename has a header extension
 fn is_header_file(name: &str) -> bool {

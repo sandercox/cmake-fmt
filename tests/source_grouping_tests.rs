@@ -207,6 +207,30 @@ max_line_length = 100
 }
 
 #[test]
+fn test_source_grouping_vert_frag_pairs() {
+    let input =
+        "target_sources(mylib\n\tPUBLIC\n\t\tshader.frag\n\t\tshader.vert\n\t\teffect.frag\n\t\teffect.vert\n)";
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+    let output = format_text(input, &config);
+
+    // .vert is header, .frag is source — headers_first means vert before frag
+    assert!(
+        output.contains("shader.vert shader.frag"),
+        "Expected 'shader.vert shader.frag' in output:\n{}",
+        output
+    );
+    assert!(
+        output.contains("effect.vert effect.frag"),
+        "Expected 'effect.vert effect.frag' in output:\n{}",
+        output
+    );
+}
+
+#[test]
 fn test_source_grouping_idempotent() {
     let input = "target_sources(mylib\n\tPUBLIC\n\t\ta.cpp\n\t\ta.h\n\t\tb.cpp\n\t\tb.h\n)";
     let config = FormatConfig {
