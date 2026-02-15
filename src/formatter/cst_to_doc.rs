@@ -248,6 +248,14 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                 }
                             }
 
+                            // Emit blank lines between last leading comment and command
+                            if has_emittable_leading && blank_line_count >= 2 {
+                                let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, config.max_blank_lines);
+                                for _ in 0..blank_lines_to_emit {
+                                    docs.push(RcDoc::hardline());
+                                }
+                            }
+
                             // Emit the command itself as raw text
                             let raw_text = child_node.text().to_string();
                             let indent_str = indent_string(current_indent, &config);
@@ -285,6 +293,14 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                     lc.text.clone()
                                 };
                                 docs.push(RcDoc::text(format!("{}{}", indent_str, text)));
+                                docs.push(RcDoc::hardline());
+                            }
+                        }
+
+                        // Emit blank lines between last leading comment and command
+                        if has_emittable_leading && blank_line_count >= 2 {
+                            let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, config.max_blank_lines);
+                            for _ in 0..blank_lines_to_emit {
                                 docs.push(RcDoc::hardline());
                             }
                         }
@@ -453,14 +469,10 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                             docs.push(RcDoc::hardline());
                             blank_line_count = 0;
                         } else {
-                            // Handled comment (leading/trailing of a command): it occupies
-                            // a line, so its structural newlines shouldn't count as blank
-                            // lines. Reset to 0 only if no blank line was already detected;
-                            // if blank_line_count >= 2, a real blank line preceded this
-                            // comment block and should be preserved.
-                            if blank_line_count < 2 {
-                                blank_line_count = 0;
-                            }
+                            // Handled comment: blank lines before it are captured in
+                            // extract_leading_comments() metadata. Reset so post-comment
+                            // newlines are tracked independently.
+                            blank_line_count = 0;
                         }
                     }
                     SyntaxKind::NEWLINE => {
