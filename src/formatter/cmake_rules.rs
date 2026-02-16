@@ -636,12 +636,16 @@ pub fn sort_source_args(section: &mut KeywordSection) {
 /// `first_keyword_inline`: when true, the first keyword (SingleValue or Flag) stays on the
 /// same line as the command name (used for multi-mode commands like `list(APPEND var)`
 /// or `define_property(TEST PROPERTY name)`).
+/// `builtin_grammar`: when true, Flag keywords after positional args stay inline
+/// (e.g., `add_library(mylib STATIC ...)`). When false (user/auto-detected grammars),
+/// flags break to new lines like other keywords.
 pub fn format_keyword_aware_args(
     arg_list: &ArgumentList,
     sections: Vec<KeywordSection>,
     config: &FormatConfig,
     indent_level: usize,
     first_keyword_inline: bool,
+    builtin_grammar: bool,
 ) -> RcDoc<'static, ()> {
     if sections.is_empty() {
         return RcDoc::nil();
@@ -716,12 +720,12 @@ pub fn format_keyword_aware_args(
                             ));
                         }
                     } else {
-                        // Consecutive flags or flag after pre-keyword args: group with space
+                        // Consecutive flags group with space; builtin flags after positional args stay inline
                         let prev_is_flag = matches!(
                             sections.get(i.saturating_sub(1)),
                             Some(prev) if prev.keyword_type == Some(KeywordType::Flag)
                         );
-                        let prev_is_pre_keyword = matches!(
+                        let prev_is_pre_keyword = builtin_grammar && matches!(
                             sections.get(i.saturating_sub(1)),
                             Some(prev) if prev.keyword.is_none()
                         );
