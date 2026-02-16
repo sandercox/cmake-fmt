@@ -1718,3 +1718,106 @@ configure_file(
     let pass2 = format_text(&pass1, &config);
     assert_eq!(pass1, pass2, "Second pass should be identical (idempotent)");
 }
+
+// ============================================================================
+// BLANK LINES BETWEEN COMMENT BLOCKS TESTS
+// ============================================================================
+
+#[test]
+fn test_blank_lines_between_comment_blocks_in_set() {
+    let input = "\
+set(SOURCES
+\tfile1.hpp
+\tfile2.cpp
+
+\t# delay_meter/class.hpp
+\t# delay_meter/class.cpp
+
+\t# fdn_reverb/class.hpp
+\t# fdn_reverb/class.cpp
+)
+";
+    let result = format_text(input, &default_config());
+    // Blank line between the two comment groups must be preserved
+    assert!(result.contains("# delay_meter/class.cpp\n\n\t# fdn_reverb/class.hpp"),
+        "Expected blank line between comment groups, got:\n{}", result);
+}
+
+#[test]
+fn test_blank_lines_between_three_comment_blocks() {
+    let input = "\
+set(SOURCES
+\tfile1.cpp
+
+\t# group A
+\t# group A continued
+
+\t# group B
+\t# group B continued
+
+\t# group C
+)
+";
+    let result = format_text(input, &default_config());
+    assert!(result.contains("# group A continued\n\n\t# group B"),
+        "Expected blank line between groups A and B, got:\n{}", result);
+    assert!(result.contains("# group B continued\n\n\t# group C"),
+        "Expected blank line between groups B and C, got:\n{}", result);
+}
+
+#[test]
+fn test_blank_lines_between_comment_blocks_with_keyword() {
+    let input = "\
+target_sources(mylib
+\tPRIVATE
+\t\tfile1.cpp
+\t\tfile2.cpp
+\t\tfile3.cpp
+
+\t\t# audio sources
+\t\t# audio/engine.cpp
+
+\t\t# video sources
+\t\t# video/renderer.cpp
+)
+";
+    let result = format_text(input, &default_config());
+    assert!(result.contains("# audio/engine.cpp\n\n\t\t# video sources"),
+        "Expected blank line between comment groups under keyword, got:\n{}", result);
+}
+
+#[test]
+fn test_blank_lines_between_comment_blocks_at_end() {
+    let input = "\
+set(SOURCES
+\tfile1.cpp
+\tfile2.cpp
+
+\t# disabled module A
+\t# module_a/foo.cpp
+
+\t# disabled module B
+\t# module_b/bar.cpp
+)
+";
+    let result = format_text(input, &default_config());
+    assert!(result.contains("# module_a/foo.cpp\n\n\t# disabled module B"),
+        "Expected blank line between trailing comment blocks, got:\n{}", result);
+}
+
+#[test]
+fn test_existing_blank_line_and_comment_behavior_preserved() {
+    let input = "\
+set(SOURCES
+\tfile1.cpp
+
+\t# section header
+\tfile2.cpp
+\tfile3.cpp
+)
+";
+    let result = format_text(input, &default_config());
+    // Blank line before comment, comment before file2
+    assert!(result.contains("file1.cpp\n\n\t# section header\n\tfile2.cpp"),
+        "Expected preserved blank line + comment + arg ordering, got:\n{}", result);
+}
