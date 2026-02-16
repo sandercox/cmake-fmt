@@ -9,7 +9,7 @@ use super::cst_to_doc::detect_argument_formatting_signals;
 use super::grammar::{CommandGrammar, KeywordType};
 
 /// Recognized header extensions
-const HEADER_EXTS: &[&str] = &["h", "hh", "hpp", "hxx", "h++", "H", "vert"];
+const HEADER_EXTS: &[&str] = &["h", "hh", "hpp", "hxx", "ipp", "h++", "H", "vert"];
 /// Recognized source extensions
 const SOURCE_EXTS: &[&str] = &["c", "cc", "cpp", "cxx", "c++", "C", "m", "mm", "frag"];
 
@@ -69,12 +69,42 @@ fn base_name(name: &str) -> Option<&str> {
     filename.rfind('.').map(|pos| &filename[..pos])
 }
 
-/// Group source files into pairs based on matching base names
+/// Get extension priority for HeadersFirst ordering.
+/// Lower numbers come first. Header extensions get lower priorities than source extensions.
+fn ext_priority(name: &str) -> usize {
+    let ext = name.rsplit('.').next().unwrap_or("");
+    match ext {
+        // Header extensions (lower priorities = earlier in order)
+        "h" => 0,
+        "hh" => 1,
+        "hpp" => 2,
+        "hxx" => 3,
+        "ipp" => 4,
+        "h++" => 5,
+        "H" => 6,
+        "vert" => 7,
+        // Source extensions (higher priorities = later in order)
+        "c" => 8,
+        "cc" => 9,
+        "cpp" => 10,
+        "cxx" => 11,
+        "c++" => 12,
+        "C" => 13,
+        "m" => 14,
+        "mm" => 15,
+        "frag" => 16,
+        // Unknown extensions go at the end
+        _ => 99,
+    }
+}
+
+/// Group source files into N-way groups based on matching base names
 ///
-/// Takes a list of file arguments and returns a new list where matching
-/// header/source pairs are placed adjacent to each other and joined as a
+/// Takes a list of file arguments and returns a new list where files with
+/// matching base names are placed adjacent to each other and joined as a
 /// single string (space-separated) so they render on the same line.
 ///
+/// Files are ordered within each group by extension priority (see ext_priority).
 /// Arguments that are not source/header files pass through unchanged.
 /// Files without a matching pair pass through unchanged.
 pub fn group_source_pairs(
@@ -87,68 +117,92 @@ pub fn group_source_pairs(
         return args.to_vec();
     }
 
-    // Build index: base_name -> (header_indices, source_indices)
-    let mut base_map: HashMap<String, (Vec<usize>, Vec<usize>)> = HashMap::new();
-    let mut is_paired = vec![false; args.len()];
+    // Build index: base_name -> all indices with that base name
+    let mut base_map: HashMap<String, Vec<usize>> = HashMap::new();
 
     for (i, arg) in args.iter().enumerate() {
         if let Some(base) = base_name(arg) {
             let base_lower = base.to_lowercase();
-            let entry = base_map.entry(base_lower).or_insert_with(|| (vec![], vec![]));
-            if is_header_file(arg) {
-                entry.0.push(i);
-            } else if is_source_file(arg) {
-                entry.1.push(i);
+            // Only include files that are recognized headers or sources
+            if is_header_file(arg) || is_source_file(arg) {
+                base_map.entry(base_lower).or_insert_with(Vec::new).push(i);
             }
         }
     }
 
-    // Identify pairs (greedily match first header with first source)
-    let mut pairs: Vec<(usize, usize)> = Vec::new(); // (first_idx, second_idx) in desired order
-    for (_base, (headers, sources)) in &base_map {
-        let pair_count = headers.len().min(sources.len());
-        for k in 0..pair_count {
-            let (first, second) = match grouping {
-                SourceGrouping::HeadersFirst => (headers[k], sources[k]),
-                SourceGrouping::SourcesFirst => (sources[k], headers[k]),
-                SourceGrouping::None => unreachable!(),
-            };
-            pairs.push((first, second));
-            is_paired[headers[k]] = true;
-            is_paired[sources[k]] = true;
+    // Identify groups: any base name with 2+ files forms a group
+    let mut is_grouped = vec![false; args.len()];
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+
+    for (_base, indices) in &base_map {
+        if indices.len() >= 2 {
+            // Mark all indices as grouped
+            for &idx in indices {
+                is_grouped[idx] = true;
+            }
+            groups.push(indices.clone());
         }
     }
 
-    // Build result: emit paired files together, unpaired files unchanged
-    // Maintain original order: when we encounter the first file of a pair,
-    // emit the pair as a single space-joined string. Skip the second file.
-    let pair_lookup: HashMap<usize, usize> = pairs.iter()
-        .flat_map(|&(a, b)| vec![(a, b), (b, a)])
-        .collect();
+    // Build result: emit groups at the position of their earliest index
     let mut emitted = vec![false; args.len()];
     let mut result = Vec::new();
+
+    // Create a lookup: index -> group containing that index
+    let mut index_to_group: HashMap<usize, usize> = HashMap::new();
+    for (group_id, group) in groups.iter().enumerate() {
+        for &idx in group {
+            index_to_group.insert(idx, group_id);
+        }
+    }
 
     for (i, arg) in args.iter().enumerate() {
         if emitted[i] {
             continue;
         }
-        if is_paired[i] {
-            if let Some(&partner) = pair_lookup.get(&i) {
-                // Determine which goes first based on grouping mode
-                let (first_idx, second_idx) = if pairs.iter().any(|&(a, _)| a == i) {
-                    (i, partner)
-                } else {
-                    (partner, i)
-                };
-                // Emit pair as single space-joined string (renders as one unit on one line)
-                result.push(format!("{} {}", args[first_idx], args[second_idx]));
-                emitted[first_idx] = true;
-                emitted[second_idx] = true;
-            } else {
-                result.push(arg.clone());
-                emitted[i] = true;
+
+        if is_grouped[i] {
+            // This file is part of a group
+            let group_id = index_to_group[&i];
+            let group = &groups[group_id];
+
+            // Emit the entire group (only once, at the earliest index position)
+            let earliest = *group.iter().min().unwrap();
+            if i == earliest {
+                // Collect all files in the group
+                let mut group_files: Vec<(usize, &String)> = group.iter()
+                    .map(|&idx| (idx, &args[idx]))
+                    .collect();
+
+                // Sort by extension priority
+                match grouping {
+                    SourceGrouping::HeadersFirst => {
+                        // Lower priority numbers first (headers before sources)
+                        group_files.sort_by_key(|(_, file)| ext_priority(file));
+                    }
+                    SourceGrouping::SourcesFirst => {
+                        // Higher priority numbers first (sources before headers)
+                        group_files.sort_by(|(_, a), (_, b)| {
+                            ext_priority(b).cmp(&ext_priority(a))
+                        });
+                    }
+                    SourceGrouping::None => unreachable!(),
+                }
+
+                // Join the group as a space-separated string
+                let group_str = group_files.iter()
+                    .map(|(_, file)| file.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                result.push(group_str);
+
+                // Mark all files in the group as emitted
+                for &idx in group {
+                    emitted[idx] = true;
+                }
             }
         } else {
+            // Not grouped, pass through unchanged
             result.push(arg.clone());
             emitted[i] = true;
         }
