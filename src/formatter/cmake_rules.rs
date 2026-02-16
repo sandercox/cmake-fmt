@@ -772,6 +772,7 @@ pub fn format_keyword_aware_args(
     indent_level: usize,
     first_keyword_inline: bool,
     builtin_grammar: bool,
+    force_args_on_new_line: bool,
 ) -> RcDoc<'static, ()> {
     if sections.is_empty() {
         return RcDoc::nil();
@@ -800,7 +801,7 @@ pub fn format_keyword_aware_args(
 
     if !has_keywords {
         // No keywords found, fall back to simple formatting
-        return format_simple_args(&sections, config, signals.force_multiline, indent_level);
+        return format_simple_args(&sections, config, signals.force_multiline, indent_level, force_args_on_new_line);
     }
 
     // Explicit indentation strings for correct tab/space handling at any nesting depth
@@ -1318,7 +1319,7 @@ pub fn format_keyword_aware_args(
                 (section.args.clone(), section.blank_lines.clone(), section.comments.clone(), section.post_comment_blanks.clone())
             };
 
-            let is_list = effective_args.len() > 1;
+            let is_list = effective_args.len() > 1 || force_args_on_new_line;
             let mut comment_iter = effective_comments.iter().peekable();
 
             for (arg_idx, arg) in effective_args.iter().enumerate() {
@@ -1432,7 +1433,7 @@ pub fn format_keyword_aware_args(
 }
 
 /// Format arguments without keyword awareness (simple line breaking)
-fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_multiline: bool, indent_level: usize) -> RcDoc<'static, ()> {
+fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_multiline: bool, indent_level: usize, force_args_on_new_line: bool) -> RcDoc<'static, ()> {
     let base_indent = super::cst_to_doc::indent_string(indent_level, config);
     let inner_indent = super::cst_to_doc::indent_string(indent_level + 1, config);
 
@@ -1503,8 +1504,8 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
                 is_first_arg = false;
             }
 
-            // Add separator before arg (except for the very first arg)
-            if !is_first_arg {
+            // Add separator before arg (except for the very first arg, unless force_args_on_new_line)
+            if !is_first_arg || force_args_on_new_line {
                 if force_multiline {
                     docs.push(RcDoc::hardline());
                     docs.push(RcDoc::text(inner_indent.clone()));

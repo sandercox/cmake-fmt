@@ -115,6 +115,6 @@ pub fn config_grammars_to_map(
         for kw in &cfg.bin_pack_keywords {
             keywords.insert(kw.clone(), KeywordType::BinPack);
         }
-        (name.to_lowercase(), CommandGrammar { keywords })
+        (name.to_lowercase(), CommandGrammar { keywords, force_args_on_new_line: false })
     }).collect()
 }

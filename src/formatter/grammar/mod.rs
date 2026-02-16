@@ -67,6 +67,8 @@ impl Grammar {
 pub struct CommandGrammar {
     /// Map of keyword name (UPPERCASE) to its type
     pub keywords: HashMap<String, KeywordType>,
+    /// When true, ALL args go on new lines when multiline (no arg trails the command name)
+    pub force_args_on_new_line: bool,
 }
 
 impl CommandGrammar {
@@ -74,6 +76,7 @@ impl CommandGrammar {
     pub fn new() -> Self {
         Self {
             keywords: HashMap::new(),
+            force_args_on_new_line: false,
         }
     }
 
@@ -83,7 +86,7 @@ impl CommandGrammar {
         for (kw, ty) in keywords {
             map.insert(kw.to_string(), *ty);
         }
-        Self { keywords: map }
+        Self { keywords: map, force_args_on_new_line: false }
     }
 
     /// Get the type of a keyword (case-sensitive lookup - CMake keywords are case-sensitive)

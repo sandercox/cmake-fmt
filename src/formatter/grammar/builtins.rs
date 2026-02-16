@@ -783,5 +783,12 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
     grammars.insert("add_compile_options".to_string(), Grammar::Simple(CommandGrammar::new()));
     grammars.insert("add_link_options".to_string(), Grammar::Simple(CommandGrammar::new()));
 
+    // Commands where ALL args go on new lines when multiline (no trailing first arg)
+    for cmd in &["add_definitions", "configure_file"] {
+        let mut g = CommandGrammar::new();
+        g.force_args_on_new_line = true;
+        grammars.insert(cmd.to_string(), Grammar::Simple(g));
+    }
+
     grammars
 }
