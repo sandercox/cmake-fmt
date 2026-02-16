@@ -75,8 +75,8 @@ fn test_add_library_short() {
 fn test_install_keywords() {
     let input = "install(TARGETS mylib ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)";
     let result = format_text(input, &default_config());
-    // Short enough to fit on one line with BinPack artifact types
-    // ARCHIVE, LIBRARY, RUNTIME bin-pack DESTINATION on same line
+    eprintln!("Result:\n{}", result);
+    // BinPack artifact types consume DESTINATION as sub_keyword (stays on same line)
     assert!(result.contains("ARCHIVE DESTINATION lib"));
     assert!(result.contains("LIBRARY DESTINATION lib"));
     assert!(result.contains("RUNTIME DESTINATION bin"));
@@ -695,7 +695,7 @@ fn test_install_targets_mode_formatting() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
 
-    // Artifact types bin-pack DESTINATION on same line
+    // BinPack artifact types consume DESTINATION as sub_keyword (stays on same line)
     assert!(result.contains("RUNTIME DESTINATION bin"));
     assert!(result.contains("LIBRARY DESTINATION lib"));
     assert!(result.contains("ARCHIVE DESTINATION lib"));
@@ -1888,7 +1888,7 @@ fn test_install_targets_export_keyword() {
     eprintln!("Result:\n{}", result);
     // EXPORT should be a keyword with its value inline
     assert!(result.contains("EXPORT VSTSDKTargets"));
-    // Artifact types should bin-pack DESTINATION on same line
+    // BinPack artifact types consume DESTINATION as sub_keyword (stays on same line)
     assert!(result.contains("LIBRARY DESTINATION lib"));
     assert!(result.contains("ARCHIVE DESTINATION lib"));
     assert!(result.contains("RUNTIME DESTINATION bin"));
@@ -1904,9 +1904,12 @@ fn test_install_targets_artifact_binpack_multiline() {
     let input = "install(TARGETS mylib LIBRARY DESTINATION lib PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ CONFIGURATIONS Release Debug ARCHIVE DESTINATION lib RUNTIME DESTINATION bin)";
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
-    // LIBRARY should have its sub-keywords bin-packed (DESTINATION + PERMISSIONS may wrap)
+    // LIBRARY BinPack section consumes DESTINATION, PERMISSIONS, CONFIGURATIONS as sub_keywords
     assert!(result.contains("LIBRARY"));
     assert!(result.contains("DESTINATION lib"));
+    assert!(result.contains("PERMISSIONS"));
+    assert!(result.contains("CONFIGURATIONS"));
+    // ARCHIVE and RUNTIME also consume DESTINATION as sub_keyword
     assert!(result.contains("ARCHIVE DESTINATION lib"));
     assert!(result.contains("RUNTIME DESTINATION bin"));
     // Idempotency
@@ -1926,4 +1929,20 @@ fn test_install_targets_export_not_consumed_as_target() {
     // Idempotency
     let pass2 = format_text(&result, &default_config());
     assert_eq!(result, pass2, "install TARGETS with EXPORT should be idempotent");
+}
+
+#[test]
+fn test_install_targets_global_destination_component() {
+    // Global DESTINATION/COMPONENT (no artifact type) must work
+    let input = "install(TARGETS libwire COMPONENT wire DESTINATION lib)\n";
+    let result = format_text(input, &default_config());
+    // COMPONENT and DESTINATION should be recognized as keywords
+    assert!(result.contains("COMPONENT wire"), "COMPONENT should be a keyword");
+    assert!(result.contains("DESTINATION lib"), "DESTINATION should be a keyword");
+    // They should NOT be consumed as target names
+    assert!(!result.contains("TARGETS\n\t\tlibwire\n\t\tCOMPONENT"),
+        "COMPONENT should not be a target arg");
+    // Idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "Should be idempotent");
 }
