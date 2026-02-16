@@ -140,29 +140,26 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         // TARGETS mode
         modes.insert("TARGETS".to_string(), CommandGrammar::from_keywords(&[
             ("TARGETS", MultiValue),
-            ("DESTINATION", SingleValue),
-            ("PERMISSIONS", MultiValue),
-            ("CONFIGURATIONS", MultiValue),
-            ("COMPONENT", SingleValue),
-            ("NAMELINK_COMPONENT", SingleValue),
+            ("EXPORT", SingleValue),
+            // Artifact type selectors (BinPack: sub-keywords stay on same line)
+            ("ARCHIVE", BinPack),
+            ("LIBRARY", BinPack),
+            ("RUNTIME", BinPack),
+            ("OBJECTS", BinPack),
+            ("FRAMEWORK", BinPack),
+            ("BUNDLE", BinPack),
+            ("PUBLIC_HEADER", BinPack),
+            ("PRIVATE_HEADER", BinPack),
+            ("RESOURCE", BinPack),
+            // Standalone flags
             ("OPTIONAL", Flag),
             ("EXCLUDE_FROM_ALL", Flag),
             ("NAMELINK_ONLY", Flag),
             ("NAMELINK_SKIP", Flag),
-            // Artifact type selectors
-            ("ARCHIVE", Flag),
-            ("LIBRARY", Flag),
-            ("RUNTIME", Flag),
-            ("OBJECTS", Flag),
-            ("FRAMEWORK", Flag),
-            ("BUNDLE", Flag),
-            ("PUBLIC_HEADER", Flag),
-            ("PRIVATE_HEADER", Flag),
-            ("RESOURCE", Flag),
             // FILE_SET support
             ("FILE_SET", SingleValue),
             ("TYPE", SingleValue),
-            ("INCLUDES", MultiValue),
+            ("INCLUDES", BinPack),
         ]));
 
         // FILES mode
