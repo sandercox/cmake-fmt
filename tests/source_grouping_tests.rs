@@ -513,3 +513,129 @@ fn test_source_grouping_comments_idempotent() {
         pass1, pass2
     );
 }
+
+#[test]
+fn test_source_grouping_blank_line_after_comments_preserved() {
+    let input = r#"set(SOURCES
+    AlleyMenu.h AlleyMenu.cpp
+    stCircles.h
+    # ChristMas.cpp
+    # ChristMas.h
+
+    AboutComponent.h AboutComponent.cpp
+    AlleyColours.h
+)"#;
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+    let output = format_text(input, &config);
+
+    // Files should be grouped
+    assert!(
+        output.contains("AlleyMenu.h AlleyMenu.cpp"),
+        "Expected 'AlleyMenu.h AlleyMenu.cpp' grouped:\n{}",
+        output
+    );
+    assert!(
+        output.contains("AboutComponent.h AboutComponent.cpp"),
+        "Expected 'AboutComponent.h AboutComponent.cpp' grouped:\n{}",
+        output
+    );
+    assert!(output.contains("stCircles.h"), "Expected stCircles.h");
+    assert!(output.contains("AlleyColours.h"), "Expected AlleyColours.h");
+
+    // Comments should be preserved
+    assert!(output.contains("# ChristMas.cpp"), "Expected '# ChristMas.cpp' comment");
+    assert!(output.contains("# ChristMas.h"), "Expected '# ChristMas.h' comment");
+
+    // Critical: The blank line should appear AFTER the comments, not before them
+    // In the source, the order is: comments, then blank line, then AboutComponent
+    // This ordering must be preserved after source_grouping remapping
+    let lines: Vec<&str> = output.lines().collect();
+    let christmas_cpp_line = lines.iter().position(|l| l.contains("# ChristMas.cpp")).unwrap();
+    let christmas_h_line = lines.iter().position(|l| l.contains("# ChristMas.h")).unwrap();
+    let about_line = lines.iter().position(|l| l.contains("AboutComponent")).unwrap();
+
+    // Comments should come before AboutComponent
+    assert!(christmas_cpp_line < about_line, "Comments should come before AboutComponent");
+    assert!(christmas_h_line < about_line, "Comments should come before AboutComponent");
+
+    // There should be a blank line between the last comment and AboutComponent
+    // (The blank line appears AFTER the comments, not before them)
+    let last_comment_line = christmas_cpp_line.max(christmas_h_line);
+    assert!(
+        about_line > last_comment_line + 1,
+        "Expected blank line AFTER comments (before AboutComponent). Last comment at {}, About at {}",
+        last_comment_line,
+        about_line
+    );
+
+    // Verify idempotency
+    let pass2 = format_text(&output, &config);
+    assert_eq!(
+        output, pass2,
+        "Formatting is not idempotent with blank line after comments.\nPass1:\n{}\n\nPass2:\n{}",
+        output, pass2
+    );
+}
+
+#[test]
+fn test_source_grouping_blank_line_before_comment_preserved() {
+    let input = r#"set(SOURCES
+    foo.h foo.cpp
+
+    # Section header
+    bar.h bar.cpp
+)"#;
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+    let output = format_text(input, &config);
+
+    // Files should be grouped
+    assert!(
+        output.contains("foo.h foo.cpp"),
+        "Expected 'foo.h foo.cpp' grouped:\n{}",
+        output
+    );
+    assert!(
+        output.contains("bar.h bar.cpp"),
+        "Expected 'bar.h bar.cpp' grouped:\n{}",
+        output
+    );
+
+    // Comment should be preserved
+    assert!(output.contains("# Section header"), "Expected '# Section header' comment");
+
+    // Critical: The blank line should appear BEFORE the comment (the default case)
+    // In the source, the order is: foo, blank line, comment, bar
+    // This ordering must be preserved (no regression from our fix)
+    let lines: Vec<&str> = output.lines().collect();
+    let foo_line = lines.iter().position(|l| l.contains("foo.h")).unwrap();
+    let comment_line = lines.iter().position(|l| l.contains("# Section header")).unwrap();
+    let bar_line = lines.iter().position(|l| l.contains("bar.h")).unwrap();
+
+    // Comment should come after foo and before bar
+    assert!(foo_line < comment_line, "foo should come before comment");
+    assert!(comment_line < bar_line, "Comment should come before bar");
+
+    // There should be a blank line between foo and the comment
+    assert!(
+        comment_line > foo_line + 1,
+        "Expected blank line BEFORE comment (after foo). Foo at {}, Comment at {}",
+        foo_line,
+        comment_line
+    );
+
+    // Verify idempotency
+    let pass2 = format_text(&output, &config);
+    assert_eq!(
+        output, pass2,
+        "Formatting is not idempotent with blank line before comment.\nPass1:\n{}\n\nPass2:\n{}",
+        output, pass2
+    );
+}
