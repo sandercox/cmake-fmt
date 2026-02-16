@@ -191,13 +191,8 @@ impl SuppressionTracker {
 
     /// Finalize tracking and check for unclosed regions
     pub fn finalize(&mut self) {
-        if self.active {
-            if let Some(start) = self.start_line {
-                self.warnings.push(SuppressionWarning::UnclosedRegion {
-                    start_line: start,
-                });
-            }
-        }
+        // Unclosed regions at end of file are intentional - no warning needed.
+        // Users can use "cmake-fmt: off" to suppress formatting for the rest of the file.
     }
 
     /// Consume the tracker and return accumulated warnings
@@ -279,11 +274,8 @@ mod tests {
 
         tracker.finalize();
         let warnings = tracker.into_warnings();
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(
-            warnings[0],
-            SuppressionWarning::UnclosedRegion { start_line: 10 }
-        );
+        // Unclosed regions no longer produce warnings - it's valid to leave cmake-fmt: off open
+        assert_eq!(warnings.len(), 0);
     }
 
     #[test]
@@ -311,10 +303,9 @@ mod tests {
 
         tracker.finalize();
         let warnings = tracker.into_warnings();
-        // Should have: nested off warning + unclosed region warning
-        assert_eq!(warnings.len(), 2);
+        // Should have: nested off warning only (unclosed regions no longer warn)
+        assert_eq!(warnings.len(), 1);
         assert!(warnings.contains(&SuppressionWarning::NestedOff { line: 15 }));
-        assert!(warnings.contains(&SuppressionWarning::UnclosedRegion { start_line: 10 }));
     }
 
     #[test]

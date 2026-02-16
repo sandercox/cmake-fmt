@@ -207,15 +207,8 @@ set(ALSO_UGLY value)
 "#;
     let (_output, warnings) = format_text_with_diagnostics(input, &config);
 
-    // Should have exactly one UnclosedRegion warning
-    assert_eq!(warnings.len(), 1, "Should have exactly one warning");
-
-    match &warnings[0] {
-        SuppressionWarning::UnclosedRegion { start_line } => {
-            assert_eq!(*start_line, 3, "Warning should point to line 3 where 'off' appears");
-        }
-        _ => panic!("Expected UnclosedRegion warning, got {:?}", warnings[0]),
-    }
+    // Unclosed regions no longer produce warnings - it's valid to leave cmake-fmt: off open at EOF
+    assert_eq!(warnings.len(), 0, "Should have no warnings for unclosed region at EOF");
 }
 
 #[test]
@@ -250,16 +243,12 @@ set(  UGLY2   value  )
 "#;
     let (_output, warnings) = format_text_with_diagnostics(input, &config);
 
-    // Should have NestedOff warning + UnclosedRegion warning
-    assert_eq!(warnings.len(), 2, "Should have two warnings");
+    // Should have NestedOff warning only (unclosed regions no longer warn)
+    assert_eq!(warnings.len(), 1, "Should have one warning");
 
     // Check for NestedOff warning
     let has_nested_off = warnings.iter().any(|w| matches!(w, SuppressionWarning::NestedOff { line: 4 }));
     assert!(has_nested_off, "Should have NestedOff warning on line 4");
-
-    // Check for UnclosedRegion warning
-    let has_unclosed = warnings.iter().any(|w| matches!(w, SuppressionWarning::UnclosedRegion { start_line: 1 }));
-    assert!(has_unclosed, "Should have UnclosedRegion warning starting at line 1");
 }
 
 #[test]
