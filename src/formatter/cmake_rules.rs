@@ -236,8 +236,9 @@ fn group_source_pairs_preserving_blanks(
     args: &[String],
     blank_lines: &[usize],
     comments: &[(usize, String)],
+    post_comment_blanks: &[usize],
     grouping: super::config::SourceGrouping,
-) -> (Vec<String>, Vec<usize>, Vec<(usize, String)>) {
+) -> (Vec<String>, Vec<usize>, Vec<(usize, String)>, Vec<usize>) {
     if blank_lines.is_empty() {
         let (grouped_args, old_to_new) = group_source_pairs(args, grouping);
         // Remap comment positions using the index mapping
@@ -250,7 +251,7 @@ fn group_source_pairs_preserving_blanks(
             };
             (new_pos, text.clone())
         }).collect();
-        return (grouped_args, Vec::new(), new_comments);
+        return (grouped_args, Vec::new(), new_comments, Vec::new());
     }
 
     // Split args into segments at blank line boundaries
@@ -270,12 +271,18 @@ fn group_source_pairs_preserving_blanks(
     // Group each segment independently and track new blank line positions
     let mut result = Vec::new();
     let mut new_blank_lines = Vec::new();
+    let mut new_post_comment_blanks = Vec::new();
     let mut global_old_to_new = vec![0; args.len()];
 
     let mut segment_start = 0;
     for (i, segment) in segments.iter().enumerate() {
         if i > 0 {
-            new_blank_lines.push(result.len());
+            let new_bl_pos = result.len();
+            new_blank_lines.push(new_bl_pos);
+            // Check if the original blank_line at this boundary was post-comment
+            if i - 1 < blank_lines.len() && post_comment_blanks.contains(&blank_lines[i - 1]) {
+                new_post_comment_blanks.push(new_bl_pos);
+            }
         }
         let (grouped, segment_old_to_new) = group_source_pairs(segment, grouping);
 
@@ -303,7 +310,7 @@ fn group_source_pairs_preserving_blanks(
         (new_pos, text.clone())
     }).collect();
 
-    (result, new_blank_lines, new_comments)
+    (result, new_blank_lines, new_comments, new_post_comment_blanks)
 }
 
 /// Check if a command name requires keyword-aware formatting
@@ -386,6 +393,9 @@ pub struct KeywordSection {
     pub trailing_comments: Vec<(usize, String)>,
     /// Blank line positions: indices after which a blank line appears
     pub blank_lines: Vec<usize>,
+    /// Blank line positions where the blank line appears AFTER comments at the same position
+    /// (as opposed to the default where blank lines come before comments)
+    pub post_comment_blanks: Vec<usize>,
     /// The type of the keyword (if known from grammar)
     pub keyword_type: Option<KeywordType>,
     /// Whether a newline appeared between the keyword and its first value
@@ -406,6 +416,7 @@ pub fn parse_keyword_sections_with_grammar(
         comments: Vec::new(),
         trailing_comments: Vec::new(),
         blank_lines: Vec::new(),
+        post_comment_blanks: Vec::new(),
         keyword_type: None,
         values_on_new_line: false,
     };
@@ -454,6 +465,7 @@ pub fn parse_keyword_sections_with_grammar(
                             comments: Vec::new(),
                             trailing_comments: Vec::new(),
                             blank_lines: Vec::new(),
+                            post_comment_blanks: Vec::new(),
                             keyword_type: kw_type,
                             values_on_new_line: false,
                         };
@@ -482,6 +494,7 @@ pub fn parse_keyword_sections_with_grammar(
                                 comments: Vec::new(),
                                 trailing_comments: Vec::new(),
                                 blank_lines: Vec::new(),
+                                post_comment_blanks: Vec::new(),
                                 keyword_type: None,
                                 values_on_new_line: false,
                             };
@@ -526,6 +539,11 @@ pub fn parse_keyword_sections_with_grammar(
                         let position = current_section.args.len();
                         if !current_section.blank_lines.contains(&position) {
                             current_section.blank_lines.push(position);
+                            // Check if comments already exist at this position
+                            // If so, the blank line comes AFTER those comments in the source
+                            if current_section.comments.iter().any(|(pos, _)| *pos == position) {
+                                current_section.post_comment_blanks.push(position);
+                            }
                         }
                     }
                 }
@@ -1176,13 +1194,13 @@ pub fn format_keyword_aware_args(
                         // Disable grouping only when trailing comments are present (can't merge inline comments)
                         // Leading comments can be remapped to their new positions
                         // Blank lines are preserved as segment boundaries
-                        let (effective_args, effective_blank_lines, effective_comments) = if config.source_grouping != super::config::SourceGrouping::None
+                        let (effective_args, effective_blank_lines, effective_comments, effective_post_comment_blanks) = if config.source_grouping != super::config::SourceGrouping::None
                             && matches!(section.keyword_type, Some(KeywordType::MultiValue) | Some(KeywordType::BinPack) | None)
                             && section.trailing_comments.is_empty()
                         {
-                            group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, &section.comments, config.source_grouping)
+                            group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, &section.comments, &section.post_comment_blanks, config.source_grouping)
                         } else {
-                            (section.args.clone(), section.blank_lines.clone(), section.comments.clone())
+                            (section.args.clone(), section.blank_lines.clone(), section.comments.clone(), section.post_comment_blanks.clone())
                         };
 
                         // Use per-line when values were explicitly on new lines,
@@ -1196,8 +1214,9 @@ pub fn format_keyword_aware_args(
                             let mut comment_iter = effective_comments.iter().peekable();
 
                             for (arg_idx, arg) in effective_args.iter().enumerate() {
-                                // Blank line before comments to preserve ordering
-                                if effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                                // Blank line BEFORE comments (unless this is a post-comment blank line)
+                                let is_post_comment = effective_post_comment_blanks.contains(&arg_idx);
+                                if !is_post_comment && effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
                                     docs.push(RcDoc::hardline());
                                 }
 
@@ -1217,6 +1236,11 @@ pub fn format_keyword_aware_args(
                                     } else {
                                         break;
                                     }
+                                }
+
+                                // Blank line AFTER comments (when comments preceded the blank line in source)
+                                if is_post_comment && effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                                    docs.push(RcDoc::hardline());
                                 }
 
                                 if signals.force_multiline {
@@ -1278,20 +1302,21 @@ pub fn format_keyword_aware_args(
             // Disable grouping only when trailing comments are present (can't merge inline comments)
             // Leading comments can be remapped to their new positions
             // Blank lines are preserved as segment boundaries
-            let (effective_args, effective_blank_lines, effective_comments) = if config.source_grouping != super::config::SourceGrouping::None
+            let (effective_args, effective_blank_lines, effective_comments, effective_post_comment_blanks) = if config.source_grouping != super::config::SourceGrouping::None
                 && section.trailing_comments.is_empty()
             {
-                group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, &section.comments, config.source_grouping)
+                group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, &section.comments, &section.post_comment_blanks, config.source_grouping)
             } else {
-                (section.args.clone(), section.blank_lines.clone(), section.comments.clone())
+                (section.args.clone(), section.blank_lines.clone(), section.comments.clone(), section.post_comment_blanks.clone())
             };
 
             let is_list = effective_args.len() > 1;
             let mut comment_iter = effective_comments.iter().peekable();
 
             for (arg_idx, arg) in effective_args.iter().enumerate() {
-                // Check for blank line before this argument (before comments to preserve ordering)
-                if effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                // Blank line BEFORE comments (unless this is a post-comment blank line)
+                let is_post_comment = effective_post_comment_blanks.contains(&arg_idx);
+                if !is_post_comment && effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
                     docs.push(RcDoc::hardline());
                     is_first_arg = false;
                 }
@@ -1314,6 +1339,12 @@ pub fn format_keyword_aware_args(
                     } else {
                         break;
                     }
+                }
+
+                // Blank line AFTER comments (when comments preceded the blank line in source)
+                if is_post_comment && effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                    docs.push(RcDoc::hardline());
+                    is_first_arg = false;
                 }
 
                 if is_first_arg && !is_list {
@@ -1416,19 +1447,20 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
         // Disable grouping only when trailing comments are present (can't merge inline comments)
         // Leading comments can be remapped to their new positions
         // Blank lines are preserved as segment boundaries
-        let (effective_args, effective_blank_lines, effective_comments) = if config.source_grouping != super::config::SourceGrouping::None
+        let (effective_args, effective_blank_lines, effective_comments, effective_post_comment_blanks) = if config.source_grouping != super::config::SourceGrouping::None
             && section.trailing_comments.is_empty()
         {
-            group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, &section.comments, config.source_grouping)
+            group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, &section.comments, &section.post_comment_blanks, config.source_grouping)
         } else {
-            (section.args.clone(), section.blank_lines.clone(), section.comments.clone())
+            (section.args.clone(), section.blank_lines.clone(), section.comments.clone(), section.post_comment_blanks.clone())
         };
 
         let mut comment_iter = effective_comments.iter().peekable();
 
         for (arg_idx, arg) in effective_args.iter().enumerate() {
-            // Check for blank line before this argument (before comments to preserve ordering)
-            if effective_blank_lines.contains(&arg_idx) && force_multiline {
+            // Blank line BEFORE comments (unless this is a post-comment blank line)
+            let is_post_comment = effective_post_comment_blanks.contains(&arg_idx);
+            if !is_post_comment && effective_blank_lines.contains(&arg_idx) && force_multiline {
                 docs.push(RcDoc::hardline());
                 is_first_arg = false;
             }
@@ -1451,6 +1483,12 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
                 } else {
                     break;
                 }
+            }
+
+            // Blank line AFTER comments (when comments preceded the blank line in source)
+            if is_post_comment && effective_blank_lines.contains(&arg_idx) && force_multiline {
+                docs.push(RcDoc::hardline());
+                is_first_arg = false;
             }
 
             // Add separator before arg (except for the very first arg)
