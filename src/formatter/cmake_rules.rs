@@ -818,16 +818,8 @@ pub fn format_keyword_aware_args(
                     // Add separator before the keyword
                     if is_first_arg {
                         is_first_arg = false;
-                        // First keyword in command: drop to next line when multiline
-                        if signals.force_multiline {
-                            docs.push(RcDoc::hardline());
-                            docs.push(RcDoc::text(keyword_indent.clone()));
-                        } else {
-                            docs.push(RcDoc::flat_alt(
-                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
-                                RcDoc::nil(),
-                            ));
-                        }
+                        // First content in command (e.g., list(APPEND <var>)):
+                        // keep inline like ARGL-03 for first positional arg
                     } else {
                         docs.push(RcDoc::flat_alt(
                             RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),

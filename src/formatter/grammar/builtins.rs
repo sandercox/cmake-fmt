@@ -709,41 +709,46 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
     }
 
     // list - multi-mode command (Phase 14)
+    // Each mode keyword is SingleValue to consume the list variable name,
+    // keeping e.g. "APPEND SOURCES" together on the first line.
     {
         let mut modes = HashMap::new();
-        let empty = CommandGrammar::new();
 
-        // Most list modes have no section keywords
-        modes.insert("LENGTH".to_string(), empty.clone());
-        modes.insert("GET".to_string(), empty.clone());
-        modes.insert("APPEND".to_string(), empty.clone());
-        modes.insert("PREPEND".to_string(), empty.clone());
-        modes.insert("INSERT".to_string(), empty.clone());
-        modes.insert("REMOVE_ITEM".to_string(), empty.clone());
-        modes.insert("REMOVE_AT".to_string(), empty.clone());
-        modes.insert("REMOVE_DUPLICATES".to_string(), empty.clone());
-        modes.insert("REVERSE".to_string(), empty.clone());
-        modes.insert("POP_BACK".to_string(), empty.clone());
-        modes.insert("POP_FRONT".to_string(), empty.clone());
-        modes.insert("JOIN".to_string(), empty.clone());
-        modes.insert("SUBLIST".to_string(), empty.clone());
+        // Helper: mode keyword as SingleValue (consumes the list variable name)
+        let mode_only = |name: &str| CommandGrammar::from_keywords(&[
+            (name, SingleValue),
+        ]);
+
+        modes.insert("LENGTH".to_string(), mode_only("LENGTH"));
+        modes.insert("GET".to_string(), mode_only("GET"));
+        modes.insert("APPEND".to_string(), mode_only("APPEND"));
+        modes.insert("PREPEND".to_string(), mode_only("PREPEND"));
+        modes.insert("INSERT".to_string(), mode_only("INSERT"));
+        modes.insert("REMOVE_ITEM".to_string(), mode_only("REMOVE_ITEM"));
+        modes.insert("REMOVE_AT".to_string(), mode_only("REMOVE_AT"));
+        modes.insert("REMOVE_DUPLICATES".to_string(), mode_only("REMOVE_DUPLICATES"));
+        modes.insert("REVERSE".to_string(), mode_only("REVERSE"));
+        modes.insert("POP_BACK".to_string(), mode_only("POP_BACK"));
+        modes.insert("POP_FRONT".to_string(), mode_only("POP_FRONT"));
+        modes.insert("JOIN".to_string(), mode_only("JOIN"));
+        modes.insert("SUBLIST".to_string(), mode_only("SUBLIST"));
 
         modes.insert("SORT".to_string(), CommandGrammar::from_keywords(&[
-            ("SORT", Flag),
+            ("SORT", SingleValue),
             ("COMPARE", SingleValue),
             ("CASE", SingleValue),
             ("ORDER", SingleValue),
         ]));
 
         modes.insert("FILTER".to_string(), CommandGrammar::from_keywords(&[
-            ("FILTER", Flag),
+            ("FILTER", SingleValue),
             ("INCLUDE", Flag),
             ("EXCLUDE", Flag),
             ("REGEX", SingleValue),
         ]));
 
         modes.insert("TRANSFORM".to_string(), CommandGrammar::from_keywords(&[
-            ("TRANSFORM", Flag),
+            ("TRANSFORM", SingleValue),
             ("OUTPUT_VARIABLE", SingleValue),
             ("FOR", SingleValue),
             ("REGEX", SingleValue),

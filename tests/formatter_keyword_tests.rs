@@ -1399,8 +1399,8 @@ fn test_single_value_overflow_multiline() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
 
-    // Should break to multiline
-    assert!(result.contains("generate_ci(\n"));
+    // First SingleValue keyword stays inline with command name
+    assert!(result.contains("generate_ci(OUTPUT"));
     // OUTPUT should have its single value inline
     assert!(result.contains("OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/run-ci-tests.yml"));
     // PLATFORM should have its single value inline
@@ -1411,4 +1411,59 @@ fn test_single_value_overflow_multiline() {
     // Idempotency
     let pass2 = format_text(&result, &config);
     assert_eq!(result, pass2, "SingleValue multiline overflow must be idempotent");
+}
+
+// ============================================================================
+// LIST COMMAND GRAMMAR TESTS
+// ============================================================================
+
+#[test]
+fn test_list_append_keeps_mode_and_variable_inline() {
+    let config = FormatConfig::default();
+    let input = "list(APPEND\n    SOURCES\n    file1.cpp\n    file2.cpp\n    file3.cpp\n)\n";
+    let result = format_text(input, &config);
+    // APPEND and SOURCES should be on the same line
+    assert!(result.contains("list(APPEND SOURCES"),
+        "APPEND and variable name should stay on the same line: {}", result);
+    // Files should be on separate lines
+    assert!(result.contains("\tfile1.cpp\n"));
+    assert!(result.contains("\tfile2.cpp\n"));
+    assert!(result.contains("\tfile3.cpp\n"));
+    // Idempotency
+    let pass2 = format_text(&result, &config);
+    assert_eq!(result, pass2, "list(APPEND ...) should be idempotent");
+}
+
+#[test]
+fn test_list_append_short_stays_one_line() {
+    let config = FormatConfig::default();
+    let input = "list(APPEND SOURCES \"item\")\n";
+    let result = format_text(input, &config);
+    assert_eq!(result, "list(APPEND SOURCES \"item\")\n",
+        "Short list(APPEND) should stay on one line");
+}
+
+#[test]
+fn test_list_sort_keeps_mode_and_variable_inline() {
+    let config = FormatConfig::default();
+    let input = "list(SORT\n    mylist\n    COMPARE STRING\n    CASE INSENSITIVE\n    ORDER DESCENDING\n)\n";
+    let result = format_text(input, &config);
+    // SORT and mylist should be on the same line
+    assert!(result.contains("list(SORT mylist"),
+        "SORT and variable name should stay on the same line: {}", result);
+    // Keywords should be on separate lines
+    assert!(result.contains("\tCOMPARE STRING\n"));
+    assert!(result.contains("\tCASE INSENSITIVE\n"));
+    // Idempotency
+    let pass2 = format_text(&result, &config);
+    assert_eq!(result, pass2, "list(SORT ...) should be idempotent");
+}
+
+#[test]
+fn test_list_reverse_simple() {
+    let config = FormatConfig::default();
+    let input = "list(REVERSE mylist)\n";
+    let result = format_text(input, &config);
+    assert_eq!(result, "list(REVERSE mylist)\n",
+        "list(REVERSE) should stay on one line");
 }
