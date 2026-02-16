@@ -75,14 +75,11 @@ fn test_add_library_short() {
 fn test_install_keywords() {
     let input = "install(TARGETS mylib ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)";
     let result = format_text(input, &default_config());
-    // Should break due to length
-    // When broken, keywords on own line with values underneath
-    // Note: TARGETS has only 1 arg, so it stays inline (MultiValue single-arg behavior)
-    assert!(result.contains("\tTARGETS mylib\n"));
-    assert!(result.contains("ARCHIVE\n"));
-    // DESTINATION is SingleValue, so it keeps value inline: "DESTINATION lib"
-    assert!(result.contains("DESTINATION lib"));
-    assert!(result.contains("DESTINATION bin"));
+    // Short enough to fit on one line with BinPack artifact types
+    // ARCHIVE, LIBRARY, RUNTIME bin-pack DESTINATION on same line
+    assert!(result.contains("ARCHIVE DESTINATION lib"));
+    assert!(result.contains("LIBRARY DESTINATION lib"));
+    assert!(result.contains("RUNTIME DESTINATION bin"));
 }
 
 #[test]
@@ -698,13 +695,10 @@ fn test_install_targets_mode_formatting() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
 
-    // Should format with TARGETS breaking (keywords on own line, values underneath)
-    // Note: TARGETS has only 1 arg, so it stays inline (MultiValue single-arg behavior)
-    assert!(result.contains("TARGETS mylib\n"));
-    assert!(result.contains("RUNTIME"));
-    assert!(result.contains("LIBRARY"));
-    assert!(result.contains("ARCHIVE"));
-    assert!(result.contains("DESTINATION"));
+    // Artifact types bin-pack DESTINATION on same line
+    assert!(result.contains("RUNTIME DESTINATION bin"));
+    assert!(result.contains("LIBRARY DESTINATION lib"));
+    assert!(result.contains("ARCHIVE DESTINATION lib"));
 }
 
 #[test]
@@ -1880,4 +1874,56 @@ set(SOURCES
     // Blank line before comment, comment before file2
     assert!(result.contains("file1.cpp\n\n\t# section header\n\tfile2.cpp"),
         "Expected preserved blank line + comment + arg ordering, got:\n{}", result);
+}
+
+// ============================================================================
+// INSTALL TARGETS EXPORT KEYWORD AND BINPACK ARTIFACT TYPES (Quick 55)
+// ============================================================================
+
+#[test]
+fn test_install_targets_export_keyword() {
+    // EXPORT should be recognized as a keyword, not consumed as a target name
+    let input = "install(TARGETS VSTSDK EXPORT VSTSDKTargets LIBRARY DESTINATION lib ARCHIVE DESTINATION lib RUNTIME DESTINATION bin INCLUDES DESTINATION include)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // EXPORT should be a keyword with its value inline
+    assert!(result.contains("EXPORT VSTSDKTargets"));
+    // Artifact types should bin-pack DESTINATION on same line
+    assert!(result.contains("LIBRARY DESTINATION lib"));
+    assert!(result.contains("ARCHIVE DESTINATION lib"));
+    assert!(result.contains("RUNTIME DESTINATION bin"));
+    assert!(result.contains("INCLUDES DESTINATION include"));
+    // Idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "install TARGETS with EXPORT should be idempotent");
+}
+
+#[test]
+fn test_install_targets_artifact_binpack_multiline() {
+    // When artifact type has many sub-keywords, they should wrap to indented lines
+    let input = "install(TARGETS mylib LIBRARY DESTINATION lib PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ CONFIGURATIONS Release Debug ARCHIVE DESTINATION lib RUNTIME DESTINATION bin)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // LIBRARY should have its sub-keywords bin-packed (DESTINATION + PERMISSIONS may wrap)
+    assert!(result.contains("LIBRARY"));
+    assert!(result.contains("DESTINATION lib"));
+    assert!(result.contains("ARCHIVE DESTINATION lib"));
+    assert!(result.contains("RUNTIME DESTINATION bin"));
+    // Idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "install TARGETS with multiline artifact should be idempotent");
+}
+
+#[test]
+fn test_install_targets_export_not_consumed_as_target() {
+    // Verify EXPORT is a keyword, not treated as a target name after TARGETS
+    let input = "install(TARGETS mylib EXPORT mylib-export RUNTIME DESTINATION bin)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // EXPORT should pair with its value, not appear as a bare target name
+    assert!(result.contains("EXPORT mylib-export"));
+    assert!(result.contains("RUNTIME DESTINATION bin"));
+    // Idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "install TARGETS with EXPORT should be idempotent");
 }
