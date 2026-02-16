@@ -632,11 +632,15 @@ pub fn sort_source_args(section: &mut KeywordSection) {
 }
 
 /// Format arguments for a keyword-aware command
+///
+/// `first_keyword_inline`: when true, the first SingleValue keyword stays on the
+/// same line as the command name (used for multi-mode commands like `list(APPEND var)`).
 pub fn format_keyword_aware_args(
     arg_list: &ArgumentList,
     sections: Vec<KeywordSection>,
     config: &FormatConfig,
     indent_level: usize,
+    first_keyword_inline: bool,
 ) -> RcDoc<'static, ()> {
     if sections.is_empty() {
         return RcDoc::nil();
@@ -816,10 +820,22 @@ pub fn format_keyword_aware_args(
                 // SingleValue keywords: keep value inline (ignore force_multiline for idempotency)
                 Some(KeywordType::SingleValue) if section.args.len() == 1 => {
                     // Add separator before the keyword
-                    if is_first_arg {
+                    if is_first_arg && first_keyword_inline {
                         is_first_arg = false;
-                        // First content in command (e.g., list(APPEND <var>)):
+                        // Multi-mode command (e.g., list(APPEND <var>)):
                         // keep inline like ARGL-03 for first positional arg
+                    } else if is_first_arg {
+                        is_first_arg = false;
+                        // Regular command: first keyword drops to next line when multiline
+                        if signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.clone()));
+                        } else {
+                            docs.push(RcDoc::flat_alt(
+                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                                RcDoc::nil(),
+                            ));
+                        }
                     } else {
                         docs.push(RcDoc::flat_alt(
                             RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),

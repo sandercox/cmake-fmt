@@ -567,7 +567,8 @@ fn format_command(
                             .map_or(false, |g| g.is_multi_mode() && grammar.is_none());
                         if !is_unrecognized_mode && (effective_grammar.is_some() || cmake_rules::is_keyword_aware_command(&name)) {
                             let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, effective_grammar, ctx.config.comment_style);
-                            cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
+                            let is_multi_mode = grammar_enum.as_ref().map_or(false, |g| g.is_multi_mode());
+                            cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level, is_multi_mode)
                         } else {
                             let is_custom = !builtins::is_builtin_command(&name_lower);
                             format_argument_list(&arg_list, ctx, is_custom)
@@ -612,7 +613,8 @@ fn format_command(
                 .map_or(false, |g| g.is_multi_mode() && grammar.is_none());
             if !is_unrecognized_mode && (effective_grammar.is_some() || cmake_rules::is_keyword_aware_command(&name)) {
                 let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, effective_grammar, ctx.config.comment_style);
-                cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level)
+                let is_multi_mode = grammar_enum.as_ref().map_or(false, |g| g.is_multi_mode());
+                cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level, is_multi_mode)
             } else {
                 let is_custom = !builtins::is_builtin_command(&name_lower);
                 format_argument_list(&arg_list, ctx, is_custom)

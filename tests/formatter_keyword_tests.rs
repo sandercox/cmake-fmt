@@ -1399,8 +1399,8 @@ fn test_single_value_overflow_multiline() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
 
-    // First SingleValue keyword stays inline with command name
-    assert!(result.contains("generate_ci(OUTPUT"));
+    // First SingleValue keyword drops to new line (not a multi-mode command)
+    assert!(result.contains("generate_ci(\n"));
     // OUTPUT should have its single value inline
     assert!(result.contains("OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/run-ci-tests.yml"));
     // PLATFORM should have its single value inline
