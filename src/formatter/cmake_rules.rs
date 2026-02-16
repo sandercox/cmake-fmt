@@ -919,6 +919,10 @@ pub fn format_keyword_aware_args(
                                     }
                                 }
                             }
+                            // Blank line before trailing comments at end of section
+                            if comment_iter.peek().is_some() && section.blank_lines.contains(&section.args.len()) && signals.force_multiline {
+                                docs.push(RcDoc::hardline());
+                            }
                             while let Some((_, comment)) = comment_iter.next() {
                                 if signals.force_multiline {
                                     docs.push(RcDoc::hardline());
@@ -1261,6 +1265,10 @@ pub fn format_keyword_aware_args(
                                 }
                             }
 
+                            // Blank line before trailing comments at end of section
+                            if comment_iter.peek().is_some() && effective_blank_lines.contains(&effective_args.len()) && signals.force_multiline {
+                                docs.push(RcDoc::hardline());
+                            }
                             while let Some((_, comment)) = comment_iter.next() {
                                 if signals.force_multiline {
                                     docs.push(RcDoc::hardline());
@@ -1383,6 +1391,10 @@ pub fn format_keyword_aware_args(
                 }
             }
 
+            // Blank line before trailing comments at end of section
+            if comment_iter.peek().is_some() && effective_blank_lines.contains(&effective_args.len()) && signals.force_multiline {
+                docs.push(RcDoc::hardline());
+            }
             // Emit trailing comments (after last argument)
             while let Some((_, comment)) = comment_iter.next() {
                 if signals.force_multiline {
@@ -1513,6 +1525,10 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
             is_first_arg = false;
         }
 
+        // Blank line before trailing comments at end of section
+        if comment_iter.peek().is_some() && effective_blank_lines.contains(&effective_args.len()) && force_multiline {
+            docs.push(RcDoc::hardline());
+        }
         // Emit trailing comments (after last argument)
         while let Some((_, comment)) = comment_iter.next() {
             if force_multiline {
