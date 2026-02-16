@@ -107,14 +107,19 @@ fn ext_priority(name: &str) -> usize {
 /// Files are ordered within each group by extension priority (see ext_priority).
 /// Arguments that are not source/header files pass through unchanged.
 /// Files without a matching pair pass through unchanged.
+///
+/// Returns: (grouped_args, old_to_new_index_mapping)
+/// The index mapping maps each original index to its new position in the result.
+/// When multiple files are grouped, they all map to the same result index.
 pub fn group_source_pairs(
     args: &[String],
     grouping: super::config::SourceGrouping,
-) -> Vec<String> {
+) -> (Vec<String>, Vec<usize>) {
     use super::config::SourceGrouping;
 
     if grouping == SourceGrouping::None {
-        return args.to_vec();
+        let identity_map: Vec<usize> = (0..args.len()).collect();
+        return (args.to_vec(), identity_map);
     }
 
     // Build index: base_name -> all indices with that base name
@@ -147,6 +152,7 @@ pub fn group_source_pairs(
     // Build result: emit groups at the position of their earliest index
     let mut emitted = vec![false; args.len()];
     let mut result = Vec::new();
+    let mut old_to_new = vec![0; args.len()];
 
     // Create a lookup: index -> group containing that index
     let mut index_to_group: HashMap<usize, usize> = HashMap::new();
@@ -194,33 +200,50 @@ pub fn group_source_pairs(
                     .map(|(_, file)| file.as_str())
                     .collect::<Vec<_>>()
                     .join(" ");
+
+                let result_idx = result.len();
                 result.push(group_str);
 
-                // Mark all files in the group as emitted
+                // Map all original indices in this group to the same result index
                 for &idx in group {
+                    old_to_new[idx] = result_idx;
                     emitted[idx] = true;
                 }
             }
         } else {
             // Not grouped, pass through unchanged
+            let result_idx = result.len();
             result.push(arg.clone());
+            old_to_new[i] = result_idx;
             emitted[i] = true;
         }
     }
 
-    result
+    (result, old_to_new)
 }
 
 /// Apply source grouping while preserving blank line boundaries.
 /// Groups files within segments (between blank lines) independently,
-/// then adjusts blank line positions for the shorter grouped segments.
+/// then adjusts blank line positions and comment positions for the shorter grouped segments.
 fn group_source_pairs_preserving_blanks(
     args: &[String],
     blank_lines: &[usize],
+    comments: &[(usize, String)],
     grouping: super::config::SourceGrouping,
-) -> (Vec<String>, Vec<usize>) {
+) -> (Vec<String>, Vec<usize>, Vec<(usize, String)>) {
     if blank_lines.is_empty() {
-        return (group_source_pairs(args, grouping), Vec::new());
+        let (grouped_args, old_to_new) = group_source_pairs(args, grouping);
+        // Remap comment positions using the index mapping
+        let new_comments = comments.iter().map(|(pos, text)| {
+            let new_pos = if *pos < old_to_new.len() {
+                old_to_new[*pos]
+            } else {
+                // Comment after last arg - map to new length
+                grouped_args.len()
+            };
+            (new_pos, text.clone())
+        }).collect();
+        return (grouped_args, Vec::new(), new_comments);
     }
 
     // Split args into segments at blank line boundaries
@@ -240,16 +263,40 @@ fn group_source_pairs_preserving_blanks(
     // Group each segment independently and track new blank line positions
     let mut result = Vec::new();
     let mut new_blank_lines = Vec::new();
+    let mut global_old_to_new = vec![0; args.len()];
 
+    let mut segment_start = 0;
     for (i, segment) in segments.iter().enumerate() {
         if i > 0 {
             new_blank_lines.push(result.len());
         }
-        let grouped = group_source_pairs(segment, grouping);
+        let (grouped, segment_old_to_new) = group_source_pairs(segment, grouping);
+
+        // Map segment-local indices to global indices
+        for (local_idx, &local_new) in segment_old_to_new.iter().enumerate() {
+            let global_idx = segment_start + local_idx;
+            let global_new = result.len() + local_new;
+            if global_idx < global_old_to_new.len() {
+                global_old_to_new[global_idx] = global_new;
+            }
+        }
+
         result.extend(grouped);
+        segment_start += segment.len();
     }
 
-    (result, new_blank_lines)
+    // Remap comment positions using the global index mapping
+    let new_comments = comments.iter().map(|(pos, text)| {
+        let new_pos = if *pos < global_old_to_new.len() {
+            global_old_to_new[*pos]
+        } else {
+            // Comment after last arg - map to new length
+            result.len()
+        };
+        (new_pos, text.clone())
+    }).collect();
+
+    (result, new_blank_lines, new_comments)
 }
 
 /// Check if a command name requires keyword-aware formatting
@@ -1119,27 +1166,27 @@ pub fn format_keyword_aware_args(
                     // Values under the keyword with explicit indentation
                     if !section.args.is_empty() {
                         // Apply source grouping if enabled
-                        // Disable grouping when comments are present to preserve their positions
+                        // Disable grouping only when trailing comments are present (can't merge inline comments)
+                        // Leading comments can be remapped to their new positions
                         // Blank lines are preserved as segment boundaries
-                        let (effective_args, effective_blank_lines) = if config.source_grouping != super::config::SourceGrouping::None
+                        let (effective_args, effective_blank_lines, effective_comments) = if config.source_grouping != super::config::SourceGrouping::None
                             && matches!(section.keyword_type, Some(KeywordType::MultiValue) | Some(KeywordType::BinPack) | None)
-                            && section.comments.is_empty()
                             && section.trailing_comments.is_empty()
                         {
-                            group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, config.source_grouping)
+                            group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, &section.comments, config.source_grouping)
                         } else {
-                            (section.args.clone(), section.blank_lines.clone())
+                            (section.args.clone(), section.blank_lines.clone(), section.comments.clone())
                         };
 
                         // Use per-line when values were explicitly on new lines,
                         // or when there are comments/blank lines that can't go inline
                         let use_per_line = section.values_on_new_line
-                            || !section.comments.is_empty()
+                            || !effective_comments.is_empty()
                             || !effective_blank_lines.is_empty();
 
                         if use_per_line {
                             // Values on separate lines or has comments: keep per-line behavior
-                            let mut comment_iter = section.comments.iter().peekable();
+                            let mut comment_iter = effective_comments.iter().peekable();
 
                             for (arg_idx, arg) in effective_args.iter().enumerate() {
                                 // Blank line before comments to preserve ordering
@@ -1221,19 +1268,19 @@ pub fn format_keyword_aware_args(
             // pre-keyword args (a file list), all go on separate lines.
 
             // Apply source grouping if enabled
-            // Disable grouping when comments or trailing comments are present to preserve their positions
+            // Disable grouping only when trailing comments are present (can't merge inline comments)
+            // Leading comments can be remapped to their new positions
             // Blank lines are preserved as segment boundaries
-            let (effective_args, effective_blank_lines) = if config.source_grouping != super::config::SourceGrouping::None
-                && section.comments.is_empty()
+            let (effective_args, effective_blank_lines, effective_comments) = if config.source_grouping != super::config::SourceGrouping::None
                 && section.trailing_comments.is_empty()
             {
-                group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, config.source_grouping)
+                group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, &section.comments, config.source_grouping)
             } else {
-                (section.args.clone(), section.blank_lines.clone())
+                (section.args.clone(), section.blank_lines.clone(), section.comments.clone())
             };
 
             let is_list = effective_args.len() > 1;
-            let mut comment_iter = section.comments.iter().peekable();
+            let mut comment_iter = effective_comments.iter().peekable();
 
             for (arg_idx, arg) in effective_args.iter().enumerate() {
                 // Check for blank line before this argument (before comments to preserve ordering)
@@ -1359,17 +1406,18 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
     // Collect all args and comments from all sections
     for section in sections {
         // Apply source grouping if enabled
-        // Disable grouping when comments are present to preserve their positions
+        // Disable grouping only when trailing comments are present (can't merge inline comments)
+        // Leading comments can be remapped to their new positions
         // Blank lines are preserved as segment boundaries
-        let (effective_args, effective_blank_lines) = if config.source_grouping != super::config::SourceGrouping::None
-            && section.comments.is_empty()
+        let (effective_args, effective_blank_lines, effective_comments) = if config.source_grouping != super::config::SourceGrouping::None
+            && section.trailing_comments.is_empty()
         {
-            group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, config.source_grouping)
+            group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, &section.comments, config.source_grouping)
         } else {
-            (section.args.clone(), section.blank_lines.clone())
+            (section.args.clone(), section.blank_lines.clone(), section.comments.clone())
         };
 
-        let mut comment_iter = section.comments.iter().peekable();
+        let mut comment_iter = effective_comments.iter().peekable();
 
         for (arg_idx, arg) in effective_args.iter().enumerate() {
             // Check for blank line before this argument (before comments to preserve ordering)
