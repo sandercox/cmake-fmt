@@ -1510,9 +1510,12 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
                     docs.push(RcDoc::hardline());
                     docs.push(RcDoc::text(inner_indent.clone()));
                 } else {
+                    // For the first arg with force_args_on_new_line, use nil in flat mode
+                    // (no space before first arg when everything fits on one line)
+                    let flat = if is_first_arg { RcDoc::nil() } else { RcDoc::space() };
                     docs.push(RcDoc::flat_alt(
                         RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
-                        RcDoc::space(),
+                        flat,
                     ));
                 }
             }

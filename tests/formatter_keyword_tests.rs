@@ -1616,3 +1616,105 @@ file(
     let pass2 = format_text(&pass1, &config);
     assert_eq!(pass1, pass2, "Second pass should be identical (idempotent)");
 }
+
+#[test]
+fn test_add_definitions_all_args_on_new_lines() {
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..FormatConfig::default()
+    };
+    // Input: first arg trailing the command name (current bad behavior without grammar)
+    let input = "\
+add_definitions(-DASIO_STANDALONE
+    -DASIO_HAS_STD_ADDRESSOF
+    -DASIO_HAS_STD_ARRAY
+    -DASIO_HAS_CSTDINT
+)
+";
+    let expected = "\
+add_definitions(
+    -DASIO_STANDALONE
+    -DASIO_HAS_STD_ADDRESSOF
+    -DASIO_HAS_STD_ARRAY
+    -DASIO_HAS_CSTDINT
+)
+";
+    let result = format_text(input, &config);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_add_definitions_single_line_stays_flat() {
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..FormatConfig::default()
+    };
+    let input = "add_definitions(-DFOO)\n";
+    let result = format_text(input, &config);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn test_add_definitions_idempotent() {
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..FormatConfig::default()
+    };
+    let input = "\
+add_definitions(
+    -DASIO_STANDALONE
+    -DASIO_HAS_STD_ADDRESSOF
+    -DASIO_HAS_CSTDINT
+)
+";
+    let pass1 = format_text(input, &config);
+    assert_eq!(pass1, input, "First pass should match expected output");
+    let pass2 = format_text(&pass1, &config);
+    assert_eq!(pass1, pass2, "Second pass should be identical (idempotent)");
+}
+
+#[test]
+fn test_configure_file_all_args_on_new_lines() {
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..FormatConfig::default()
+    };
+    let input = "\
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/config.h
+    @ONLY
+)
+";
+    let expected = "\
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/config.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/config.h
+    @ONLY
+)
+";
+    let result = format_text(input, &config);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_configure_file_idempotent() {
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..FormatConfig::default()
+    };
+    let input = "\
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/config.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/config.h
+)
+";
+    let pass1 = format_text(input, &config);
+    assert_eq!(pass1, input, "First pass should match expected output");
+    let pass2 = format_text(&pass1, &config);
+    assert_eq!(pass1, pass2, "Second pass should be identical (idempotent)");
+}
