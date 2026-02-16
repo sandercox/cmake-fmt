@@ -1158,8 +1158,45 @@ pub fn format_keyword_aware_args(
                         let has_annotations = !section.comments.is_empty() || !section.trailing_comments.is_empty() || !section.blank_lines.is_empty();
 
                         if has_annotations {
-                            // Fall back to per-line (same as MultiValue) to preserve comment positions
-                            for arg in &section.args {
+                            // Path A: per-line with full comment support (same pattern as MultiValue use_per_line)
+                            let mut comment_iter = section.comments.iter().peekable();
+                            let mut comment_index = 0usize;
+
+                            for (arg_idx, arg) in section.args.iter().enumerate() {
+                                // Blank line BEFORE comments (unless this is a post-comment blank line)
+                                let is_post_comment = section.post_comment_blanks.contains(&arg_idx);
+                                if !is_post_comment && section.blank_lines.contains(&arg_idx) && signals.force_multiline {
+                                    docs.push(RcDoc::hardline());
+                                }
+
+                                while let Some((pos, comment)) = comment_iter.peek() {
+                                    if *pos == arg_idx {
+                                        // Blank line between comment groups at same position
+                                        if section.comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                                            docs.push(RcDoc::hardline());
+                                        }
+                                        if signals.force_multiline {
+                                            docs.push(RcDoc::hardline());
+                                            docs.push(RcDoc::text(value_indent.clone()));
+                                        } else {
+                                            docs.push(RcDoc::flat_alt(
+                                                RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                                RcDoc::space(),
+                                            ));
+                                        }
+                                        docs.push(RcDoc::text(comment.clone()));
+                                        comment_iter.next();
+                                        comment_index += 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                // Blank line AFTER comments (when comments preceded the blank line in source)
+                                if is_post_comment && section.blank_lines.contains(&arg_idx) && signals.force_multiline {
+                                    docs.push(RcDoc::hardline());
+                                }
+
                                 if signals.force_multiline {
                                     docs.push(RcDoc::hardline());
                                     docs.push(RcDoc::text(value_indent.clone()));
@@ -1170,9 +1207,55 @@ pub fn format_keyword_aware_args(
                                     ));
                                 }
                                 docs.push(RcDoc::text(arg.clone()));
+                                // Emit trailing comment if present
+                                for (tc_idx, tc_text) in &section.trailing_comments {
+                                    if *tc_idx == arg_idx {
+                                        docs.push(RcDoc::text(format!(" {}", tc_text)));
+                                    }
+                                }
+                            }
+
+                            // Trailing comments at end of section
+                            if comment_iter.peek().is_some() && section.blank_lines.contains(&section.args.len()) && signals.force_multiline {
+                                docs.push(RcDoc::hardline());
+                            }
+                            while let Some((_, comment)) = comment_iter.next() {
+                                // Blank line between comment groups at same position
+                                if section.comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                                    docs.push(RcDoc::hardline());
+                                }
+                                if signals.force_multiline {
+                                    docs.push(RcDoc::hardline());
+                                    docs.push(RcDoc::text(value_indent.clone()));
+                                } else {
+                                    docs.push(RcDoc::flat_alt(
+                                        RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                        RcDoc::space(),
+                                    ));
+                                }
+                                docs.push(RcDoc::text(comment.clone()));
+                                comment_index += 1;
+                            }
+                        } else if signals.force_multiline {
+                            // Path B: manual bin-packing with width tracking
+                            // The pretty printer's group(flat_alt(...)) doesn't break inner groups
+                            // when the parent is already broken, so we manually track line width.
+                            let mut current_line_width = keyword_indent.len() + keyword.len();
+                            for arg in &section.args {
+                                let needed = 1 + arg.len();
+                                if current_line_width + needed <= config.max_line_length {
+                                    docs.push(RcDoc::space());
+                                    docs.push(RcDoc::text(arg.clone()));
+                                    current_line_width += needed;
+                                } else {
+                                    docs.push(RcDoc::hardline());
+                                    docs.push(RcDoc::text(value_indent.clone()));
+                                    docs.push(RcDoc::text(arg.clone()));
+                                    current_line_width = value_indent.len() + arg.len();
+                                }
                             }
                         } else {
-                            // Bin-pack: each value in its own group()
+                            // Path C: group(flat_alt(...)) for non-multiline input
                             // The pretty printer checks each inner group independently:
                             // if flat form (space + arg) fits remaining line width, stays flat;
                             // otherwise breaks to new line with value_indent
