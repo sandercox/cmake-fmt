@@ -1293,12 +1293,10 @@ fn test_command_bin_packs_wraps_long_lines() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
     // Values should bin-pack across multiple lines
-    // First line: COMMAND + as many args as fit
-    assert!(result.contains("\tCOMMAND"));
-    // Should NOT have each arg on its own line (that's MultiValue behavior)
-    // Instead, multiple args per line where they fit
-    // Verify it's multiline (too long for one line)
-    assert!(result.contains('\n'));
+    // First line after COMMAND should have multiple args packed
+    let command_line = result.lines().find(|l| l.contains("COMMAND")).unwrap();
+    assert!(command_line.contains("${CMAKE_COMMAND}"), "First arg should be on COMMAND line");
+    assert!(command_line.contains("-E"), "Short args should pack on COMMAND line");
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
     assert_eq!(result, pass2, "BinPack wrapping must be idempotent");
@@ -1343,6 +1341,68 @@ fn test_command_add_custom_target_bin_packs() {
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
     assert_eq!(result, pass2, "add_custom_target BinPack must be idempotent");
+}
+
+// ============================================================================
+// QUICK TASK 54: BinPack Bug Fix Tests
+// ============================================================================
+
+#[test]
+fn test_command_binpack_with_trailing_comment() {
+    // Trailing comment on a BinPack arg must NOT be dropped
+    let input = "add_custom_command(\n    OUTPUT ${SOURCE_OUTPUT_FILE}\n    DEPENDS ${MAP_FILE} ToolVersionMapToCode\n    COMMAND ToolVersionMapToCode --verbose --force --map ${MAP_FILE} --source ${SOURCE_OUTPUT_FILE}\n    ${ENABLE_CODEGEN} # if the policy is set, add this to the codegen target\n)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // Trailing comment must be preserved
+    assert!(result.contains("# if the policy is set, add this to the codegen target"),
+        "Trailing comment was dropped");
+    // ENABLE_CODEGEN should be present
+    assert!(result.contains("${ENABLE_CODEGEN}"));
+    // Verify idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "BinPack with trailing comment must be idempotent");
+}
+
+#[test]
+fn test_command_binpack_force_multiline_packs_args() {
+    // When input is multiline (force_multiline=true), COMMAND args must STILL bin-pack
+    // not go one-per-line
+    let input = "add_custom_command(\n    OUTPUT ${SOURCE_OUTPUT_FILE}\n    COMMAND ToolVersionMapToCode --verbose --force --map ${MAP_FILE} --source ${SOURCE_OUTPUT_FILE}\n)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // COMMAND line should have multiple args packed together
+    // Find the COMMAND line
+    let command_line = result.lines().find(|l| l.contains("COMMAND")).unwrap();
+    // It should have more than just "COMMAND" on it - at least the tool name
+    assert!(command_line.contains("ToolVersionMapToCode"),
+        "Tool name should be on same line as COMMAND");
+    // Args should be packed, not one-per-line
+    // Count lines between COMMAND and the closing ) or next keyword
+    let lines: Vec<&str> = result.lines().collect();
+    let cmd_idx = lines.iter().position(|l| l.contains("COMMAND")).unwrap();
+    // The next line after COMMAND args should be ")" - not many individual arg lines
+    // With bin-packing, COMMAND + args should take at most 2-3 lines, not 7+ lines
+    let arg_lines: Vec<&str> = lines[cmd_idx..].iter()
+        .take_while(|l| !l.trim().starts_with(')'))
+        .copied()
+        .collect();
+    assert!(arg_lines.len() <= 3,
+        "BinPack should use at most 3 lines for these args, got {}: {:?}", arg_lines.len(), arg_lines);
+    // Verify idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "BinPack multiline must be idempotent");
+}
+
+#[test]
+fn test_command_binpack_with_leading_comment() {
+    // Leading comment before a BinPack arg must be preserved
+    let input = "add_custom_command(\n    OUTPUT output.txt\n    COMMAND ${TOOL}\n    # this is important\n    --flag\n)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    assert!(result.contains("# this is important"), "Leading comment was dropped");
+    assert!(result.contains("--flag"));
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "BinPack with leading comment must be idempotent");
 }
 
 // ============================================================================
