@@ -1268,3 +1268,93 @@ cmake_minimum_required(VERSION 3.10)
     let twice = format_text(&once, &config);
     assert_eq!(once, twice, "Comment block formatting should be idempotent");
 }
+
+// ============================================================================
+// BLANK LINE BEFORE TRAILING COMMENTS TESTS
+// ============================================================================
+
+/// Blank line before trailing comment block in set() (grammar pre-keyword section)
+#[test]
+fn test_blank_line_before_trailing_comments_in_set() {
+    let input = "\
+set(RESAPI_SOURCE_MAC
+    \"source/network/RANetworkAdapterOSX.mm\"
+
+    # \"source/network/gcd/GCDAsyncSocket.h\"
+    # \"source/network/gcd/GCDAsyncSocket.m\"
+    # \"source/network/gcd/GCDAsyncUdpSocket.h\"
+    # \"source/network/gcd/GCDAsyncUdpSocket.m\"
+)
+";
+    let config = FormatConfig {
+        comment_style: CommentStyle::Leave,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.contains("RANetworkAdapterOSX.mm\"\n\n"),
+        "Blank line before trailing comments should be preserved, got:\n{}", result);
+}
+
+/// Blank line before trailing comment block in keyword section (target_link_libraries)
+#[test]
+fn test_blank_line_before_trailing_comments_in_keyword_section() {
+    let input = "\
+target_link_libraries(myapp
+    PUBLIC
+        lib1
+        lib2
+
+        # lib3_disabled
+        # lib4_disabled
+)
+";
+    let config = FormatConfig {
+        comment_style: CommentStyle::Leave,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.contains("lib2\n\n"),
+        "Blank line before trailing comments in keyword section should be preserved, got:\n{}", result);
+}
+
+/// Blank line before trailing comment block in non-grammar command (format_simple_args path)
+#[test]
+fn test_blank_line_before_trailing_comments_no_grammar() {
+    let input = "\
+some_custom_command(
+    arg1
+    arg2
+
+    # disabled_arg
+)
+";
+    let config = FormatConfig {
+        comment_style: CommentStyle::Leave,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.contains("arg2\n\n"),
+        "Blank line before trailing comments in simple args should be preserved, got:\n{}", result);
+}
+
+/// Formatting is idempotent for blank line before trailing comments
+#[test]
+fn test_blank_line_before_trailing_comments_idempotent() {
+    let input = "\
+set(RESAPI_SOURCE_MAC
+    \"source/network/RANetworkAdapterOSX.mm\"
+
+    # \"source/network/gcd/GCDAsyncSocket.h\"
+    # \"source/network/gcd/GCDAsyncSocket.m\"
+    # \"source/network/gcd/GCDAsyncUdpSocket.h\"
+    # \"source/network/gcd/GCDAsyncUdpSocket.m\"
+)
+";
+    let config = FormatConfig {
+        comment_style: CommentStyle::Leave,
+        ..default_config()
+    };
+    let once = format_text(input, &config);
+    let twice = format_text(&once, &config);
+    assert_eq!(once, twice, "Blank line before trailing comments should be idempotent");
+}
