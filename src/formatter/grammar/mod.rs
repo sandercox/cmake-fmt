@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub mod argparse_extractor;
 pub mod builtins;
@@ -69,6 +69,9 @@ pub struct CommandGrammar {
     pub keywords: HashMap<String, KeywordType>,
     /// When true, ALL args go on new lines when multiline (no arg trails the command name)
     pub force_args_on_new_line: bool,
+    /// Keywords that should be consumed as regular args when inside a BinPack section
+    /// (e.g., DESTINATION inside LIBRARY BinPack section for install(TARGETS))
+    pub sub_keywords: HashSet<String>,
 }
 
 impl CommandGrammar {
@@ -77,6 +80,7 @@ impl CommandGrammar {
         Self {
             keywords: HashMap::new(),
             force_args_on_new_line: false,
+            sub_keywords: HashSet::new(),
         }
     }
 
@@ -86,7 +90,7 @@ impl CommandGrammar {
         for (kw, ty) in keywords {
             map.insert(kw.to_string(), *ty);
         }
-        Self { keywords: map, force_args_on_new_line: false }
+        Self { keywords: map, force_args_on_new_line: false, sub_keywords: HashSet::new() }
     }
 
     /// Get the type of a keyword (case-sensitive lookup - CMake keywords are case-sensitive)

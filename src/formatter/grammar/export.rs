@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use super::{CommandGrammar, Grammar, KeywordType};
@@ -252,7 +252,7 @@ pub fn import_grammar_file(content: &str) -> Result<HashMap<String, CommandGramm
         // Store with lowercase command name
         result.insert(
             entry.command.to_lowercase(),
-            CommandGrammar { keywords, force_args_on_new_line: false },
+            CommandGrammar { keywords, force_args_on_new_line: false, sub_keywords: HashSet::new() },
         );
     }
 

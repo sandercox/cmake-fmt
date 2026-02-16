@@ -1,6 +1,6 @@
 use super::{CommandGrammar, KeywordType};
 use crate::cst::CommandInvocation;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Extract command grammar from function/macro body by analyzing cmake_parse_arguments calls
 ///
@@ -85,7 +85,7 @@ pub fn extract_command_grammars_from_body(
                     }
 
                     if !keywords.is_empty() {
-                        return Some(CommandGrammar { keywords, force_args_on_new_line: false });
+                        return Some(CommandGrammar { keywords, force_args_on_new_line: false, sub_keywords: HashSet::new() });
                     }
                 }
             }

@@ -457,7 +457,12 @@ pub fn parse_keyword_sections_with_grammar(
                         is_cmake_keyword(&text)
                     };
 
-                    if is_kw {
+                    // Check if this keyword should be consumed by the current BinPack section
+                    let consumed_by_binpack = is_kw
+                        && matches!(current_section.keyword_type, Some(KeywordType::BinPack))
+                        && grammar.map_or(false, |g| g.sub_keywords.contains(&text));
+
+                    if is_kw && !consumed_by_binpack {
                         // Get the keyword type from grammar if available
                         let kw_type = grammar.and_then(|g| g.keyword_type(&text));
 

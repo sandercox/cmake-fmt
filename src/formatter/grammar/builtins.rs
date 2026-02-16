@@ -138,35 +138,40 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         let mut modes = HashMap::new();
 
         // TARGETS mode
-        modes.insert("TARGETS".to_string(), CommandGrammar::from_keywords(&[
-            ("TARGETS", MultiValue),
-            ("EXPORT", SingleValue),
-            // Top-level sub-keywords (global pattern: no artifact type prefix)
-            ("DESTINATION", SingleValue),
-            ("PERMISSIONS", MultiValue),
-            ("CONFIGURATIONS", MultiValue),
-            ("COMPONENT", SingleValue),
-            ("NAMELINK_COMPONENT", SingleValue),
-            // Artifact type selectors (BinPack: sub-keywords stay on same line)
-            ("ARCHIVE", BinPack),
-            ("LIBRARY", BinPack),
-            ("RUNTIME", BinPack),
-            ("OBJECTS", BinPack),
-            ("FRAMEWORK", BinPack),
-            ("BUNDLE", BinPack),
-            ("PUBLIC_HEADER", BinPack),
-            ("PRIVATE_HEADER", BinPack),
-            ("RESOURCE", BinPack),
-            // Standalone flags
-            ("OPTIONAL", Flag),
-            ("EXCLUDE_FROM_ALL", Flag),
-            ("NAMELINK_ONLY", Flag),
-            ("NAMELINK_SKIP", Flag),
-            // FILE_SET support
-            ("FILE_SET", SingleValue),
-            ("TYPE", SingleValue),
-            ("INCLUDES", BinPack),
-        ]));
+        modes.insert("TARGETS".to_string(), {
+            let mut g = CommandGrammar::from_keywords(&[
+                ("TARGETS", MultiValue),
+                ("EXPORT", SingleValue),
+                // Top-level sub-keywords (global pattern: no artifact type prefix)
+                ("DESTINATION", SingleValue),
+                ("PERMISSIONS", MultiValue),
+                ("CONFIGURATIONS", MultiValue),
+                ("COMPONENT", SingleValue),
+                ("NAMELINK_COMPONENT", SingleValue),
+                // Artifact type selectors (BinPack: sub-keywords stay on same line)
+                ("ARCHIVE", BinPack),
+                ("LIBRARY", BinPack),
+                ("RUNTIME", BinPack),
+                ("OBJECTS", BinPack),
+                ("FRAMEWORK", BinPack),
+                ("BUNDLE", BinPack),
+                ("PUBLIC_HEADER", BinPack),
+                ("PRIVATE_HEADER", BinPack),
+                ("RESOURCE", BinPack),
+                // Standalone flags
+                ("OPTIONAL", Flag),
+                ("EXCLUDE_FROM_ALL", Flag),
+                ("NAMELINK_ONLY", Flag),
+                ("NAMELINK_SKIP", Flag),
+                // FILE_SET support
+                ("FILE_SET", SingleValue),
+                ("TYPE", SingleValue),
+                ("INCLUDES", BinPack),
+            ]);
+            g.sub_keywords = ["DESTINATION", "PERMISSIONS", "CONFIGURATIONS", "COMPONENT", "NAMELINK_COMPONENT"]
+                .iter().map(|s| s.to_string()).collect();
+            g
+        });
 
         // FILES mode
         modes.insert("FILES".to_string(), CommandGrammar::from_keywords(&[
