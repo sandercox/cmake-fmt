@@ -247,3 +247,134 @@ fn test_source_grouping_idempotent() {
         "Formatting with source grouping is not idempotent"
     );
 }
+
+#[test]
+fn test_source_grouping_triplet_h_hpp_cpp() {
+    let input = "target_sources(mylib\n\tPUBLIC\n\t\twidget.cpp\n\t\twidget.h\n\t\twidget.hpp\n)";
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+    let output = format_text(input, &config);
+
+    // All three should be grouped on one line in extension priority order
+    assert!(
+        output.contains("widget.h widget.hpp widget.cpp"),
+        "Expected 'widget.h widget.hpp widget.cpp' in output:\n{}",
+        output
+    );
+}
+
+#[test]
+fn test_source_grouping_quad_h_hpp_cpp_ipp() {
+    let input = "target_sources(mylib\n\tPUBLIC\n\t\tcore.cpp\n\t\tcore.h\n\t\tcore.hpp\n\t\tcore.ipp\n)";
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+    let output = format_text(input, &config);
+
+    // All four should be grouped on one line with .ipp before .cpp
+    assert!(
+        output.contains("core.h core.hpp core.ipp core.cpp"),
+        "Expected 'core.h core.hpp core.ipp core.cpp' in output:\n{}",
+        output
+    );
+}
+
+#[test]
+fn test_source_grouping_ipp_recognized_as_header() {
+    let input = "target_sources(mylib\n\tPUBLIC\n\t\ttmpl.cpp\n\t\ttmpl.ipp\n)";
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+    let output = format_text(input, &config);
+
+    // .ipp is a header extension, should come before .cpp
+    assert!(
+        output.contains("tmpl.ipp tmpl.cpp"),
+        "Expected 'tmpl.ipp tmpl.cpp' in output:\n{}",
+        output
+    );
+}
+
+#[test]
+fn test_source_grouping_mixed_triplets_and_singles() {
+    let input = "target_sources(mylib\n\tPUBLIC\n\t\ta.h\n\t\ta.cpp\n\t\ta.ipp\n\t\tb.cpp\n\t\tc.h\n\t\tc.cpp\n)";
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+    let output = format_text(input, &config);
+
+    // a-files should be grouped as triplet with correct ordering
+    assert!(
+        output.contains("a.h a.ipp a.cpp"),
+        "Expected 'a.h a.ipp a.cpp' in output:\n{}",
+        output
+    );
+    // b.cpp has no match, should be alone
+    assert!(output.contains("b.cpp"));
+    assert!(!output.contains("b.cpp a.") && !output.contains("b.cpp c."));
+    // c-files should be grouped as pair
+    assert!(
+        output.contains("c.h c.cpp"),
+        "Expected 'c.h c.cpp' in output:\n{}",
+        output
+    );
+}
+
+#[test]
+fn test_source_grouping_triplet_idempotent() {
+    let input = "target_sources(mylib\n\tPUBLIC\n\t\twidget.cpp\n\t\twidget.h\n\t\twidget.hpp\n)";
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+
+    let pass1 = format_text(input, &config);
+    let pass2 = format_text(&pass1, &config);
+
+    assert_eq!(
+        pass1, pass2,
+        "Formatting triplet with source grouping is not idempotent"
+    );
+}
+
+#[test]
+fn test_source_grouping_triplet_with_sort() {
+    let input = "target_sources(mylib\n\tPUBLIC\n\t\tz.cpp\n\t\tz.h\n\t\tz.hpp\n\t\ta.cpp\n\t\ta.h\n\t\ta.hpp\n)";
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        max_line_length: 100,
+        ..Default::default()
+    };
+    let output = format_text(input, &config);
+
+    // Both should be grouped as triplets
+    assert!(
+        output.contains("a.h a.hpp a.cpp"),
+        "Expected 'a.h a.hpp a.cpp' in output:\n{}",
+        output
+    );
+    assert!(
+        output.contains("z.h z.hpp z.cpp"),
+        "Expected 'z.h z.hpp z.cpp' in output:\n{}",
+        output
+    );
+
+    // a-triplet should come before z-triplet (alphabetical sort)
+    let a_pos = output.find("a.h a.hpp a.cpp").unwrap();
+    let z_pos = output.find("z.h z.hpp z.cpp").unwrap();
+    assert!(
+        a_pos < z_pos,
+        "Expected a-triplet before z-triplet in sorted output"
+    );
+}
