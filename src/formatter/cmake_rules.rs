@@ -840,11 +840,16 @@ pub fn format_keyword_aware_args(
                             ));
                         }
                     } else {
-                        let prev_is_empty_flag = matches!(
-                            sections.get(i.saturating_sub(1)),
-                            Some(prev) if prev.keyword_type == Some(KeywordType::Flag) && prev.args.is_empty()
-                        );
-                        if prev_is_empty_flag {
+                        // In multi-mode commands with first_keyword_inline, group the first empty Flag
+                        // with the immediately following SingleValue (e.g., TEST PROPERTY name).
+                        // Only apply to section index 1 (right after first Flag at index 0).
+                        let prev_is_first_empty_flag = first_keyword_inline
+                            && i == 1
+                            && matches!(
+                                sections.get(0),
+                                Some(first) if first.keyword_type == Some(KeywordType::Flag) && first.args.is_empty()
+                            );
+                        if prev_is_first_empty_flag {
                             docs.push(RcDoc::space());
                         } else {
                             docs.push(RcDoc::flat_alt(

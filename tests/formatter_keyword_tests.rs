@@ -1467,3 +1467,71 @@ fn test_list_reverse_simple() {
     assert_eq!(result, "list(REVERSE mylist)\n",
         "list(REVERSE) should stay on one line");
 }
+
+#[test]
+fn test_define_property_keeps_scope_property_name_inline() {
+    let config = FormatConfig::default();
+    let input = "define_property(TEST\n    PROPERTY\n    SEPARATE_JOB\n    BRIEF_DOCS\n    \"Run as separate job\"\n    FULL_DOCS\n    \"Switches the job to run separately\"\n)\n";
+    let result = format_text(input, &config);
+    // Scope + PROPERTY + name should be on the same line
+    assert!(result.contains("define_property(TEST PROPERTY SEPARATE_JOB"),
+        "TEST PROPERTY SEPARATE_JOB should stay on the same line: {}", result);
+    // BRIEF_DOCS and FULL_DOCS should be keyword sections on new lines
+    assert!(result.contains("\tBRIEF_DOCS \"Run as separate job\""),
+        "BRIEF_DOCS should be on its own line with value: {}", result);
+    assert!(result.contains("\tFULL_DOCS \"Switches the job to run separately\""),
+        "FULL_DOCS should be on its own line with value: {}", result);
+    // Idempotency
+    let pass2 = format_text(&result, &config);
+    assert_eq!(result, pass2, "define_property should be idempotent");
+}
+
+#[test]
+fn test_define_property_short_stays_one_line() {
+    let config = FormatConfig::default();
+    let input = "define_property(TARGET PROPERTY MY_PROP)\n";
+    let result = format_text(input, &config);
+    assert_eq!(result, "define_property(TARGET PROPERTY MY_PROP)\n",
+        "Short define_property should stay on one line");
+}
+
+#[test]
+fn test_define_property_with_inherited() {
+    let config = FormatConfig::default();
+    let input = "define_property(DIRECTORY\n    PROPERTY\n    MY_CUSTOM_PROP\n    INHERITED\n    BRIEF_DOCS\n    \"A custom property\"\n    FULL_DOCS\n    \"This is a custom directory property that is inherited by subdirectories\"\n)\n";
+    let result = format_text(input, &config);
+    // Scope + PROPERTY + name should be on the same line
+    assert!(result.contains("define_property(DIRECTORY PROPERTY MY_CUSTOM_PROP"),
+        "DIRECTORY PROPERTY MY_CUSTOM_PROP should stay together: {}", result);
+    // INHERITED should appear (as a flag, grouped with scope or on its own)
+    assert!(result.contains("INHERITED"),
+        "INHERITED flag should be present: {}", result);
+    // BRIEF_DOCS and FULL_DOCS should be keyword sections
+    assert!(result.contains("BRIEF_DOCS"),
+        "BRIEF_DOCS should be present: {}", result);
+    assert!(result.contains("FULL_DOCS"),
+        "FULL_DOCS should be present: {}", result);
+    // Idempotency
+    let pass2 = format_text(&result, &config);
+    assert_eq!(result, pass2, "define_property with INHERITED should be idempotent");
+}
+
+#[test]
+fn test_define_property_multiple_brief_docs() {
+    let config = FormatConfig::default();
+    let input = "define_property(GLOBAL PROPERTY MY_GLOBAL_PROP BRIEF_DOCS \"doc1\" \"doc2\" FULL_DOCS \"full doc\")\n";
+    let result = format_text(input, &config);
+    // Should contain the property name
+    assert!(result.contains("PROPERTY MY_GLOBAL_PROP"),
+        "PROPERTY and name should stay together: {}", result);
+    // Multiple BRIEF_DOCS values
+    assert!(result.contains("BRIEF_DOCS"),
+        "BRIEF_DOCS should be present: {}", result);
+    assert!(result.contains("\"doc1\""),
+        "First doc string should be present: {}", result);
+    assert!(result.contains("\"doc2\""),
+        "Second doc string should be present: {}", result);
+    // Idempotency
+    let pass2 = format_text(&result, &config);
+    assert_eq!(result, pass2, "define_property with multiple docs should be idempotent");
+}
