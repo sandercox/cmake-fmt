@@ -141,6 +141,12 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         modes.insert("TARGETS".to_string(), CommandGrammar::from_keywords(&[
             ("TARGETS", MultiValue),
             ("EXPORT", SingleValue),
+            // Top-level sub-keywords (global pattern: no artifact type prefix)
+            ("DESTINATION", SingleValue),
+            ("PERMISSIONS", MultiValue),
+            ("CONFIGURATIONS", MultiValue),
+            ("COMPONENT", SingleValue),
+            ("NAMELINK_COMPONENT", SingleValue),
             // Artifact type selectors (BinPack: sub-keywords stay on same line)
             ("ARCHIVE", BinPack),
             ("LIBRARY", BinPack),
