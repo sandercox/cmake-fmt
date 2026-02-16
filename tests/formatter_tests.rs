@@ -1043,6 +1043,73 @@ fn test_trailing_comment_respects_comment_style() {
 }
 
 // ============================================================================
+// MULTI-HASH COMMENT PRESERVATION TESTS
+// ============================================================================
+
+// Test double-hash comments preserved with HashSpace
+#[test]
+fn test_double_hash_preserved_with_hash_space() {
+    let input = "set(SOURCES\n\t## DXV4 After Effects exporter\n\tvalue\n)\n";
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashSpace,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.contains("## DXV4 After Effects exporter"), "Double-hash comment should be preserved exactly with HashSpace. Got: {}", result);
+}
+
+// Test double-hash without space preserved
+#[test]
+fn test_double_hash_no_space_preserved() {
+    let input = "set(SOURCES\n\t##foo\n\tvalue\n)\n";
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashSpace,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.contains("##foo"), "Double-hash comment without space should stay as-is (no space added). Got: {}", result);
+    assert!(!result.contains("## foo"), "HashSpace should NOT normalize ##foo. Got: {}", result);
+}
+
+// Test triple-hash comments preserved
+#[test]
+fn test_triple_hash_preserved() {
+    let input = "set(SOURCES\n\t### Section\n\tvalue\n)\n";
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashSpace,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.contains("### Section"), "Triple-hash comment should be preserved exactly. Got: {}", result);
+}
+
+// Test double-hash preserved with HashNoSpace
+#[test]
+fn test_double_hash_preserved_with_hash_no_space() {
+    let input = "set(SOURCES\n\t## foo\n\tvalue\n)\n";
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashNoSpace,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.contains("## foo"), "Double-hash comment should be preserved (space NOT removed) with HashNoSpace. Got: {}", result);
+    assert!(!result.contains("##foo"), "HashNoSpace should NOT strip space from ## foo. Got: {}", result);
+}
+
+// Test double-hash in full format context
+#[test]
+fn test_double_hash_in_full_format() {
+    let input = "## Main heading\nset(X value)\n## Another section\nset(Y value)\n";
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashSpace,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.contains("## Main heading"), "Double-hash standalone comment should be preserved. Got: {}", result);
+    assert!(result.contains("## Another section"), "Multiple double-hash comments should all be preserved. Got: {}", result);
+}
+
+// ============================================================================
 // DISABLE_FORMAT TESTS
 // ============================================================================
 
