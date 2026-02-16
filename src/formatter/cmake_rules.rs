@@ -25,12 +25,19 @@ fn is_source_file(name: &str) -> bool {
 
 /// Normalize whitespace in line comments according to the specified style.
 /// Only affects line comments (not bracket comments).
+/// Multi-hash comments (##, ###, etc.) are always preserved as-is.
 /// Examples:
 ///   - Leave: "#\t\tfoo" -> "#\t\tfoo" (unchanged)
 ///   - HashSpace: "#\t\tfoo" -> "# foo", "#no-space" -> "# no-space", "#" -> "#"
 ///   - HashNoSpace: "#  foo" -> "#foo", "#" -> "#"
+///   - Any style: "## heading" -> "## heading" (multi-hash preserved)
 pub fn normalize_comment_whitespace(comment: &str, style: super::config::CommentStyle) -> String {
     use super::config::CommentStyle;
+
+    // Multi-hash comments (##, ###, etc.) are preserved as-is
+    if comment.starts_with("##") {
+        return comment.to_string();
+    }
 
     match style {
         CommentStyle::Leave => comment.to_string(),
