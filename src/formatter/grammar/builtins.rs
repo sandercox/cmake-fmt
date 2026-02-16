@@ -758,6 +758,25 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         grammars.insert("list".to_string(), Grammar::Modes { modes });
     }
 
+    // define_property - multi-mode command
+    // Each scope mode has: Flag scope keyword, PROPERTY as SingleValue (consumes property name),
+    // INHERITED flag, BRIEF_DOCS and FULL_DOCS as MultiValue.
+    {
+        let mut modes = HashMap::new();
+
+        for scope in &["GLOBAL", "DIRECTORY", "TARGET", "SOURCE", "TEST", "VARIABLE", "CACHED_VARIABLE"] {
+            modes.insert(scope.to_string(), CommandGrammar::from_keywords(&[
+                (scope, Flag),
+                ("PROPERTY", SingleValue),
+                ("INHERITED", Flag),
+                ("BRIEF_DOCS", MultiValue),
+                ("FULL_DOCS", MultiValue),
+            ]));
+        }
+
+        grammars.insert("define_property".to_string(), Grammar::Modes { modes });
+    }
+
     // Commands with positional-only arguments (empty grammar, but recognized)
     grammars.insert("add_dependencies".to_string(), Grammar::Simple(CommandGrammar::new()));
     grammars.insert("add_compile_definitions".to_string(), Grammar::Simple(CommandGrammar::new()));

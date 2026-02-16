@@ -633,8 +633,9 @@ pub fn sort_source_args(section: &mut KeywordSection) {
 
 /// Format arguments for a keyword-aware command
 ///
-/// `first_keyword_inline`: when true, the first SingleValue keyword stays on the
-/// same line as the command name (used for multi-mode commands like `list(APPEND var)`).
+/// `first_keyword_inline`: when true, the first keyword (SingleValue or Flag) stays on the
+/// same line as the command name (used for multi-mode commands like `list(APPEND var)`
+/// or `define_property(TEST PROPERTY name)`).
 pub fn format_keyword_aware_args(
     arg_list: &ArgumentList,
     sections: Vec<KeywordSection>,
@@ -702,8 +703,10 @@ pub fn format_keyword_aware_args(
                     // Add separator before the flag keyword
                     if is_first_arg {
                         is_first_arg = false;
-                        // First keyword in command: drop to next line when multiline
-                        if signals.force_multiline {
+                        if first_keyword_inline {
+                            // Multi-mode: first keyword stays inline with command name
+                            // (no separator emitted)
+                        } else if signals.force_multiline {
                             docs.push(RcDoc::hardline());
                             docs.push(RcDoc::text(keyword_indent.clone()));
                         } else {
@@ -837,10 +840,18 @@ pub fn format_keyword_aware_args(
                             ));
                         }
                     } else {
-                        docs.push(RcDoc::flat_alt(
-                            RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
-                            RcDoc::space(),
-                        ));
+                        let prev_is_empty_flag = matches!(
+                            sections.get(i.saturating_sub(1)),
+                            Some(prev) if prev.keyword_type == Some(KeywordType::Flag) && prev.args.is_empty()
+                        );
+                        if prev_is_empty_flag {
+                            docs.push(RcDoc::space());
+                        } else {
+                            docs.push(RcDoc::flat_alt(
+                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                                RcDoc::space(),
+                            ));
+                        }
                     }
                     docs.push(RcDoc::text(keyword.clone()));
                     // Add the single value inline
