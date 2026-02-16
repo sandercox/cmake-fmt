@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::cst::{ArgumentList, CSTRoot, CommandInvocation};
 use crate::syntax_kind::SyntaxKind;
@@ -109,10 +110,52 @@ fn collect_trailing_comments(node: &SyntaxNode) -> std::collections::HashSet<Str
     trailing_comments
 }
 
+/// Identify source lines that are part of multi-line comment blocks (2+ consecutive comment lines).
+/// Returns a HashSet of 1-indexed line numbers.
+/// Comment blocks are sequences of consecutive lines where each trimmed line starts with '#'.
+/// Only non-comment, non-blank lines break a block.
+fn comment_block_lines(source: &str) -> HashSet<usize> {
+    let mut result = HashSet::new();
+    let lines: Vec<&str> = source.lines().collect();
+    let mut run_start: Option<usize> = None;
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') && !trimmed.starts_with("#[") {
+            if run_start.is_none() {
+                run_start = Some(i);
+            }
+        } else {
+            if let Some(start) = run_start {
+                if i - start >= 2 {
+                    // 2+ consecutive comment lines = block
+                    for j in start..i {
+                        result.insert(j + 1); // 1-indexed line numbers
+                    }
+                }
+            }
+            run_start = None;
+        }
+    }
+    // Handle block at end of file
+    if let Some(start) = run_start {
+        if lines.len() - start >= 2 {
+            for j in start..lines.len() {
+                result.insert(j + 1);
+            }
+        }
+    }
+
+    result
+}
+
 /// Format the FILE node
 fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String, Vec<SuppressionWarning>) {
     // Clone config so we can modify it based on style directives
     let mut config = ctx.config.clone();
+
+    // Pre-scan source for consecutive comment blocks (2+ adjacent comment lines)
+    let block_comment_lines = comment_block_lines(source);
 
     let mut docs = Vec::new();
     let mut batch_strings = Vec::new();
@@ -218,8 +261,12 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                         if lc.blank_line_before && (!docs.is_empty() || !batch_strings.is_empty()) {
                                             docs.push(RcDoc::hardline());
                                         }
-                                        // Normalize line comments (not bracket comments)
-                                        let text = if !lc.text.starts_with("#[") {
+                                        // Normalize line comments, but skip block comments and bracket comments
+                                        let lc_line = source[..cmd_start]
+                                            .rfind(&lc.text[..])
+                                            .map(|offset| line_number_at_offset(source, offset))
+                                            .unwrap_or(0);
+                                        let text = if !lc.text.starts_with("#[") && !block_comment_lines.contains(&lc_line) {
                                             cmake_rules::normalize_comment_whitespace(&lc.text, config.comment_style)
                                         } else {
                                             lc.text.clone()
@@ -282,8 +329,12 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                 if lc.blank_line_before && (!docs.is_empty() || !batch_strings.is_empty()) {
                                     docs.push(RcDoc::hardline());
                                 }
-                                // Normalize line comments (not bracket comments)
-                                let text = if !lc.text.starts_with("#[") {
+                                // Normalize line comments, but skip block comments and bracket comments
+                                let lc_line = source[..cmd_start]
+                                    .rfind(&lc.text[..])
+                                    .map(|offset| line_number_at_offset(source, offset))
+                                    .unwrap_or(0);
+                                let text = if !lc.text.starts_with("#[") && !block_comment_lines.contains(&lc_line) {
                                     cmake_rules::normalize_comment_whitespace(&lc.text, config.comment_style)
                                 } else {
                                     lc.text.clone()
@@ -455,8 +506,12 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                             }
 
                             let indent_str = indent_string(current_indent, &config);
-                            // Normalize line comments (not bracket comments), but not when suppressed
-                            let text = if token.kind() == SyntaxKind::COMMENT && !tracker.is_suppressed() {
+                            // Normalize line comments (not bracket comments), but not when suppressed or in a comment block
+                            let comment_line = line_number_at_offset(source, token.text_range().start().into());
+                            let text = if token.kind() == SyntaxKind::COMMENT
+                                && !tracker.is_suppressed()
+                                && !block_comment_lines.contains(&comment_line)
+                            {
                                 cmake_rules::normalize_comment_whitespace(&comment_text, config.comment_style)
                             } else {
                                 comment_text
