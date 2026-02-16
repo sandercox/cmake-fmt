@@ -516,7 +516,7 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
 
         // Path modes
         modes.insert("COPY".to_string(), CommandGrammar::from_keywords(&[
-            ("COPY", SingleValue),
+            ("COPY", MultiValue),
             ("DESTINATION", SingleValue),
             ("PATTERN", SingleValue),
             ("REGEX", SingleValue),
@@ -531,7 +531,7 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         ]));
 
         modes.insert("INSTALL".to_string(), CommandGrammar::from_keywords(&[
-            ("INSTALL", SingleValue),
+            ("INSTALL", MultiValue),
             ("DESTINATION", SingleValue),
             ("PATTERN", SingleValue),
             ("REGEX", SingleValue),
