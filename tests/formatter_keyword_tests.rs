@@ -1535,3 +1535,84 @@ fn test_define_property_multiple_brief_docs() {
     let pass2 = format_text(&result, &config);
     assert_eq!(result, pass2, "define_property with multiple docs should be idempotent");
 }
+
+// ============================================================================
+// FILE(COPY) / FILE(INSTALL) MULTIVALUE WRAPPING TESTS
+// ============================================================================
+
+#[test]
+fn test_file_copy_multiline_wraps_files_under_copy() {
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..FormatConfig::default()
+    };
+    let input = "\
+file(COPY ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/editor/Resources/windows/Wire.ico
+    ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/editor/Resources/windows/wire.h
+    DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/rc
+)";
+    let expected = "\
+file(
+    COPY
+        ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/editor/Resources/windows/Wire.ico
+        ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/editor/Resources/windows/wire.h
+    DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/rc
+)
+";
+    let result = format_text(input, &config);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_file_copy_single_file_stays_inline() {
+    let input = "file(COPY src/ DESTINATION build/)";
+    let result = format_text(input, &default_config());
+    assert_eq!(result, "file(COPY src/ DESTINATION build/)\n");
+}
+
+#[test]
+fn test_file_install_multiline_wraps_like_copy() {
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..FormatConfig::default()
+    };
+    let input = "\
+file(INSTALL
+    file1.txt
+    file2.txt
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/share
+)";
+    let expected = "\
+file(
+    INSTALL
+        file1.txt
+        file2.txt
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/share
+)
+";
+    let result = format_text(input, &config);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_file_copy_idempotent() {
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..FormatConfig::default()
+    };
+    let input = "\
+file(
+    COPY
+        ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/editor/Resources/windows/Wire.ico
+        ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/editor/Resources/windows/wire.h
+    DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/rc
+)
+";
+    let pass1 = format_text(input, &config);
+    assert_eq!(pass1, input, "First pass should match expected output");
+    let pass2 = format_text(&pass1, &config);
+    assert_eq!(pass1, pass2, "Second pass should be identical (idempotent)");
+}
