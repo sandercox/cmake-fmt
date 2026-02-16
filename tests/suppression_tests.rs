@@ -1,4 +1,4 @@
-use cmake_fmt::formatter::{format_text, format_text_with_diagnostics, FormatConfig, SuppressionWarning};
+use cmake_fmt::formatter::{format_text, format_text_with_diagnostics, FormatConfig, SuppressionWarning, CommentStyle};
 
 // ============================================================================
 // BLOCK SUPPRESSION TESTS (SUP-01, SUP-03)
@@ -489,4 +489,73 @@ endif()
     // The style override comment itself should appear in output
     assert!(output.contains("# cmake-fmt: indent_width=2"),
         "Style override comment should be preserved in output");
+}
+
+// ============================================================================
+// COMMENT NORMALIZATION SUPPRESSION TESTS
+// ============================================================================
+
+#[test]
+fn test_suppression_off_prevents_comment_normalization() {
+    let mut config = FormatConfig::default();
+    config.comment_style = CommentStyle::HashSpace;
+
+    let input = r#"# cmake-fmt: off
+#if (WIN32 OR APPLE)
+#    target_link_libraries(Alley PUBLIC Sparkle BugSplat)
+#endif()
+# cmake-fmt: on
+"#;
+    let output = format_text(input, &config);
+
+    // With comment_style=HashSpace, comments would normally be normalized to have space after #
+    // But inside cmake-fmt:off region, they should be preserved exactly as-is
+    assert!(output.contains("#if (WIN32 OR APPLE)"),
+        "Suppressed comment should preserve no space after # in #if");
+    assert!(output.contains("#    target_link_libraries(Alley PUBLIC Sparkle BugSplat)"),
+        "Suppressed comment should preserve exact whitespace (4 spaces after #)");
+    assert!(output.contains("#endif()"),
+        "Suppressed comment should preserve no space after # in #endif");
+}
+
+#[test]
+fn test_suppression_off_at_end_of_file() {
+    let mut config = FormatConfig::default();
+    config.comment_style = CommentStyle::HashSpace;
+
+    let input = r#"some_command()
+# cmake-fmt: off
+#if(FOO)
+#    bar()
+#endif()
+"#;
+    let (output, warnings) = format_text_with_diagnostics(input, &config);
+
+    // Verify: no formatting of the comment lines, no warnings about unclosed region
+    assert!(output.contains("#if(FOO)"),
+        "Suppressed comment should preserve no space after # in #if");
+    assert!(output.contains("#    bar()"),
+        "Suppressed comment should preserve exact whitespace");
+    assert!(output.contains("#endif()"),
+        "Suppressed comment should preserve no space after # in #endif");
+
+    // No warning about unclosed cmake-fmt:off at EOF
+    assert_eq!(warnings.len(), 0, "Should have no warnings for unclosed cmake-fmt:off at EOF");
+}
+
+#[test]
+fn test_suppression_off_leading_comments_raw() {
+    let mut config = FormatConfig::default();
+    config.comment_style = CommentStyle::HashSpace;
+
+    let input = r#"# cmake-fmt: off
+#  indented comment
+some_command(ARG1 ARG2)
+# cmake-fmt: on
+"#;
+    let output = format_text(input, &config);
+
+    // Verify the leading comment preserves its double space after #
+    assert!(output.contains("#  indented comment"),
+        "Suppressed leading comment should preserve double space after #");
 }
