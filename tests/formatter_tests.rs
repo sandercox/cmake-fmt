@@ -1185,3 +1185,86 @@ fn test_blank_line_after_leading_comment_idempotent() {
         assert_eq!(once, twice, "Formatting should be idempotent for input: {:?}", input);
     }
 }
+
+// ============================================================================
+// COMMENT BLOCK PRESERVATION TESTS
+// ============================================================================
+
+/// Copyright header block: all lines preserved exactly as-is (indentation, alignment, blank # separators)
+#[test]
+fn test_comment_block_preserved() {
+    let input = "\
+# Copyright 2011 Author. All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+#  1. Redistributions of source code must retain the above copyright notice,
+#     this list of conditions and the following disclaimer.
+#
+#  2. Redistributions in binary form must reproduce the above copyright
+#     notice, this list of conditions and the following disclaimer in the
+#     documentation and/or other materials provided with the distribution.
+#
+cmake_minimum_required(VERSION 3.10)
+";
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashSpace,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    // Every comment line must be preserved exactly (no normalization of #  1. or #     this)
+    assert!(result.contains("#  1. Redistributions of source code"),
+        "Double-space indentation in block should be preserved, got: {}", result);
+    assert!(result.contains("#     this list of conditions"),
+        "Five-space alignment in block should be preserved, got: {}", result);
+    assert!(result.contains("#\n"),
+        "Blank # separators in block should be preserved, got: {}", result);
+    assert!(result.contains("#  2. Redistributions in binary form"),
+        "Second item double-space indentation should be preserved, got: {}", result);
+}
+
+/// Isolated single-line comment is still normalized per comment_style
+#[test]
+fn test_isolated_comment_still_normalized() {
+    let input = "\
+#TODO fix this
+cmake_minimum_required(VERSION 3.10)
+";
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashSpace,
+        ..default_config()
+    };
+    let result = format_text(input, &config);
+    assert!(result.contains("# TODO fix this"),
+        "Isolated comment should be normalized with HashSpace, got: {}", result);
+    assert!(!result.contains("#TODO"),
+        "Original un-normalized form should not appear, got: {}", result);
+}
+
+/// Formatting a copyright block twice yields identical output (idempotent)
+#[test]
+fn test_comment_block_idempotent() {
+    let input = "\
+# Copyright 2011 Author. All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+#  1. Redistributions of source code must retain the above copyright notice,
+#     this list of conditions and the following disclaimer.
+#
+#  2. Redistributions in binary form must reproduce the above copyright
+#     notice, this list of conditions and the following disclaimer in the
+#     documentation and/or other materials provided with the distribution.
+#
+cmake_minimum_required(VERSION 3.10)
+";
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashSpace,
+        ..default_config()
+    };
+    let once = format_text(input, &config);
+    let twice = format_text(&once, &config);
+    assert_eq!(once, twice, "Comment block formatting should be idempotent");
+}
