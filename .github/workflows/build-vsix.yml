@@ -94,7 +94,7 @@ jobs:
           node-version: 20
 
       - name: Install npm dependencies
-        run: npm --prefix editors/vscode install
+        run: cd editors/vscode && npm install
 
       - name: Package VSIX
         run: cd editors/vscode && npx @vscode/vsce package --target ${{ matrix.vscode_target }}
