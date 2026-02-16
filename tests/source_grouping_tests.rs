@@ -378,3 +378,138 @@ fn test_source_grouping_triplet_with_sort() {
         "Expected a-triplet before z-triplet in sorted output"
     );
 }
+
+#[test]
+fn test_source_grouping_with_leading_comments() {
+    let input = r#"set(SOURCES
+    foo.h foo.cpp
+    bar.h bar.cpp
+
+    # Generators
+    Generators/baz.h Generators/baz.cpp
+    Generators/qux.h Generators/qux.cpp
+)"#;
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+    let output = format_text(input, &config);
+
+    // foo and bar should be grouped
+    assert!(
+        output.contains("foo.h foo.cpp"),
+        "Expected 'foo.h foo.cpp' in output:\n{}",
+        output
+    );
+    assert!(
+        output.contains("bar.h bar.cpp"),
+        "Expected 'bar.h bar.cpp' in output:\n{}",
+        output
+    );
+    // Comment should be preserved
+    assert!(output.contains("# Generators"), "Expected comment preserved:\n{}", output);
+    // Generators files should be grouped
+    assert!(
+        output.contains("Generators/baz.h Generators/baz.cpp"),
+        "Expected 'Generators/baz.h Generators/baz.cpp' in output:\n{}",
+        output
+    );
+    assert!(
+        output.contains("Generators/qux.h Generators/qux.cpp"),
+        "Expected 'Generators/qux.h Generators/qux.cpp' in output:\n{}",
+        output
+    );
+    // Blank line should be preserved (comment should come after it)
+    let lines: Vec<&str> = output.lines().collect();
+    let comment_line = lines.iter().position(|l| l.contains("# Generators")).unwrap();
+    let bar_line = lines.iter().position(|l| l.contains("bar.h")).unwrap();
+    // There should be at least one line between bar and comment
+    assert!(comment_line > bar_line + 1, "Expected blank line before comment");
+}
+
+#[test]
+fn test_source_grouping_with_multiple_comment_sections() {
+    let input = r#"set(SOURCES
+    # Generators
+    Generators/noise.h Generators/noise.cpp
+    Generators/wave.h Generators/wave.cpp
+
+    # Effects
+    Effects/reverb.h Effects/reverb.cpp
+    Effects/delay.h Effects/delay.cpp
+
+    # Mixers
+    Mixers/stereo.h Mixers/stereo.cpp
+)"#;
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+    let output = format_text(input, &config);
+
+    // All comments should be preserved
+    assert!(output.contains("# Generators"), "Expected '# Generators' comment");
+    assert!(output.contains("# Effects"), "Expected '# Effects' comment");
+    assert!(output.contains("# Mixers"), "Expected '# Mixers' comment");
+
+    // All pairs should be grouped within their sections
+    assert!(
+        output.contains("Generators/noise.h Generators/noise.cpp"),
+        "Expected grouped noise files:\n{}",
+        output
+    );
+    assert!(
+        output.contains("Generators/wave.h Generators/wave.cpp"),
+        "Expected grouped wave files:\n{}",
+        output
+    );
+    assert!(
+        output.contains("Effects/reverb.h Effects/reverb.cpp"),
+        "Expected grouped reverb files:\n{}",
+        output
+    );
+    assert!(
+        output.contains("Effects/delay.h Effects/delay.cpp"),
+        "Expected grouped delay files:\n{}",
+        output
+    );
+    assert!(
+        output.contains("Mixers/stereo.h Mixers/stereo.cpp"),
+        "Expected grouped stereo files:\n{}",
+        output
+    );
+
+    // Verify comment ordering (Generators before Effects before Mixers)
+    let gen_pos = output.find("# Generators").unwrap();
+    let eff_pos = output.find("# Effects").unwrap();
+    let mix_pos = output.find("# Mixers").unwrap();
+    assert!(gen_pos < eff_pos, "Generators comment should come before Effects");
+    assert!(eff_pos < mix_pos, "Effects comment should come before Mixers");
+}
+
+#[test]
+fn test_source_grouping_comments_idempotent() {
+    let input = r#"set(SOURCES
+    # Section 1
+    foo.h foo.cpp
+
+    # Section 2
+    bar.h bar.cpp
+)"#;
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+
+    let pass1 = format_text(input, &config);
+    let pass2 = format_text(&pass1, &config);
+
+    assert_eq!(
+        pass1, pass2,
+        "Formatting with source grouping and comments is not idempotent.\nPass1:\n{}\n\nPass2:\n{}",
+        pass1, pass2
+    );
+}
