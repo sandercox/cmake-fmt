@@ -2,6 +2,12 @@
 name = "cmake-fmt"
 version = "0.7.0"
 edition = "2024"
+description = "Fast CMake formatter with grammar-aware line wrapping"
+license = "MIT"
+keywords = ["cmake", "formatter", "code-formatting", "build-system", "linter"]
+categories = ["development-tools", "command-line-utilities"]
+repository = "https://gitea.paralleldimension.net/sander/cmake-fmt"
+readme = "README.md"
 
 [[bin]]
 name = "cmake-fmt"
