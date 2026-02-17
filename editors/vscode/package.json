@@ -1,12 +1,31 @@
 {
   "name": "cmake-fmt",
   "displayName": "CMake Format",
-  "description": "Fast CMake formatter with grammar-aware formatting",
+  "description": "Stop arguing about CMake formatting. Fast, grammar-aware formatter for CMakeLists.txt and .cmake files.",
   "version": "0.7.0",
   "publisher": "cmake-fmt",
+  "license": "SEE LICENSE IN LICENSE",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://gitea.paralleldimension.net/sander/cmake-fmt"
+  },
+  "bugs": {
+    "url": "https://gitea.paralleldimension.net/sander/cmake-fmt/issues"
+  },
   "engines": {
     "vscode": "^1.105.0"
   },
+  "keywords": [
+    "cmake",
+    "formatter",
+    "code-formatting",
+    "cmake-format",
+    "formatting",
+    "style",
+    "build-system",
+    "linter"
+  ],
   "categories": [
     "Formatters"
   ],
