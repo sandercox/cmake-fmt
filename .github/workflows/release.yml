@@ -7,8 +7,95 @@ on:
   workflow_dispatch:
 
 jobs:
+  validate:
+    name: Validate release
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      is_prerelease: ${{ steps.check_prerelease.outputs.is_prerelease }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect pre-release tag
+        id: check_prerelease
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [[ "$TAG" == *-* ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "Pre-release tag detected: $TAG"
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "Stable tag detected: $TAG"
+          fi
+
+      - name: Validate tag version matches Cargo.toml
+        run: |
+          TAG="${{ github.ref_name }}"
+          TAG_VERSION="${TAG#v}"
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Tag version:   $TAG_VERSION"
+          echo "Cargo version: $CARGO_VERSION"
+          if [[ "$TAG_VERSION" != "$CARGO_VERSION" ]]; then
+            echo "ERROR: Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
+            echo "Fix: Update Cargo.toml version to $TAG_VERSION, or retag as v${CARGO_VERSION}"
+            exit 1
+          fi
+          echo "Version check passed: $CARGO_VERSION"
+
+      - name: Validate VS Code extension version matches Cargo.toml
+        run: |
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          PKG_VERSION=$(node -e "console.log(require('./editors/vscode/package.json').version)")
+          echo "Cargo version:   $CARGO_VERSION"
+          echo "package.json version: $PKG_VERSION"
+          if [[ "$CARGO_VERSION" != "$PKG_VERSION" ]]; then
+            echo "ERROR: Cargo.toml version ($CARGO_VERSION) does not match editors/vscode/package.json version ($PKG_VERSION)"
+            echo "Fix: Update editors/vscode/package.json version to \"$CARGO_VERSION\""
+            exit 1
+          fi
+          echo "VS Code extension version check passed: $PKG_VERSION"
+
+      - name: Validate CHANGELOG has section for this version
+        run: |
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Looking for CHANGELOG section: ## [$CARGO_VERSION]"
+          if ! grep -qF "## [$CARGO_VERSION]" CHANGELOG.md; then
+            echo "ERROR: CHANGELOG.md has no section for version $CARGO_VERSION"
+            echo "Fix: Add a '## [$CARGO_VERSION]' section to CHANGELOG.md with release notes"
+            exit 1
+          fi
+          echo "CHANGELOG section found for $CARGO_VERSION"
+
+      - name: Validate tagged commit is on main branch
+        run: |
+          TAG="${{ github.ref_name }}"
+          COMMIT=$(git rev-parse "${TAG}^{commit}")
+          echo "Tagged commit: $COMMIT"
+          if ! git branch --contains "$COMMIT" --remotes | grep -q "origin/main"; then
+            echo "ERROR: Tagged commit ($COMMIT) is not on origin/main"
+            echo "Fix: Ensure the tag points to a commit that is on the main branch"
+            exit 1
+          fi
+          echo "Commit is on origin/main — branch check passed"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run cargo publish --dry-run
+        env:
+          CARGO_REGISTRY_TOKEN: "dry-run-placeholder"
+        run: |
+          echo "Running cargo publish --dry-run to catch metadata issues..."
+          cargo publish --dry-run
+          echo "cargo publish --dry-run passed"
+
   build:
     name: Build ${{ matrix.vscode_target }}
+    needs: validate
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -130,9 +217,10 @@ jobs:
 
       - name: Sync package.json version from Cargo.toml
         run: |
-          VERSION=${{ steps.version.outputs.version }}
-          cd editors/vscode && node -e "const p=require('./package.json'); p.version='$VERSION'; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n')"
-          echo "Synced package.json version to $VERSION"
+          CARGO_VERSION=${{ steps.version.outputs.version }}
+          MARKETPLACE_VERSION="${CARGO_VERSION%%-*}"
+          cd editors/vscode && node -e "const p=require('./package.json'); p.version='$MARKETPLACE_VERSION'; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n')"
+          echo "Synced package.json version to $MARKETPLACE_VERSION (from Cargo.toml $CARGO_VERSION)"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -157,7 +245,14 @@ jobs:
         run: cd editors/vscode && npm install
 
       - name: Package VSIX
-        run: cd editors/vscode && npx @vscode/vsce package --target ${{ matrix.vscode_target }}
+        shell: bash
+        run: |
+          IS_PRERELEASE=${{ contains(github.ref_name, '-') }}
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            cd editors/vscode && npx @vscode/vsce package --target ${{ matrix.vscode_target }} --pre-release
+          else
+            cd editors/vscode && npx @vscode/vsce package --target ${{ matrix.vscode_target }}
+          fi
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
@@ -168,6 +263,7 @@ jobs:
   collect:
     name: Collect and checksum archives
     needs: build
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Download all archive artifacts
@@ -193,6 +289,7 @@ jobs:
   publish-crates:
     name: Publish to crates.io
     needs: collect
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -211,11 +308,19 @@ jobs:
         run: cargo publish --token ${{ steps.auth.outputs.token }}
 
       - name: Echo success
-        run: echo "Published cmake-fmt to crates.io"
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Published cmake-fmt v${VERSION} to crates.io"
+          echo ""
+          echo "Next step: Create GitHub Release"
+          echo "If GitHub Release creation fails, you can create it manually:"
+          echo "  gh release create v${VERSION} archives/*.tar.gz archives/*.zip archives/SHA256SUMS \\"
+          echo "    --title \"cmake-fmt v${VERSION}\" --notes-file release-notes.md"
 
   publish-github-release:
     name: Create GitHub Release
     needs: publish-crates
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -257,17 +362,27 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.version }}
           body_path: release-notes.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             archives/*.tar.gz
             archives/*.zip
             archives/SHA256SUMS
 
       - name: Echo success
-        run: echo "Created GitHub Release v${{ steps.version.outputs.version }} with archives and SHA256SUMS"
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          echo "Created GitHub Release v${VERSION} with archives and SHA256SUMS"
+          echo ""
+          echo "Next step: Publish to VS Code Marketplace"
+          echo "If VS Code Marketplace publish fails, you can publish manually:"
+          echo "  for vsix in vsix/*.vsix; do"
+          echo "    npx @vscode/vsce publish --packagePath \"\$vsix\" --pat \$VSCE_PAT"
+          echo "  done"
 
   publish-vscode-marketplace:
     name: Publish to VS Code Marketplace
     needs: publish-github-release
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Download VSIX artifacts
@@ -294,9 +409,20 @@ jobs:
           done
           echo "Published $count VSIXs to VS Code Marketplace"
 
+      - name: Echo success
+        run: |
+          echo "Published cmake-fmt to VS Code Marketplace"
+          echo ""
+          echo "Next step: Publish to Open VSX Registry"
+          echo "If Open VSX publish fails, you can publish manually:"
+          echo "  for vsix in vsix/*.vsix; do"
+          echo "    npx ovsx publish \"\$vsix\" --pat \$OVSX_PAT"
+          echo "  done"
+
   publish-openvsx:
     name: Publish to Open VSX Registry
     needs: publish-vscode-marketplace
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Download VSIX artifacts
@@ -314,11 +440,22 @@ jobs:
       - name: Publish all VSIXs to Open VSX Registry
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        shell: bash
         run: |
+          IS_PRERELEASE=${{ contains(github.ref_name, '-') }}
           count=0
           for vsix in vsix/*.vsix; do
             echo "Publishing $vsix..."
-            npx ovsx publish "$vsix" --pat "$OVSX_PAT"
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              npx ovsx publish "$vsix" --pat "$OVSX_PAT" --pre-release
+            else
+              npx ovsx publish "$vsix" --pat "$OVSX_PAT"
+            fi
             count=$((count + 1))
           done
           echo "Published $count VSIXs to Open VSX Registry"
+
+      - name: Echo success
+        run: |
+          echo "Published cmake-fmt to Open VSX Registry"
+          echo "All publish channels complete: crates.io, GitHub Release, VS Code Marketplace, Open VSX Registry"
