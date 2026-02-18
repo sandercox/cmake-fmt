@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="7.6 5.9 120.6 120.6" width="256" height="256">
+  <defs>
+    <!-- Subtle blur for background shapes — adjust stdDeviation to taste -->
+    <filter id="bg-blur" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="1.2"/>
+    </filter>
+  </defs>
+
+  <!-- All logo geometry centered within viewBox -->
+  <g transform="translate(23.95,23.93)">
+
+    <!-- Background shapes: blurred to feel imprecise/unformatted -->
+    <!-- Blue -->
+    <g transform="translate(-20,-6) rotate(-20,27.6,40.1)" filter="url(#bg-blur)">
+      <polygon points="40.55 -5.37 -4.66 84.53 44.86 42.44" fill="#fff"/>
+      <polygon points="39.53 0 0 78.6 43.3 41.8" fill="#83b7ea"/>
+    </g>
+    <!-- Green -->
+    <g transform="translate(8,6) rotate(-12,34.9,75.0)" filter="url(#bg-blur)">
+      <polygon points="86.72 83.64 25.28 58.89 -3.86 83.64" fill="#fff"/>
+      <polygon points="78.98 82.14 25.56 60.62 .22 82.14" fill="#c9f0be"/>
+    </g>
+    <!-- Red -->
+    <g transform="translate(-2,-8) rotate(-25,57.6,49.4)" filter="url(#bg-blur)">
+      <polygon points="85.21 83.18 40.20 -6.38 46.88 67.73" fill="#fff"/>
+      <polygon points="82.09 80.3 42.4 1.34 48.29 66.68" fill="#ff8c94"/>
+    </g>
+
+
+    <!-- Foreground: exact CMake logo, perfectly aligned -->
+    <!-- White outline: scale from logo center (40.6, 53.9) — adjust scale to taste -->
+    <polygon points="40.63 -6.64 86.26 84.14 -5.02 84.14" fill="#fff"
+      transform="translate(40.6,53.9) scale(1.04) translate(-40.6,-53.9)"/>
+    <polygon points="39.53 0 0 78.6 43.3 41.8" fill="#0068c7"/>
+    <polygon points="78.98 82.14 25.56 60.62 .22 82.14" fill="#3dae2b"/>
+    <polygon points="82.09 80.3 42.4 1.34 48.29 66.68" fill="#f32735"/>
+    <polygon points="43.78 45.03 27.95 58.46 45.6 65.56" fill="#dce3eb"/>
+
+  </g>
+</svg>
