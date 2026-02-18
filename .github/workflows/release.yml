@@ -1,0 +1,324 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.vscode_target }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - vscode_target: linux-x64
+            rust_target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - vscode_target: linux-arm64
+            rust_target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+          - vscode_target: darwin-x64
+            rust_target: x86_64-apple-darwin
+            os: macos-latest
+            cross: true
+          - vscode_target: darwin-arm64
+            rust_target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+          - vscode_target: win32-x64
+            rust_target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+          - vscode_target: win32-arm64
+            rust_target: aarch64-pc-windows-msvc
+            os: windows-latest
+            cross: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: target/
+          key: rust-release-${{ matrix.rust_target }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-release-${{ matrix.rust_target }}-
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: runner.os == 'Linux' && matrix.cross
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.rust_target }}
+
+      - name: Smoke test (native builds)
+        if: "!matrix.cross"
+        run: |
+          BIN=target/${{ matrix.rust_target }}/release/cmake-fmt
+          if [[ "${{ matrix.vscode_target }}" == win32-* ]]; then BIN="${BIN}.exe"; fi
+          "$BIN" --version
+          echo "cmake_minimum_required(VERSION 3.20)" | "$BIN" -
+
+      - name: Smoke test (cross builds - file existence check)
+        if: matrix.cross
+        run: |
+          if [[ "${{ matrix.vscode_target }}" == win32-* ]]; then
+            BIN="target/${{ matrix.rust_target }}/release/cmake-fmt.exe"
+          else
+            BIN="target/${{ matrix.rust_target }}/release/cmake-fmt"
+          fi
+          test -f "$BIN"
+          ls -lh "$BIN"
+          echo "Binary verified: $BIN"
+
+      - name: Package archive (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          ARCHIVE="cmake-fmt-v${VERSION}-${{ matrix.vscode_target }}.tar.gz"
+          mkdir -p staging
+          cp "target/${{ matrix.rust_target }}/release/cmake-fmt" LICENSE README.md staging/
+          if [[ "${{ matrix.vscode_target }}" == "linux-arm64" ]]; then
+            aarch64-linux-gnu-strip staging/cmake-fmt || true
+          else
+            strip staging/cmake-fmt || true
+          fi
+          tar -czf "$ARCHIVE" -C staging cmake-fmt LICENSE README.md
+          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+          echo "Packaged $ARCHIVE"
+
+      - name: Package archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $VERSION = "${{ steps.version.outputs.version }}"
+          $ARCHIVE = "cmake-fmt-v${VERSION}-${{ matrix.vscode_target }}.zip"
+          mkdir staging
+          Copy-Item "target\${{ matrix.rust_target }}\release\cmake-fmt.exe", "LICENSE", "README.md" staging\
+          Compress-Archive -Path staging\* -DestinationPath $ARCHIVE
+          echo "ARCHIVE=$ARCHIVE" >> $env:GITHUB_ENV
+          echo "Packaged $ARCHIVE"
+
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.vscode_target }}
+          path: ${{ env.ARCHIVE }}
+
+      - name: Sync package.json version from Cargo.toml
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          cd editors/vscode && node -e "const p=require('./package.json'); p.version='$VERSION'; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n')"
+          echo "Synced package.json version to $VERSION"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Prepare extension binary
+        run: |
+          mkdir -p editors/vscode/bin
+          if [[ "${{ matrix.vscode_target }}" == win32-* ]]; then
+            cp "target/${{ matrix.rust_target }}/release/cmake-fmt.exe" editors/vscode/bin/
+          else
+            cp "target/${{ matrix.rust_target }}/release/cmake-fmt" editors/vscode/bin/
+            if [[ "${{ matrix.vscode_target }}" == "linux-arm64" ]]; then
+              aarch64-linux-gnu-strip editors/vscode/bin/cmake-fmt || true
+            else
+              strip editors/vscode/bin/cmake-fmt || true
+            fi
+          fi
+
+      - name: Install npm dependencies
+        run: cd editors/vscode && npm install
+
+      - name: Package VSIX
+        run: cd editors/vscode && npx @vscode/vsce package --target ${{ matrix.vscode_target }}
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.vscode_target }}
+          path: editors/vscode/*.vsix
+
+  collect:
+    name: Collect and checksum archives
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all archive artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: archives/
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd archives/
+          sha256sum *.tar.gz *.zip > SHA256SUMS 2>/dev/null || sha256sum *.tar.gz > SHA256SUMS
+          echo "Generated SHA256SUMS:"
+          cat SHA256SUMS
+
+      - name: Upload SHA256SUMS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sha256sums
+          path: archives/SHA256SUMS
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: collect
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish to crates.io
+        run: cargo publish --token ${{ steps.auth.outputs.token }}
+
+      - name: Echo success
+        run: echo "Published cmake-fmt to crates.io"
+
+  publish-github-release:
+    name: Create GitHub Release
+    needs: publish-crates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download archive artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: archives/
+
+      - name: Download SHA256SUMS
+        uses: actions/download-artifact@v4
+        with:
+          name: sha256sums
+          path: archives/
+
+      - name: Extract release notes from CHANGELOG
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          awk -v ver="$VERSION" '
+            /^## \[/ { if (found) exit; if ($0 ~ "\\[" ver "\\]") found=1; next }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          echo "Release notes for v${VERSION}:"
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          files: |
+            archives/*.tar.gz
+            archives/*.zip
+            archives/SHA256SUMS
+
+      - name: Echo success
+        run: echo "Created GitHub Release v${{ steps.version.outputs.version }} with archives and SHA256SUMS"
+
+  publish-vscode-marketplace:
+    name: Publish to VS Code Marketplace
+    needs: publish-github-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download VSIX artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vsix-*
+          merge-multiple: true
+          path: vsix/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Publish all VSIXs to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          count=0
+          for vsix in vsix/*.vsix; do
+            echo "Publishing $vsix..."
+            npx @vscode/vsce publish --packagePath "$vsix"
+            count=$((count + 1))
+          done
+          echo "Published $count VSIXs to VS Code Marketplace"
+
+  publish-openvsx:
+    name: Publish to Open VSX Registry
+    needs: publish-vscode-marketplace
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download VSIX artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vsix-*
+          merge-multiple: true
+          path: vsix/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Publish all VSIXs to Open VSX Registry
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          count=0
+          for vsix in vsix/*.vsix; do
+            echo "Publishing $vsix..."
+            npx ovsx publish "$vsix" --pat "$OVSX_PAT"
+            count=$((count + 1))
+          done
+          echo "Published $count VSIXs to Open VSX Registry"
