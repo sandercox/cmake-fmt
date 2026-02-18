@@ -6,7 +6,8 @@ description = "Fast CMake formatter with grammar-aware line wrapping"
 license = "MIT"
 keywords = ["cmake", "formatter", "code-formatting", "build-system", "linter"]
 categories = ["development-tools", "command-line-utilities"]
-repository = "https://gitea.paralleldimension.net/sander/cmake-fmt"
+repository = "https://github.com/sandercox/cmake-fmt"
+homepage = "https://github.com/sandercox/cmake-fmt"
 readme = "README.md"
 
 [[bin]]
