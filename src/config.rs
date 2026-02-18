@@ -5,23 +5,23 @@ use std::path::{Path, PathBuf};
 
 /// Supported config file names in priority order
 ///
-/// Explicit extensions first, then extensionless (YAML, like clang-format)
+/// Extensionless first (like clang-format), then explicit extensions
 const CONFIG_FILENAMES: &[&str] = &[
-    ".cmake-fmt.toml",
-    ".cmake-fmt.tml",
-    ".cmake-fmt.yaml",
-    ".cmake-fmt.yml",
     ".cmake-fmt",
+    ".cmake-fmt.yml",
+    ".cmake-fmt.yaml",
+    ".cmake-fmt.tml",
+    ".cmake-fmt.toml",
 ];
 
 /// Find all config files by walking up the directory tree
 ///
 /// Searches for config files in this priority order per directory:
-/// 1. `.cmake-fmt.toml` (TOML)
-/// 2. `.cmake-fmt.tml` (TOML shorthand)
+/// 1. `.cmake-fmt` (extensionless, parsed as YAML)
+/// 2. `.cmake-fmt.yml` (YAML shorthand)
 /// 3. `.cmake-fmt.yaml` (YAML)
-/// 4. `.cmake-fmt.yml` (YAML shorthand)
-/// 5. `.cmake-fmt` (extensionless, parsed as YAML)
+/// 4. `.cmake-fmt.tml` (TOML shorthand)
+/// 5. `.cmake-fmt.toml` (TOML)
 ///
 /// Returns all config files found (nearest-first order), stopping at filesystem root
 pub fn find_config_files(start_dir: &Path) -> Vec<PathBuf> {

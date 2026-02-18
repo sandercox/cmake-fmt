@@ -72,7 +72,7 @@ cargo install cmake-fmt
 
 ### Pre-built Binaries
 
-Download pre-built binaries from [GitHub Releases](https://github.com/your-org/cmake-fmt/releases) (coming soon).
+Download pre-built binaries from [GitHub Releases](https://github.com/sandercox/cmake-fmt/releases) (coming soon).
 
 Supported platforms:
 - Linux x64
@@ -109,13 +109,16 @@ Use in CI to enforce formatting:
 cmake-fmt --check $(find . -name 'CMakeLists.txt' -o -name '*.cmake')
 ```
 
+When going through your files for the first time, you can use `--interactive` to review changes hunk-by-hunk and choose which ones to apply or skip/disable.
+
 ## Configuration
 
 cmake-fmt searches for config files upward from the formatted file's directory. Config file names (in priority order):
-1. `.cmake-fmt.toml`
-2. `.cmake-fmt.yaml`
-3. `.cmake-fmt.yml`
-4. `.cmake-fmt` (TOML format)
+1. `.cmake-fmt` (YAML format)
+2. `.cmake-fmt.yml`
+3. `.cmake-fmt.yaml`
+4. `.cmake-fmt.tml`
+5. `.cmake-fmt.toml`
 
 Multiple config files can coexist — root-level defaults are merged with directory-level overrides.
 
@@ -293,7 +296,7 @@ Preserves original file order.
 #### `source_grouping`
 
 **`source_grouping = headers_first`:**
-Groups header files (`.h`, `.hpp`) before source files (`.cpp`, `.c`) in commands like `add_executable()`.
+Groups header files (`.h`, `.hpp`) before source files (`.cpp`, `.c`) in commands like `add_executable()` but also `set()` when file lists are detected.
 
 **`source_grouping = sources_first`:**
 Groups source files before header files.
@@ -305,14 +308,18 @@ No grouping applied.
 
 The `command_grammars` setting is only available in config files (not via `--style`). It allows you to define custom command grammars for project-specific CMake functions.
 
-**Example `.cmake-fmt.toml`:**
-```toml
-[command_grammars]
-my_custom_command = [
-  { keyword = "SOURCES", repeatable = true },
-  { keyword = "HEADERS", repeatable = true },
-  { keyword = "DEPENDS", repeatable = true }
-]
+**Example `.cmake-fmt`:**
+```yaml
+custom_grammer:
+  my_custom_command:
+    options:
+      - VERBOSE
+    one_value_keywords:
+      - NAME
+      - VERSION
+    multi_value_keywords:
+      - SOURCES
+      - HEADERS
 ```
 
 For detailed grammar syntax, run:
