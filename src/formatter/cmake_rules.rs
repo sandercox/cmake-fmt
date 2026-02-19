@@ -890,6 +890,19 @@ pub fn format_keyword_aware_args(
     let keyword_indent = super::cst_to_doc::indent_string(indent_level + 1, config);
     let value_indent = super::cst_to_doc::indent_string(indent_level + 2, config);
 
+    // inline_single_keyword: when enabled and there is exactly one keyword section,
+    // emit the keyword inline with the pre-keyword args and use single indentation for values.
+    let keyword_section_count = sections.iter().filter(|s| s.keyword.is_some()).count();
+    if config.inline_single_keyword && keyword_section_count == 1 {
+        return format_keyword_aware_args_inline_single(
+            &sections,
+            config,
+            &signals,
+            &base_indent,
+            &keyword_indent,
+        );
+    }
+
     // Build keyword-aware Doc structure
     // ARGL-03: first arg should stay on same line as command (no separator before it)
     let mut docs = Vec::new();
@@ -1667,6 +1680,270 @@ pub fn format_keyword_aware_args(
 
     let combined = RcDoc::concat(docs);
 
+    if signals.force_multiline {
+        combined
+    } else {
+        combined.group()
+    }
+}
+
+/// Format keyword-aware args with a single keyword section using inline layout.
+///
+/// When `inline_single_keyword = true` and there is exactly one keyword section:
+/// - The keyword is emitted on the SAME line as the pre-keyword args (with a space separator).
+/// - Values under the keyword are indented at `keyword_indent` level (one level, not two).
+/// - The closing paren is at `base_indent` level as usual.
+///
+/// When the command fits on one line, flat rendering keeps everything inline (unchanged).
+fn format_keyword_aware_args_inline_single(
+    sections: &[KeywordSection],
+    config: &FormatConfig,
+    signals: &super::cst_to_doc::ArgumentFormatSignals,
+    base_indent: &str,
+    keyword_indent: &str,
+) -> RcDoc<'static, ()> {
+    let mut docs = Vec::new();
+    let mut is_first_arg = true;
+
+    for section in sections.iter() {
+        if let Some(keyword) = &section.keyword {
+            // There is exactly one keyword section — emit keyword INLINE with preceding args.
+            // Separator: space (flat and broken both use space here)
+            if is_first_arg {
+                // Keyword is the very first thing (no pre-keyword args)
+                is_first_arg = false;
+                if signals.force_multiline {
+                    docs.push(RcDoc::hardline());
+                    docs.push(RcDoc::text(keyword_indent.to_string()));
+                } else {
+                    docs.push(RcDoc::flat_alt(
+                        RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
+                        RcDoc::nil(),
+                    ));
+                }
+            } else {
+                // Keyword follows pre-keyword args — stays on same line as the last pre-keyword arg.
+                // In flat mode this is already inline; in broken mode we want a space (not a newline).
+                is_first_arg = false;
+                docs.push(RcDoc::space());
+            }
+            docs.push(RcDoc::text(keyword.clone()));
+
+            // Values are indented at keyword_indent level (single indent, not double)
+            if !section.args.is_empty() {
+                let use_per_line = section.values_on_new_line
+                    || !section.comments.is_empty()
+                    || !section.trailing_comments.is_empty()
+                    || !section.blank_lines.is_empty();
+
+                if use_per_line {
+                    let mut comment_iter = section.comments.iter().peekable();
+                    let mut comment_index = 0usize;
+                    for (arg_idx, arg) in section.args.iter().enumerate() {
+                        if section.blank_lines.contains(&arg_idx) && signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                        }
+                        while let Some((pos, comment)) = comment_iter.peek() {
+                            if *pos == arg_idx {
+                                if section.comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                                    docs.push(RcDoc::hardline());
+                                }
+                                if signals.force_multiline {
+                                    docs.push(RcDoc::hardline());
+                                    docs.push(RcDoc::text(keyword_indent.to_string()));
+                                } else {
+                                    docs.push(RcDoc::flat_alt(
+                                        RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
+                                        RcDoc::space(),
+                                    ));
+                                }
+                                docs.push(RcDoc::text(comment.clone()));
+                                comment_iter.next();
+                                comment_index += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        if signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.to_string()));
+                        } else {
+                            docs.push(RcDoc::flat_alt(
+                                RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
+                                RcDoc::space(),
+                            ));
+                        }
+                        docs.push(RcDoc::text(arg.clone()));
+                        for (tc_idx, tc_text) in &section.trailing_comments {
+                            if *tc_idx == arg_idx {
+                                docs.push(RcDoc::text(format!(" {}", tc_text)));
+                            }
+                        }
+                    }
+                    if comment_iter.peek().is_some() && section.blank_lines.contains(&section.args.len()) && signals.force_multiline {
+                        docs.push(RcDoc::hardline());
+                    }
+                    while let Some((_, comment)) = comment_iter.next() {
+                        if section.comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                        }
+                        if signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.to_string()));
+                        } else {
+                            docs.push(RcDoc::flat_alt(
+                                RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
+                                RcDoc::space(),
+                            ));
+                        }
+                        docs.push(RcDoc::text(comment.clone()));
+                        comment_index += 1;
+                    }
+                } else {
+                    // Flat layout: values go on new lines below keyword (single indent) when broken
+                    for (arg_idx, arg) in section.args.iter().enumerate() {
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
+                            RcDoc::space(),
+                        ));
+                        docs.push(RcDoc::text(arg.clone()));
+                        for (tc_idx, tc_text) in &section.trailing_comments {
+                            if *tc_idx == arg_idx {
+                                docs.push(RcDoc::text(format!(" {}", tc_text)));
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Pre-keyword section: same as the main loop's pre-keyword handling
+            let (effective_args, effective_blank_lines, effective_comments, effective_post_comment_blanks, effective_comment_blank_indices) =
+                if config.source_grouping != super::config::SourceGrouping::None
+                    && section.trailing_comments.is_empty()
+                {
+                    group_source_pairs_preserving_blanks(
+                        &section.args,
+                        &section.blank_lines,
+                        &section.comments,
+                        &section.post_comment_blanks,
+                        &section.comment_blank_indices,
+                        config.source_grouping,
+                    )
+                } else {
+                    (
+                        section.args.clone(),
+                        section.blank_lines.clone(),
+                        section.comments.clone(),
+                        section.post_comment_blanks.clone(),
+                        section.comment_blank_indices.clone(),
+                    )
+                };
+
+            let is_list = effective_args.len() > 1;
+            let mut comment_iter = effective_comments.iter().peekable();
+            let mut comment_index = 0usize;
+
+            for (arg_idx, arg) in effective_args.iter().enumerate() {
+                let is_post_comment = effective_post_comment_blanks.contains(&arg_idx);
+                if !is_post_comment && effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                    docs.push(RcDoc::hardline());
+                    is_first_arg = false;
+                }
+
+                while let Some((pos, comment)) = comment_iter.peek() {
+                    if *pos == arg_idx {
+                        if effective_comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                        }
+                        if signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.to_string()));
+                        } else {
+                            docs.push(RcDoc::flat_alt(
+                                RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
+                                RcDoc::space(),
+                            ));
+                        }
+                        docs.push(RcDoc::text(comment.clone()));
+                        comment_iter.next();
+                        comment_index += 1;
+                        is_first_arg = false;
+                    } else {
+                        break;
+                    }
+                }
+
+                if is_post_comment && effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                    docs.push(RcDoc::hardline());
+                    is_first_arg = false;
+                }
+
+                if is_first_arg && !is_list {
+                    is_first_arg = false;
+                } else if is_first_arg {
+                    is_first_arg = false;
+                    if signals.force_multiline {
+                        docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(keyword_indent.to_string()));
+                    } else {
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
+                            RcDoc::nil(),
+                        ));
+                    }
+                } else {
+                    if signals.force_multiline {
+                        docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(keyword_indent.to_string()));
+                    } else {
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
+                            RcDoc::space(),
+                        ));
+                    }
+                }
+                docs.push(RcDoc::text(arg.clone()));
+                for (tc_idx, tc_text) in &section.trailing_comments {
+                    if *tc_idx == arg_idx {
+                        docs.push(RcDoc::text(format!(" {}", tc_text)));
+                    }
+                }
+            }
+
+            if comment_iter.peek().is_some() && effective_blank_lines.contains(&effective_args.len()) && signals.force_multiline {
+                docs.push(RcDoc::hardline());
+            }
+            while let Some((_, comment)) = comment_iter.next() {
+                if effective_comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                    docs.push(RcDoc::hardline());
+                }
+                if signals.force_multiline {
+                    docs.push(RcDoc::hardline());
+                    docs.push(RcDoc::text(keyword_indent.to_string()));
+                } else {
+                    docs.push(RcDoc::flat_alt(
+                        RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
+                        RcDoc::space(),
+                    ));
+                }
+                docs.push(RcDoc::text(comment.clone()));
+                comment_index += 1;
+            }
+        }
+    }
+
+    // Closing paren at base indent
+    if signals.force_multiline {
+        docs.push(RcDoc::hardline());
+        docs.push(RcDoc::text(base_indent.to_string()));
+    } else {
+        docs.push(RcDoc::flat_alt(
+            RcDoc::hardline().append(RcDoc::text(base_indent.to_string())),
+            RcDoc::nil(),
+        ));
+    }
+
+    let combined = RcDoc::concat(docs);
     if signals.force_multiline {
         combined
     } else {

@@ -108,6 +108,10 @@ pub struct FormatConfig {
     /// When true: `add_library(mylib STATIC ...)` keeps STATIC inline with target name
     /// When false: flags get their own indented line like other keywords
     pub collapse_empty_flags: bool,
+
+    /// When true and a keyword command has only one keyword section, keep the keyword inline with args (default: false)
+    /// E.g., `target_sources(mylib PUBLIC\n    src/a.cpp\n)` instead of `target_sources(mylib\n    PUBLIC\n        src/a.cpp\n)`
+    pub inline_single_keyword: bool,
 }
 
 impl Default for FormatConfig {
@@ -130,6 +134,7 @@ impl Default for FormatConfig {
             source_grouping: SourceGrouping::None,
             sort_sources: SortSources::None,
             collapse_empty_flags: true,
+            inline_single_keyword: false,
         }
     }
 }
@@ -417,6 +422,15 @@ impl FormatConfig {
                         Ok(())
                     }
                     Err(_) => Err(format!("Invalid value for collapse_empty_flags: {}", value)),
+                }
+            }
+            "inline_single_keyword" => {
+                match value.parse::<bool>() {
+                    Ok(v) => {
+                        self.inline_single_keyword = v;
+                        Ok(())
+                    }
+                    Err(_) => Err(format!("Invalid value for inline_single_keyword: {}", value)),
                 }
             }
             _ => Err(format!("Unknown config key: {}", key)),
