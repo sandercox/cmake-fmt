@@ -84,7 +84,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "cp ../../LICENSE LICENSE && npm run package",
+    "vscode:prepublish": "cp ../../LICENSE LICENSE && sed 's|src=\"editors/vscode/icon.svg\"|src=\"https://raw.githubusercontent.com/sandercox/cmake-fmt/main/editors/vscode/icon.svg\"|' ../../README.md > README.md && npm run package",
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "node esbuild.js --production",
