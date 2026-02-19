@@ -8,7 +8,7 @@ mod suppression;
 mod user_commands;
 pub mod line_ranges;
 
-pub use config::{ClosingStyle, CommandCase, CommentStyle, CommandGrammarConfig, FormatConfig, LineEnding, SortSources, SourceGrouping, UserCommandCase};
+pub use config::{ClosingStyle, CommandCase, CommentStyle, CommandGrammarConfig, FinalNewline, FormatConfig, LineEnding, SortSources, SourceGrouping, UserCommandCase};
 pub use grammar::{
     detect_grammar_format, export_command_grammars, export_command_grammars_to_toml,
     export_command_grammars_to_yaml, export_grammars, export_grammars_to_toml,
@@ -170,7 +170,7 @@ pub fn format_text(input: &str, config: &FormatConfig) -> String {
 }
 
 /// Post-process rendered output: strip trailing whitespace and normalize ending
-pub(crate) fn post_process_rendered_output(result: &str, final_newline: bool) -> String {
+pub(crate) fn post_process_rendered_output(result: &str, final_newline: config::FinalNewline, input_had_trailing_newline: bool) -> String {
     // Strip trailing whitespace from each line (the pretty crate can produce
     // indentation on otherwise-blank lines when nest() wraps line() breaks)
     let result: String = result
@@ -185,13 +185,33 @@ pub(crate) fn post_process_rendered_output(result: &str, final_newline: bool) ->
     // If nothing meaningful, return empty
     if trimmed.is_empty() {
         String::new()
-    } else if !trimmed.ends_with('\n') {
-        if final_newline {
-            format!("{}\n", trimmed)
-        } else {
-            trimmed.to_string()
-        }
     } else {
-        trimmed.to_string()
+        match final_newline {
+            config::FinalNewline::Force => {
+                // Always ensure output ends with newline
+                if trimmed.ends_with('\n') {
+                    trimmed.to_string()
+                } else {
+                    format!("{}\n", trimmed)
+                }
+            }
+            config::FinalNewline::Remove => {
+                // Never append trailing newline
+                trimmed.to_string()
+            }
+            config::FinalNewline::Leave => {
+                // Preserve input's trailing newline state
+                if input_had_trailing_newline {
+                    if trimmed.ends_with('\n') {
+                        trimmed.to_string()
+                    } else {
+                        format!("{}\n", trimmed)
+                    }
+                } else {
+                    // Input had no trailing newline, strip any added by trimming
+                    trimmed.trim_end_matches('\n').to_string()
+                }
+            }
+        }
     }
 }

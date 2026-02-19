@@ -550,7 +550,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
     // Join all batch strings and apply post-processing
     let result = batch_strings.join("");
-    let result = post_process_rendered_output(&result, config.final_newline);
+    let result = post_process_rendered_output(&result, config.final_newline, source.ends_with('\n'));
 
     (result, warnings)
 }

@@ -1,6 +1,65 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
+/// Final newline handling mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinalNewline {
+    /// Preserve original file's trailing newline state
+    Leave,
+    /// Strip trailing newline from output
+    Remove,
+    /// Ensure output ends with trailing newline (default)
+    Force,
+}
+
+impl Default for FinalNewline {
+    fn default() -> Self {
+        Self::Force
+    }
+}
+
+impl<'de> Deserialize<'de> for FinalNewline {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct FinalNewlineVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for FinalNewlineVisitor {
+            type Value = FinalNewline;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a boolean (true/false) or string (\"leave\", \"remove\", \"force\")")
+            }
+
+            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v {
+                    Ok(FinalNewline::Force)
+                } else {
+                    Ok(FinalNewline::Remove)
+                }
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match v {
+                    "leave" => Ok(FinalNewline::Leave),
+                    "remove" => Ok(FinalNewline::Remove),
+                    "force" => Ok(FinalNewline::Force),
+                    other => Err(serde::de::Error::unknown_variant(other, &["leave", "remove", "force"])),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(FinalNewlineVisitor)
+    }
+}
+
 /// Configuration for CMake formatting
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
@@ -26,8 +85,8 @@ pub struct FormatConfig {
     pub closing_style: ClosingStyle,
     /// Force keyword-aware commands to use multiline layout regardless of line length (default: false)
     pub force_break_keywords: bool,
-    /// Ensure file ends with a newline (default: true)
-    pub final_newline: bool,
+    /// Final newline handling (default: Force)
+    pub final_newline: FinalNewline,
     /// Comment whitespace normalization style (default: HashSpace)
     pub comment_style: CommentStyle,
 
@@ -64,7 +123,7 @@ impl Default for FormatConfig {
             line_ending: LineEnding::Auto,
             closing_style: ClosingStyle::Remove,
             force_break_keywords: false,
-            final_newline: true,
+            final_newline: FinalNewline::Force,
             comment_style: CommentStyle::HashSpace,
             command_grammars: HashMap::new(),
             grammar_files: Vec::new(),
@@ -312,12 +371,23 @@ impl FormatConfig {
                 }
             }
             "final_newline" => {
-                match value.parse::<bool>() {
-                    Ok(v) => {
-                        self.final_newline = v;
+                match value {
+                    "leave" => {
+                        self.final_newline = FinalNewline::Leave;
                         Ok(())
                     }
-                    Err(_) => Err(format!("Invalid value for final_newline: {}", value)),
+                    "remove" | "false" => {
+                        self.final_newline = FinalNewline::Remove;
+                        Ok(())
+                    }
+                    "force" | "true" => {
+                        self.final_newline = FinalNewline::Force;
+                        Ok(())
+                    }
+                    _ => Err(format!(
+                        "Invalid value for final_newline (expected leave, remove, or force): {}",
+                        value
+                    )),
                 }
             }
             "comment_style" => {

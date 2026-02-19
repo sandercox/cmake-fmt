@@ -97,7 +97,7 @@ fn print_style_help() {
     println!("  {:<25} {:<15} {:<15} {}", "line_ending", "enum", "auto", "auto, lf, crlf");
     println!("  {:<25} {:<15} {:<15} {}", "closing_style", "enum", "remove", "leave, remove, force");
     println!("  {:<25} {:<15} {:<15} {}", "force_break_keywords", "boolean", "false", "true, false");
-    println!("  {:<25} {:<15} {:<15} {}", "final_newline", "boolean", "true", "true, false");
+    println!("  {:<25} {:<15} {:<15} {}", "final_newline", "enum", "force", "leave, remove, force (also accepts true/false)");
     println!("  {:<25} {:<15} {:<15} {}", "comment_style", "enum", "hash_space", "leave, hash_space, hash_no_space");
     println!("  {:<25} {:<15} {:<15} {}", "source_grouping", "enum", "none", "none, headers_first, sources_first");
     println!("  {:<25} {:<15} {:<15} {}", "sort_sources", "enum", "none", "none, alphabetical");

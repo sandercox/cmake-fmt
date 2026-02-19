@@ -1,4 +1,4 @@
-use crate::formatter::{FormatConfig, SuppressionWarning, detect_line_ending, format_text_with_diagnostics_and_path, config::LineEnding};
+use crate::formatter::{FormatConfig, SuppressionWarning, detect_line_ending, format_text_with_diagnostics_and_path, config::{FinalNewline, LineEnding}};
 use std::path::Path;
 
 /// Represents a line range (1-based, inclusive)
@@ -116,16 +116,35 @@ pub fn format_with_line_ranges(
     let mut result = result_lines.join(separator);
 
     // Step 6: Preserve final newline behavior
-    if config.final_newline {
-        // When final_newline is true, preserve input's newline behavior
-        if input.ends_with("\r\n") || input.ends_with('\n') {
-            if !result.ends_with(separator) {
+    let input_had_newline = input.ends_with("\r\n") || input.ends_with('\n');
+    match config.final_newline {
+        FinalNewline::Force => {
+            // Always ensure result ends with newline
+            if !result.ends_with(separator) && !result.is_empty() {
                 result.push_str(separator);
             }
         }
-    } else {
-        // When final_newline is false, do NOT add a trailing newline
-        // (result already has correct content from splice operation)
+        FinalNewline::Remove => {
+            // Strip trailing newline if present
+            if result.ends_with(separator) {
+                let trim_len = result.len() - separator.len();
+                result.truncate(trim_len);
+            }
+        }
+        FinalNewline::Leave => {
+            // Preserve input's trailing newline state
+            if input_had_newline {
+                if !result.ends_with(separator) && !result.is_empty() {
+                    result.push_str(separator);
+                }
+            } else {
+                // Input had no trailing newline - ensure result also doesn't
+                while result.ends_with(separator) {
+                    let trim_len = result.len() - separator.len();
+                    result.truncate(trim_len);
+                }
+            }
+        }
     }
 
     (result, warnings)
