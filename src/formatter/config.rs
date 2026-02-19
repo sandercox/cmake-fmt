@@ -4,17 +4,17 @@ use std::collections::HashMap;
 /// Final newline handling mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FinalNewline {
-    /// Preserve original file's trailing newline state
+    /// Preserve original file's trailing newline state (default)
     Leave,
     /// Strip trailing newline from output
     Remove,
-    /// Ensure output ends with trailing newline (default)
+    /// Ensure output ends with trailing newline
     Force,
 }
 
 impl Default for FinalNewline {
     fn default() -> Self {
-        Self::Force
+        Self::Leave
     }
 }
 
@@ -85,7 +85,7 @@ pub struct FormatConfig {
     pub closing_style: ClosingStyle,
     /// Force keyword-aware commands to use multiline layout regardless of line length (default: false)
     pub force_break_keywords: bool,
-    /// Final newline handling (default: Force)
+    /// Final newline handling (default: Leave)
     pub final_newline: FinalNewline,
     /// Comment whitespace normalization style (default: HashSpace)
     pub comment_style: CommentStyle,
@@ -123,7 +123,7 @@ impl Default for FormatConfig {
             line_ending: LineEnding::Auto,
             closing_style: ClosingStyle::Remove,
             force_break_keywords: false,
-            final_newline: FinalNewline::Force,
+            final_newline: FinalNewline::Leave,
             comment_style: CommentStyle::HashSpace,
             command_grammars: HashMap::new(),
             grammar_files: Vec::new(),

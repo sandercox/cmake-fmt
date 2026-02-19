@@ -846,11 +846,16 @@ fn test_blank_line_between_commands_across_batch_boundary() {
 // ============================================================================
 
 #[test]
-fn test_final_newline_true_default() {
-    let input = "set(FOO bar)";
+fn test_final_newline_leave_default() {
+    // Default is Leave — preserves input's trailing newline state
+    let input_no_nl = "set(FOO bar)";
     let config = default_config();
-    let result = format_text(input, &config);
-    assert_eq!(result, "set(FOO bar)\n", "Default config should add trailing newline");
+    let result = format_text(input_no_nl, &config);
+    assert_eq!(result, "set(FOO bar)", "Default Leave should not add trailing newline when input lacks one");
+
+    let input_with_nl = "set(FOO bar)\n";
+    let result = format_text(input_with_nl, &config);
+    assert_eq!(result, "set(FOO bar)\n", "Default Leave should preserve trailing newline when input has one");
 }
 
 #[test]

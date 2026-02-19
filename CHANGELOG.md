@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 - Update README with `collapse_empty_flags` example
+- `final_newline` now is `force`, `remove` or `leave` (default)
+
 
 ## [0.7.2] - 2026-02-20
 ### Fixed

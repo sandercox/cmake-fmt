@@ -67,7 +67,7 @@
         { "type": "string", "enum": ["leave", "remove", "force"] },
         { "type": "boolean" }
       ],
-      "default": "force",
+      "default": "leave",
       "description": "Final newline handling. 'leave' preserves original file's trailing newline state, 'remove' strips trailing newline, 'force' ensures file ends with newline. Also accepts true (=force) and false (=remove) for backward compatibility."
     },
     "comment_style": {

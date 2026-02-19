@@ -27,7 +27,7 @@ fn test_target_link_libraries_short_fits_one_line() {
     let input = "target_link_libraries(myapp PRIVATE lib1)";
     let result = format_text(input, &default_config());
     // Short command fits on one line — flat rendering
-    assert_eq!(result, "target_link_libraries(myapp PRIVATE lib1)\n");
+    assert_eq!(result, "target_link_libraries(myapp PRIVATE lib1)");
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn test_add_library_short() {
     let input = "add_library(mylib STATIC src/a.cpp)";
     let result = format_text(input, &default_config());
     // Should stay on one line
-    assert_eq!(result, "add_library(mylib STATIC src/a.cpp)\n");
+    assert_eq!(result, "add_library(mylib STATIC src/a.cpp)");
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn test_non_keyword_command_unchanged() {
     let input = "set(MY_VAR \"some value\")";
     let result = format_text(input, &default_config());
     // Should stay simple, no keyword-aware formatting
-    assert_eq!(result, "set(MY_VAR \"some value\")\n");
+    assert_eq!(result, "set(MY_VAR \"some value\")");
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn test_message_not_keyword_aware() {
     let result = format_text(input, &default_config());
     // STATUS is a keyword, but message() is not keyword-aware
     // Should use simple formatting
-    assert_eq!(result, "message(STATUS \"This is a message\")\n");
+    assert_eq!(result, "message(STATUS \"This is a message\")");
 }
 
 #[test]
@@ -438,7 +438,7 @@ fn test_keyword_only_no_values() {
     let result = format_text(input, &default_config());
     eprintln!("Result: {:?}", result);
     // Should not crash or produce invalid output
-    assert!(result.ends_with(")\n"));
+    assert!(result.ends_with(")"));
     assert!(result.contains("PUBLIC"));
     assert!(result.contains("PRIVATE"));
     // If it fits on one line, it may stay flat
@@ -562,7 +562,7 @@ fn test_flag_grouping_short_fits_one_line() {
     let input = "find_package(Boost REQUIRED QUIET)";
     let result = format_text(input, &default_config());
     // Short command with flags fits on one line — flat rendering
-    assert_eq!(result, "find_package(Boost REQUIRED QUIET)\n");
+    assert_eq!(result, "find_package(Boost REQUIRED QUIET)");
 }
 
 #[test]
@@ -570,7 +570,7 @@ fn test_single_value_inline_short() {
     // Short command fits on one line — flat rendering
     let input = "install(TARGETS mylib DESTINATION lib)";
     let result = format_text(input, &default_config());
-    assert_eq!(result, "install(TARGETS mylib DESTINATION lib)\n");
+    assert_eq!(result, "install(TARGETS mylib DESTINATION lib)");
 }
 
 #[test]
@@ -624,7 +624,7 @@ fn test_force_break_keywords_false_short_stays_inline() {
     let input = "find_package(Boost REQUIRED)";
     let result = format_text(input, &config);
     // Short command fits on one line — flat rendering
-    assert_eq!(result, "find_package(Boost REQUIRED)\n");
+    assert_eq!(result, "find_package(Boost REQUIRED)");
 }
 
 #[test]
@@ -663,9 +663,9 @@ fn test_backward_compat_existing_commands() {
     // These commands already worked before grammar system -- verify they still produce valid output
     let config = default_config();
     let test_cases = vec![
-        ("set(MY_VAR value)", "set(MY_VAR value)\n"),
-        ("message(STATUS \"hello\")", "message(STATUS \"hello\")\n"),
-        ("if(TRUE)\nendif()", "if(TRUE)\nendif()\n"),
+        ("set(MY_VAR value)", "set(MY_VAR value)"),
+        ("message(STATUS \"hello\")", "message(STATUS \"hello\")"),
+        ("if(TRUE)\nendif()", "if(TRUE)\nendif()"),
     ];
     for (input, expected) in test_cases {
         let result = format_text(input, &config);
@@ -708,7 +708,7 @@ fn test_install_files_mode_formatting() {
     eprintln!("Result:\n{}", result);
 
     // Short command fits on one line — flat rendering
-    assert_eq!(result, "install(FILES readme.txt license.txt DESTINATION share/doc)\n");
+    assert_eq!(result, "install(FILES readme.txt license.txt DESTINATION share/doc)");
 }
 
 #[test]
@@ -718,7 +718,7 @@ fn test_install_directory_mode_formatting() {
     eprintln!("Result:\n{}", result);
 
     // Short command fits on one line — flat rendering
-    assert_eq!(result, "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")\n");
+    assert_eq!(result, "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")");
 }
 
 #[test]
@@ -1084,7 +1084,7 @@ fn test_custom_command_fits_one_line() {
     let input = "GenerateTestExecutionGitlabCI(OUTPUT file.yml PLATFORM Linux)";
     let result = format_text(input, &default_config());
     // Should stay on one line when it fits
-    assert_eq!(result, "GenerateTestExecutionGitlabCI(OUTPUT file.yml PLATFORM Linux)\n");
+    assert_eq!(result, "GenerateTestExecutionGitlabCI(OUTPUT file.yml PLATFORM Linux)");
 }
 
 #[test]
@@ -1099,7 +1099,7 @@ fn test_custom_command_breaks_all_args() {
     assert!(result.contains("\tPLATFORM\n"));
     assert!(result.contains("\t${CI_PLATFORM}\n"));
     assert!(result.contains("\t${CI_ARCHITECTURE}\n"));
-    assert!(result.ends_with(")\n"));
+    assert!(result.ends_with(")"));
     // Should NOT have args on same line as command name
     assert!(!result.contains("GenerateTestExecutionGitlabCI(OUTPUT"));
 }
@@ -1109,7 +1109,7 @@ fn test_custom_function_short_args() {
     let input = "my_custom_function(arg1 arg2 arg3)";
     let result = format_text(input, &default_config());
     // Short custom command stays on one line
-    assert_eq!(result, "my_custom_function(arg1 arg2 arg3)\n");
+    assert_eq!(result, "my_custom_function(arg1 arg2 arg3)");
 }
 
 #[test]
@@ -1170,7 +1170,7 @@ fn test_set_source_files_properties_short() {
     let input = "set_source_files_properties(f.cpp PROPERTIES GENERATED TRUE)";
     let result = format_text(input, &default_config());
     // Short enough to stay on one line
-    assert_eq!(result, "set_source_files_properties(f.cpp PROPERTIES GENERATED TRUE)\n");
+    assert_eq!(result, "set_source_files_properties(f.cpp PROPERTIES GENERATED TRUE)");
 }
 
 #[test]
@@ -1262,7 +1262,7 @@ fn test_command_short_stays_inline() {
     // Short COMMAND stays on one line
     let input = "execute_process(COMMAND echo hello OUTPUT_VARIABLE result)";
     let result = format_text(input, &default_config());
-    assert_eq!(result, "execute_process(COMMAND echo hello OUTPUT_VARIABLE result)\n");
+    assert_eq!(result, "execute_process(COMMAND echo hello OUTPUT_VARIABLE result)");
 }
 
 #[test]
@@ -1612,8 +1612,7 @@ file(
         ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/editor/Resources/windows/Wire.ico
         ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/editor/Resources/windows/wire.h
     DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/rc
-)
-";
+)";
     let result = format_text(input, &config);
     assert_eq!(result, expected);
 }
@@ -1622,7 +1621,7 @@ file(
 fn test_file_copy_single_file_stays_inline() {
     let input = "file(COPY src/ DESTINATION build/)";
     let result = format_text(input, &default_config());
-    assert_eq!(result, "file(COPY src/ DESTINATION build/)\n");
+    assert_eq!(result, "file(COPY src/ DESTINATION build/)");
 }
 
 #[test]
@@ -1644,8 +1643,7 @@ file(
         file1.txt
         file2.txt
     DESTINATION ${CMAKE_INSTALL_PREFIX}/share
-)
-";
+)";
     let result = format_text(input, &config);
     assert_eq!(result, expected);
 }
@@ -2069,7 +2067,7 @@ fn test_files_matching_flat_short_command() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
     // Short command fits on one line — flat rendering
-    assert_eq!(result, "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")\n");
+    assert_eq!(result, "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")");
 }
 
 // ============================================================================
@@ -2129,7 +2127,7 @@ fn test_collapse_empty_flags_short_command_still_flat() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // Short command still fits on one line (flat rendering, no breaking needed)
-    assert_eq!(result, "add_library(mylib STATIC src/a.cpp)\n");
+    assert_eq!(result, "add_library(mylib STATIC src/a.cpp)");
 }
 
 // ============================================================================
