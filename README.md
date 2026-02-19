@@ -1,4 +1,8 @@
-# cmake-fmt
+<p align="center">
+  <img src="editors/vscode/icon.svg" alt="cmake-fmt logo" width="128" height="128">
+</p>
+
+<h1 align="center">cmake-fmt</h1>
 
 [![crates.io](https://img.shields.io/crates/v/cmake-fmt)](https://crates.io/crates/cmake-fmt)
 [![downloads](https://img.shields.io/crates/d/cmake-fmt)](https://crates.io/crates/cmake-fmt)
