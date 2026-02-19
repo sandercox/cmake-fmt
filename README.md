@@ -298,6 +298,13 @@ Preserves original file order.
 **`source_grouping = headers_first`:**
 Groups header files (`.h`, `.hpp`) before source files (`.cpp`, `.c`) in commands like `add_executable()` but also `set()` when file lists are detected.
 
+```cmake
+set(SOURCES
+    main.h main.cpp
+    application.h application.cpp
+)
+```
+
 **`source_grouping = sources_first`:**
 Groups source files before header files.
 
