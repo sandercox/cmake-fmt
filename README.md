@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="editors/vscode/icon.svg" alt="cmake-fmt logo" width="128" height="128">
+  <img src="editors/vscode/icon.png" alt="cmake-fmt logo" width="128" height="128">
 </p>
 
 <h1 align="center">cmake-fmt</h1>
