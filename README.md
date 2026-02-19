@@ -153,6 +153,7 @@ max_line_length = 120
 | `comment_style` | enum | `hash_space` | Comment formatting: `leave`, `hash_space`, `hash_no_space` |
 | `source_grouping` | enum | `none` | Group source files: `none`, `headers_first`, `sources_first` |
 | `sort_sources` | enum | `none` | Sort source file lists: `none`, `alphabetical` |
+| `collapse_empty_flags` | boolean | `true` | Collapse no-argument flags inline with preceding positional args |
 
 ### Per-Setting Examples
 
@@ -314,6 +315,30 @@ Groups source files before header files.
 
 **`source_grouping = none` (default):**
 No grouping applied.
+
+#### `collapse_empty_flags`
+
+Controls whether no-argument flags (like `REQUIRED`, `CONFIG`) are kept inline or placed on their own line. Type-selector flags (like `STATIC`, `SHARED`) always stay inline with the target name regardless of this setting.
+
+**`collapse_empty_flags = true` && `max_line_length=60` (default):**
+```cmake
+find_package(Boost REQUIRED CONFIG
+	COMPONENTS
+		system
+		filesystem
+)
+```
+
+**`collapse_empty_flags = false` && `max_line_length=60`:**
+```cmake
+find_package(Boost
+	REQUIRED
+	CONFIG
+	COMPONENTS
+		system
+		filesystem
+)
+```
 
 ### Custom Command Grammars
 
