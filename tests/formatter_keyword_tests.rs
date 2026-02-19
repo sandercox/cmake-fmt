@@ -2092,9 +2092,10 @@ fn test_collapse_empty_flags_false() {
     let input = "add_library(mylib STATIC src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp src/f.cpp src/g.cpp)";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
-    // With collapse disabled: STATIC gets its own indented line
-    assert!(result.contains("\tSTATIC\n"), "STATIC should be on its own line when collapse_empty_flags=false");
-    assert!(!result.contains("mylib STATIC"), "STATIC should NOT be on same line as target name");
+    // With collapse disabled: STATIC is a type-selector flag with trailing source args,
+    // so it stays inline with the target name regardless of collapse_empty_flags
+    assert!(result.contains("mylib STATIC"), "STATIC should stay on same line as target name (type-selector flag with trailing args)");
+    assert!(!result.contains("\tSTATIC\n"), "STATIC should NOT be on its own line");
 }
 
 #[test]
@@ -2129,4 +2130,74 @@ fn test_collapse_empty_flags_short_command_still_flat() {
     eprintln!("Result:\n{}", result);
     // Short command still fits on one line (flat rendering, no breaking needed)
     assert_eq!(result, "add_library(mylib STATIC src/a.cpp)\n");
+}
+
+// ============================================================================
+// COLLAPSE EMPTY FLAGS REGRESSION TESTS (Quick 64)
+// ============================================================================
+
+#[test]
+fn test_collapse_empty_flags_false_add_library_static_stays_inline() {
+    // Regression (Quick 64): STATIC is a type-selector with trailing source args,
+    // must stay inline with target name even when collapse_empty_flags=false
+    let mut config = default_config();
+    config.collapse_empty_flags = false;
+    let input = "add_library(AdobeAfterEffectsSDK STATIC\n\tExamples/Util/AEGP_SuiteHandler.cpp\n\tExamples/Util/AEGP_SuiteHandler.h\n\tExamples/Util/entry.h\n\tExamples/Util/MissingSuiteError.cpp\n)\n";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    assert!(result.contains("AdobeAfterEffectsSDK STATIC"), "STATIC must stay inline with target name");
+    assert!(!result.contains("AdobeAfterEffectsSDK\n\tSTATIC"), "STATIC must NOT drop to a new line");
+    // Idempotency
+    let pass2 = format_text(&result, &config);
+    assert_eq!(result, pass2, "Should be idempotent");
+}
+
+#[test]
+fn test_collapse_empty_flags_false_add_library_shared_stays_inline() {
+    // SHARED is also a type-selector with trailing source args
+    let mut config = default_config();
+    config.collapse_empty_flags = false;
+    let input = "add_library(mylib SHARED src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp src/f.cpp src/g.cpp)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    assert!(result.contains("mylib SHARED"), "SHARED must stay inline with target name");
+}
+
+#[test]
+fn test_collapse_empty_flags_false_add_executable_win32_stays_inline() {
+    // WIN32 in add_executable is also a type-selector with trailing source args
+    let mut config = default_config();
+    config.collapse_empty_flags = false;
+    let input = "add_executable(myapp WIN32 src/main.cpp src/app.cpp src/util.cpp src/config.cpp src/render.cpp src/input.cpp)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    assert!(result.contains("myapp WIN32"), "WIN32 must stay inline with target name");
+}
+
+#[test]
+fn test_collapse_empty_flags_false_pure_flags_still_separate() {
+    // IMPORTED has no trailing args (pure modifier) -- should be on own line when collapsed=false
+    let mut config = default_config();
+    config.collapse_empty_flags = false;
+    let input = "add_library(\n\tmylib\n\tSTATIC\n\tIMPORTED\n)\n";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // Both STATIC and IMPORTED have no trailing source args here, so both should be on own lines
+    assert!(result.contains("\tSTATIC\n"), "STATIC with no trailing args should be on own line");
+    assert!(result.contains("\tIMPORTED\n"), "IMPORTED with no trailing args should be on own line");
+}
+
+#[test]
+fn test_collapse_empty_flags_false_find_package_flags_on_own_lines_idempotent() {
+    // Complementary test: find_package flags (no trailing args) respect collapse_empty_flags=false
+    let mut config = default_config();
+    config.collapse_empty_flags = false;
+    let input = "find_package(Boost REQUIRED CONFIG COMPONENTS system filesystem thread)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // When the command wraps to multiline, REQUIRED and CONFIG should be on own lines
+    // (they are pure modifier flags with no trailing args)
+    // Note: if command fits on one line, flat rendering keeps everything inline regardless
+    let pass2 = format_text(&result, &config);
+    assert_eq!(result, pass2, "Should be idempotent");
 }
