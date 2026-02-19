@@ -2,8 +2,8 @@
   "name": "cmake-fmt",
   "displayName": "CMake Format",
   "description": "Stop arguing about CMake formatting. Fast, grammar-aware formatter for CMakeLists.txt and .cmake files.",
-  "version": "0.7.0",
-  "publisher": "cmake-fmt",
+  "version": "0.7.1",
+  "publisher": "paralleldimension",
   "license": "MIT",
   "icon": "icon.png",
   "repository": {
