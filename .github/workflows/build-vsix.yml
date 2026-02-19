@@ -100,7 +100,7 @@ jobs:
         run: cd editors/vscode && npx @vscode/vsce package --target ${{ matrix.vscode_target }}
 
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: vsix-${{ matrix.vscode_target }}
           path: editors/vscode/*.vsix
