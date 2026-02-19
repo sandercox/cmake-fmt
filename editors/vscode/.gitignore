@@ -4,3 +4,4 @@ out/
 *.vsix
 .vscode-test/
 bin/
+LICENSE
