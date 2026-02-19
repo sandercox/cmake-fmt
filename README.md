@@ -154,6 +154,7 @@ max_line_length = 120
 | `source_grouping` | enum | `none` | Group source files: `none`, `headers_first`, `sources_first` |
 | `sort_sources` | enum | `none` | Sort source file lists: `none`, `alphabetical` |
 | `collapse_empty_flags` | boolean | `true` | Collapse no-argument flags inline with preceding positional args |
+| `inline_single_keyword` | boolean | `false` | Keep single keyword inline with args, single-indent values |
 
 ### Per-Setting Examples
 
@@ -348,6 +349,29 @@ find_package(Boost
 		filesystem
 )
 ```
+
+#### `inline_single_keyword`
+
+When `true` and a keyword command has exactly one keyword section, the keyword stays on the same line as the command's positional arguments, and values are single-indented instead of double-indented. When multiple keyword sections exist (e.g., `PUBLIC` + `PRIVATE`), the standard layout is always used regardless of this setting.
+
+**`inline_single_keyword = false` (default):**
+```cmake
+target_sources(mylib
+	PUBLIC
+		src/a.cpp
+		src/b.cpp
+)
+```
+
+**`inline_single_keyword = true`:**
+```cmake
+target_sources(mylib PUBLIC
+	src/a.cpp
+	src/b.cpp
+)
+```
+
+Note: When multiple keyword sections exist (e.g., both `PUBLIC` and `PRIVATE`), the standard double-indented layout is always used regardless of this setting.
 
 ### Custom Command Grammars
 

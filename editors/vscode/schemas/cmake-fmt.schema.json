@@ -62,6 +62,16 @@
       "default": false,
       "description": "Force keyword-aware commands to use multiline layout regardless of line length"
     },
+    "collapse_empty_flags": {
+      "type": "boolean",
+      "default": true,
+      "description": "Collapse consecutive no-argument flags onto the same line as preceding positional arguments. When true (default), flags like REQUIRED or STATIC stay inline. When false, each flag gets its own indented line."
+    },
+    "inline_single_keyword": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true and a keyword command has only one keyword section, keep the keyword on the same line as the command arguments and single-indent values instead of double-indenting."
+    },
     "final_newline": {
       "oneOf": [
         { "type": "string", "enum": ["leave", "remove", "force"] },

@@ -2199,3 +2199,115 @@ fn test_collapse_empty_flags_false_find_package_flags_on_own_lines_idempotent() 
     let pass2 = format_text(&result, &config);
     assert_eq!(result, pass2, "Should be idempotent");
 }
+
+// ============================================================================
+// INLINE SINGLE KEYWORD TESTS
+// ============================================================================
+
+#[test]
+fn test_inline_single_keyword_true_single_section() {
+    // Single keyword section uses inline layout when inline_single_keyword=true.
+    // Use max_line_length=60 to ensure the command wraps to multiline.
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.max_line_length = 60;
+    let input = "target_sources(mylib PUBLIC src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // Keyword PUBLIC is on same line as mylib (inline), values are single-tab indented
+    assert!(result.contains("mylib PUBLIC\n"), "PUBLIC must be on same line as mylib");
+    assert!(result.contains("\tsrc/a.cpp\n"), "values must be single-tab indented");
+    assert!(result.contains("\tsrc/b.cpp\n"), "values must be single-tab indented");
+    // Must NOT use double-tab indent
+    assert!(!result.contains("\t\tsrc/a.cpp"), "values must NOT be double-tab indented");
+    // Exact expected output
+    let expected = "target_sources(mylib PUBLIC\n\tsrc/a.cpp\n\tsrc/b.cpp\n\tsrc/c.cpp\n\tsrc/d.cpp\n\tsrc/e.cpp\n)";
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_inline_single_keyword_true_multiple_sections() {
+    // Multiple keyword sections use standard double-indent layout even when inline_single_keyword=true.
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.max_line_length = 60;
+    let input = "target_sources(mylib PUBLIC src/a.cpp src/b.cpp PRIVATE src/c.cpp src/d.cpp)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // Standard layout: keywords on own lines, values double-indented
+    assert!(result.contains("\tPUBLIC\n"), "PUBLIC must be on its own line (standard layout)");
+    assert!(result.contains("\t\tsrc/a.cpp\n"), "values must be double-tab indented");
+    assert!(result.contains("\tPRIVATE\n"), "PRIVATE must be on its own line");
+    assert!(result.contains("\t\tsrc/c.cpp\n"), "values must be double-tab indented");
+}
+
+#[test]
+fn test_inline_single_keyword_false_default() {
+    // Default (false) preserves existing behavior: keywords on own lines, values double-indented.
+    let mut config = default_config();
+    config.max_line_length = 60;
+    let input = "target_sources(mylib PUBLIC src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // Standard layout
+    assert!(result.contains("\tPUBLIC\n"), "PUBLIC must be on its own line with default config");
+    assert!(result.contains("\t\tsrc/a.cpp\n"), "values must be double-tab indented with default config");
+}
+
+#[test]
+fn test_inline_single_keyword_short_fits_one_line() {
+    // Short command stays on one line regardless of inline_single_keyword setting.
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    let input = "target_link_libraries(myapp PRIVATE lib1)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // Fits on one line — flat rendering
+    assert_eq!(result, "target_link_libraries(myapp PRIVATE lib1)");
+}
+
+#[test]
+fn test_inline_single_keyword_target_link_libraries() {
+    // Works with target_link_libraries: single keyword PUBLIC stays inline.
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.max_line_length = 60;
+    let input = "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 lib6 lib7 lib8)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // PUBLIC on same line as myapp
+    assert!(result.contains("myapp PUBLIC\n"), "PUBLIC must be on same line as myapp");
+    // Values single-tab indented
+    assert!(result.contains("\tlib1\n"), "libs must be single-tab indented");
+    assert!(!result.contains("\t\tlib1"), "libs must NOT be double-tab indented");
+}
+
+#[test]
+fn test_inline_single_keyword_idempotent() {
+    // Formatting inline_single_keyword output again produces identical result (idempotency).
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.max_line_length = 60;
+    let input = "target_sources(mylib PUBLIC src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp)";
+    let result = format_text(input, &config);
+    let pass2 = format_text(&result, &config);
+    eprintln!("Pass 1:\n{}", result);
+    eprintln!("Pass 2:\n{}", pass2);
+    assert_eq!(result, pass2, "inline_single_keyword formatting must be idempotent");
+}
+
+#[test]
+fn test_inline_single_keyword_with_force_break() {
+    // force_break_keywords forces multiline; with inline_single_keyword the keyword still
+    // stays inline with the target name, values are single-indented.
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.force_break_keywords = true;
+    let input = "target_link_libraries(myapp PUBLIC lib1)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // Keyword stays inline, value single-indented
+    assert!(result.contains("myapp PUBLIC\n"), "PUBLIC must be inline with myapp even with force_break");
+    assert!(result.contains("\tlib1\n"), "lib1 must be single-tab indented");
+    assert!(!result.contains("\t\tlib1"), "lib1 must NOT be double-tab indented");
+}
