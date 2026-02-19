@@ -2,7 +2,7 @@ use crate::cst::ArgumentList;
 use crate::syntax_kind::SyntaxKind;
 use pretty::RcDoc;
 use rowan::NodeOrToken;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::config::FormatConfig;
 use super::cst_to_doc::detect_argument_formatting_signals;
@@ -457,12 +457,13 @@ pub fn parse_keyword_sections_with_grammar(
                         is_cmake_keyword(&text)
                     };
 
-                    // Check if this keyword should be consumed by the current BinPack section
-                    let consumed_by_binpack = is_kw
-                        && matches!(current_section.keyword_type, Some(KeywordType::BinPack))
+                    // Check if this keyword should be consumed by the current BinPack or MultiValue section
+                    // (e.g., DESTINATION inside LIBRARY BinPack, or PATTERN inside FILES_MATCHING MultiValue)
+                    let consumed_as_sub_keyword = is_kw
+                        && matches!(current_section.keyword_type, Some(KeywordType::BinPack) | Some(KeywordType::MultiValue))
                         && grammar.map_or(false, |g| g.sub_keywords.contains(&text));
 
-                    if is_kw && !consumed_by_binpack {
+                    if is_kw && !consumed_as_sub_keyword {
                         // Get the keyword type from grammar if available
                         let kw_type = grammar.and_then(|g| g.keyword_type(&text));
 
@@ -775,6 +776,54 @@ pub fn sort_source_args(section: &mut KeywordSection) {
     section.trailing_comments = new_trailing_comments;
 }
 
+/// Group args that start with sub-keywords into logical groups.
+///
+/// Each sub_keyword and its following non-sub-keyword args form one logical group.
+/// For example, ["PATTERN", "*.h", "EXCLUDE", "PATTERN", "internal/*"] with
+/// sub_keywords {"PATTERN", "EXCLUDE"} yields ["PATTERN *.h", "EXCLUDE", "PATTERN internal/*"].
+///
+/// Used by FILES_MATCHING (MultiValue) to render each PATTERN/REGEX/EXCLUDE rule
+/// as a single "logical line" in the output.
+pub fn group_sub_keyword_args(args: &[String], sub_keywords: &HashSet<String>) -> Vec<String> {
+    let mut groups: Vec<String> = Vec::new();
+    let mut current_group = String::new();
+    // Tracks whether the current group has any non-sub-keyword args yet.
+    // When false, the group is still a "keyword-only prefix" and a following
+    // sub_keyword should be appended (e.g., EXCLUDE followed by PATTERN).
+    let mut current_has_value = false;
+
+    for arg in args {
+        if sub_keywords.contains(arg.as_str()) {
+            if !current_group.is_empty() && current_has_value {
+                // Current group has a value: flush and start a new group
+                groups.push(std::mem::replace(&mut current_group, arg.clone()));
+                current_has_value = false;
+            } else if !current_group.is_empty() {
+                // Current group is keyword-only prefix (e.g., EXCLUDE): append the next sub_keyword
+                current_group.push(' ');
+                current_group.push_str(arg);
+                // Still no value appended
+            } else {
+                // No current group: start one
+                current_group = arg.clone();
+                current_has_value = false;
+            }
+        } else if current_group.is_empty() {
+            // Arg before any sub_keyword: treat as its own group
+            groups.push(arg.clone());
+        } else {
+            // Append value to current group
+            current_group.push(' ');
+            current_group.push_str(arg);
+            current_has_value = true;
+        }
+    }
+    if !current_group.is_empty() {
+        groups.push(current_group);
+    }
+    groups
+}
+
 /// Format arguments for a keyword-aware command
 ///
 /// `first_keyword_inline`: when true, the first keyword (SingleValue or Flag) stays on the
@@ -783,6 +832,9 @@ pub fn sort_source_args(section: &mut KeywordSection) {
 /// `builtin_grammar`: when true, Flag keywords after positional args stay inline
 /// (e.g., `add_library(mylib STATIC ...)`). When false (user/auto-detected grammars),
 /// flags break to new lines like other keywords.
+/// `sub_keywords`: optional set of keywords that should be grouped within collection keywords
+/// like FILES_MATCHING. When present, MultiValue sections that contain sub_keywords will
+/// render logical groups (each sub_keyword + its values) per line.
 pub fn format_keyword_aware_args(
     arg_list: &ArgumentList,
     sections: Vec<KeywordSection>,
@@ -791,6 +843,7 @@ pub fn format_keyword_aware_args(
     first_keyword_inline: bool,
     builtin_grammar: bool,
     force_args_on_new_line: bool,
+    sub_keywords: Option<&HashSet<String>>,
 ) -> RcDoc<'static, ()> {
     if sections.is_empty() {
         return RcDoc::nil();
@@ -1307,6 +1360,48 @@ pub fn format_keyword_aware_args(
 
                     // Values under the keyword with explicit indentation
                     if !section.args.is_empty() {
+                        // Check if this is a collection keyword with sub_keyword grouping
+                        // (e.g., FILES_MATCHING with PATTERN/REGEX/EXCLUDE sub-items)
+                        // Only apply when: section has sub_keywords, no interleaved comments/blank lines
+                        let grouped_collection = if let Some(sub_kws) = sub_keywords {
+                            if !sub_kws.is_empty()
+                                && section.comments.is_empty()
+                                && section.trailing_comments.is_empty()
+                                && section.blank_lines.is_empty()
+                                && section.args.iter().any(|a| sub_kws.contains(a.as_str()))
+                            {
+                                Some(group_sub_keyword_args(&section.args, sub_kws))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        if let Some(groups) = grouped_collection {
+                            // Collection keyword: render logical groups
+                            if groups.len() == 1 {
+                                // Single logical group: keep inline with the keyword
+                                docs.push(RcDoc::space());
+                                docs.push(RcDoc::text(groups[0].clone()));
+                            } else {
+                                // Multiple groups: each on its own indented line below the keyword
+                                for group in &groups {
+                                    if signals.force_multiline {
+                                        docs.push(RcDoc::hardline());
+                                        docs.push(RcDoc::text(value_indent.clone()));
+                                    } else {
+                                        docs.push(RcDoc::flat_alt(
+                                            RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                            RcDoc::space(),
+                                        ));
+                                    }
+                                    docs.push(RcDoc::text(group.clone()));
+                                }
+                            }
+                            continue; // Section fully rendered, skip to next section
+                        }
+
                         // Apply source grouping if enabled
                         // Disable grouping only when trailing comments are present (can't merge inline comments)
                         // Leading comments can be remapped to their new positions

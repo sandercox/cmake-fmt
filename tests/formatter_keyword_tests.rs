@@ -1948,6 +1948,78 @@ fn test_install_targets_global_destination_component() {
 }
 
 // ============================================================================
+// FILES_MATCHING COLLECTION FORMATTING TESTS
+// ============================================================================
+
+#[test]
+fn test_files_matching_single_pattern_inline() {
+    let input = "install(\n    DIRECTORY \"${VST24_SOURCE}/public.sdk\"\n    DESTINATION include\n    FILES_MATCHING\n    PATTERN \"*.h\"\n)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // Single pattern: should be inline with FILES_MATCHING
+    assert!(result.contains("FILES_MATCHING PATTERN \"*.h\""), "Single PATTERN should be inline with FILES_MATCHING");
+}
+
+#[test]
+fn test_files_matching_multiple_patterns_indented() {
+    let mut config = default_config();
+    config.max_line_length = 80;
+    let input = "install(\n    DIRECTORY \"${VST24_SOURCE}/public.sdk\"\n    DESTINATION include\n    FILES_MATCHING\n    PATTERN \"*.h\"\n    PATTERN \"*.cpp\"\n    EXCLUDE PATTERN \"internal/*\"\n)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // Multiple patterns: each on indented line below FILES_MATCHING
+    assert!(result.contains("FILES_MATCHING\n"), "FILES_MATCHING should be on its own line with multiple patterns");
+    assert!(result.contains("\t\tPATTERN \"*.h\"\n"), "First PATTERN should be indented under FILES_MATCHING");
+    assert!(result.contains("\t\tPATTERN \"*.cpp\"\n"), "Second PATTERN should be indented under FILES_MATCHING");
+    assert!(result.contains("\t\tEXCLUDE PATTERN \"internal/*\"\n"), "EXCLUDE PATTERN should be indented under FILES_MATCHING");
+}
+
+#[test]
+fn test_files_matching_single_regex_inline() {
+    let input = "install(\n    DIRECTORY src/\n    DESTINATION include\n    FILES_MATCHING\n    REGEX \".*\\.h$\"\n)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // Single REGEX: should be inline with FILES_MATCHING
+    assert!(result.contains("FILES_MATCHING REGEX"), "Single REGEX should be inline with FILES_MATCHING");
+}
+
+#[test]
+fn test_files_matching_idempotent_single() {
+    let input = "install(\n    DIRECTORY include/\n    DESTINATION include\n    FILES_MATCHING\n    PATTERN \"*.h\"\n)";
+    let pass1 = format_text(input, &default_config());
+    let pass2 = format_text(&pass1, &default_config());
+    assert_eq!(pass1, pass2, "FILES_MATCHING single pattern should be idempotent");
+}
+
+#[test]
+fn test_files_matching_idempotent_multiple() {
+    let input = "install(\n    DIRECTORY include/\n    DESTINATION include\n    FILES_MATCHING\n    PATTERN \"*.h\"\n    PATTERN \"*.cpp\"\n)";
+    let pass1 = format_text(input, &default_config());
+    eprintln!("Pass 1:\n{}", pass1);
+    let pass2 = format_text(&pass1, &default_config());
+    eprintln!("Pass 2:\n{}", pass2);
+    assert_eq!(pass1, pass2, "FILES_MATCHING multiple patterns should be idempotent");
+}
+
+#[test]
+fn test_files_matching_file_copy_mode() {
+    let input = "file(\n    COPY src/\n    DESTINATION build/\n    FILES_MATCHING\n    PATTERN \"*.cmake\"\n)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // file(COPY) should also support FILES_MATCHING collection formatting
+    assert!(result.contains("FILES_MATCHING PATTERN \"*.cmake\""), "file(COPY) should format FILES_MATCHING inline for single pattern");
+}
+
+#[test]
+fn test_files_matching_flat_short_command() {
+    let input = "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // Short command fits on one line — flat rendering
+    assert_eq!(result, "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")\n");
+}
+
+// ============================================================================
 // COLLAPSE EMPTY FLAGS TESTS
 // ============================================================================
 

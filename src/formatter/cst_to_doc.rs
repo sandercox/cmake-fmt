@@ -621,7 +621,8 @@ fn format_command(
                             let is_multi_mode = grammar_enum.as_ref().map_or(false, |g| g.is_multi_mode());
                             let has_builtin_grammar = grammar.is_some();
                             let force_args_on_new_line = effective_grammar.map_or(false, |g| g.force_args_on_new_line);
-                            cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level, is_multi_mode, has_builtin_grammar, force_args_on_new_line)
+                            let sub_kws = effective_grammar.map(|g| &g.sub_keywords).filter(|s| !s.is_empty());
+                            cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level, is_multi_mode, has_builtin_grammar, force_args_on_new_line, sub_kws)
                         } else {
                             let is_custom = !builtins::is_builtin_command(&name_lower);
                             format_argument_list(&arg_list, ctx, is_custom)
@@ -669,7 +670,8 @@ fn format_command(
                 let is_multi_mode = grammar_enum.as_ref().map_or(false, |g| g.is_multi_mode());
                 let has_builtin_grammar = grammar.is_some();
                 let force_args_on_new_line = effective_grammar.map_or(false, |g| g.force_args_on_new_line);
-                cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level, is_multi_mode, has_builtin_grammar, force_args_on_new_line)
+                let sub_kws = effective_grammar.map(|g| &g.sub_keywords).filter(|s| !s.is_empty());
+                cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level, is_multi_mode, has_builtin_grammar, force_args_on_new_line, sub_kws)
             } else {
                 let is_custom = !builtins::is_builtin_command(&name_lower);
                 format_argument_list(&arg_list, ctx, is_custom)

@@ -200,23 +200,29 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         ]));
 
         // DIRECTORY mode
-        modes.insert("DIRECTORY".to_string(), CommandGrammar::from_keywords(&[
-            ("DIRECTORY", MultiValue),
-            ("DESTINATION", SingleValue),
-            ("FILE_PERMISSIONS", MultiValue),
-            ("DIRECTORY_PERMISSIONS", MultiValue),
-            ("USE_SOURCE_PERMISSIONS", Flag),
-            ("OPTIONAL", Flag),
-            ("MESSAGE_NEVER", Flag),
-            ("CONFIGURATIONS", MultiValue),
-            ("COMPONENT", SingleValue),
-            ("EXCLUDE_FROM_ALL", Flag),
-            ("FILES_MATCHING", Flag),
-            ("PATTERN", SingleValue),
-            ("REGEX", SingleValue),
-            ("EXCLUDE", Flag),
-            ("TYPE", SingleValue),
-        ]));
+        modes.insert("DIRECTORY".to_string(), {
+            let mut g = CommandGrammar::from_keywords(&[
+                ("DIRECTORY", MultiValue),
+                ("DESTINATION", SingleValue),
+                ("FILE_PERMISSIONS", MultiValue),
+                ("DIRECTORY_PERMISSIONS", MultiValue),
+                ("USE_SOURCE_PERMISSIONS", Flag),
+                ("OPTIONAL", Flag),
+                ("MESSAGE_NEVER", Flag),
+                ("CONFIGURATIONS", MultiValue),
+                ("COMPONENT", SingleValue),
+                ("EXCLUDE_FROM_ALL", Flag),
+                ("FILES_MATCHING", MultiValue),
+                ("PATTERN", SingleValue),
+                ("REGEX", SingleValue),
+                ("EXCLUDE", Flag),
+                ("PERMISSIONS", MultiValue),
+                ("TYPE", SingleValue),
+            ]);
+            g.sub_keywords = ["PATTERN", "REGEX", "EXCLUDE", "PERMISSIONS"]
+                .iter().map(|s| s.to_string()).collect();
+            g
+        });
 
         // SCRIPT mode
         modes.insert("SCRIPT".to_string(), CommandGrammar::from_keywords(&[
@@ -523,35 +529,45 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         ]));
 
         // Path modes
-        modes.insert("COPY".to_string(), CommandGrammar::from_keywords(&[
-            ("COPY", MultiValue),
-            ("DESTINATION", SingleValue),
-            ("PATTERN", SingleValue),
-            ("REGEX", SingleValue),
-            ("EXCLUDE", Flag),
-            ("FILES_MATCHING", Flag),
-            ("PERMISSIONS", MultiValue),
-            ("FILE_PERMISSIONS", MultiValue),
-            ("DIRECTORY_PERMISSIONS", MultiValue),
-            ("NO_SOURCE_PERMISSIONS", Flag),
-            ("USE_SOURCE_PERMISSIONS", Flag),
-            ("FOLLOW_SYMLINK_CHAIN", Flag),
-        ]));
+        modes.insert("COPY".to_string(), {
+            let mut g = CommandGrammar::from_keywords(&[
+                ("COPY", MultiValue),
+                ("DESTINATION", SingleValue),
+                ("PATTERN", SingleValue),
+                ("REGEX", SingleValue),
+                ("EXCLUDE", Flag),
+                ("FILES_MATCHING", MultiValue),
+                ("PERMISSIONS", MultiValue),
+                ("FILE_PERMISSIONS", MultiValue),
+                ("DIRECTORY_PERMISSIONS", MultiValue),
+                ("NO_SOURCE_PERMISSIONS", Flag),
+                ("USE_SOURCE_PERMISSIONS", Flag),
+                ("FOLLOW_SYMLINK_CHAIN", Flag),
+            ]);
+            g.sub_keywords = ["PATTERN", "REGEX", "EXCLUDE", "PERMISSIONS"]
+                .iter().map(|s| s.to_string()).collect();
+            g
+        });
 
-        modes.insert("INSTALL".to_string(), CommandGrammar::from_keywords(&[
-            ("INSTALL", MultiValue),
-            ("DESTINATION", SingleValue),
-            ("PATTERN", SingleValue),
-            ("REGEX", SingleValue),
-            ("EXCLUDE", Flag),
-            ("FILES_MATCHING", Flag),
-            ("PERMISSIONS", MultiValue),
-            ("FILE_PERMISSIONS", MultiValue),
-            ("DIRECTORY_PERMISSIONS", MultiValue),
-            ("NO_SOURCE_PERMISSIONS", Flag),
-            ("USE_SOURCE_PERMISSIONS", Flag),
-            ("FOLLOW_SYMLINK_CHAIN", Flag),
-        ]));
+        modes.insert("INSTALL".to_string(), {
+            let mut g = CommandGrammar::from_keywords(&[
+                ("INSTALL", MultiValue),
+                ("DESTINATION", SingleValue),
+                ("PATTERN", SingleValue),
+                ("REGEX", SingleValue),
+                ("EXCLUDE", Flag),
+                ("FILES_MATCHING", MultiValue),
+                ("PERMISSIONS", MultiValue),
+                ("FILE_PERMISSIONS", MultiValue),
+                ("DIRECTORY_PERMISSIONS", MultiValue),
+                ("NO_SOURCE_PERMISSIONS", Flag),
+                ("USE_SOURCE_PERMISSIONS", Flag),
+                ("FOLLOW_SYMLINK_CHAIN", Flag),
+            ]);
+            g.sub_keywords = ["PATTERN", "REGEX", "EXCLUDE", "PERMISSIONS"]
+                .iter().map(|s| s.to_string()).collect();
+            g
+        });
 
         // Archive modes
         modes.insert("ARCHIVE_CREATE".to_string(), CommandGrammar::from_keywords(&[
