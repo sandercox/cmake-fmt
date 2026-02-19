@@ -1948,6 +1948,59 @@ fn test_install_targets_global_destination_component() {
 }
 
 // ============================================================================
+// INSTALL TARGETS MULTILINE REGRESSION TESTS (Quick 63)
+// ============================================================================
+
+#[test]
+fn test_install_targets_multiline_not_absorbed() {
+    // Regression: multiline install(TARGETS) must not absorb DESTINATION/COMPONENT as target values
+    let input = "install(\n\tTARGETS Wire\n\tDESTINATION bin\n\tCOMPONENT wire\n)\n";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // TARGETS should have Wire as its only value
+    assert!(result.contains("TARGETS Wire"), "Wire should be inline with TARGETS");
+    // DESTINATION and COMPONENT must be separate keyword sections
+    assert!(result.contains("\tDESTINATION bin"), "DESTINATION should be a separate keyword");
+    assert!(result.contains("\tCOMPONENT wire"), "COMPONENT should be a separate keyword");
+    // Must NOT have DESTINATION/COMPONENT indented under TARGETS
+    assert!(!result.contains("\t\tDESTINATION"), "DESTINATION must not be a TARGETS value");
+    assert!(!result.contains("\t\tCOMPONENT"), "COMPONENT must not be a TARGETS value");
+    // Idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "Should be idempotent");
+}
+
+#[test]
+fn test_install_targets_multiline_with_artifact_types() {
+    // Multiline install TARGETS with BinPack artifact types should still work correctly
+    let input = "install(\n\tTARGETS mylib\n\tRUNTIME DESTINATION bin\n\tLIBRARY DESTINATION lib\n\tARCHIVE DESTINATION lib\n)\n";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // TARGETS should have mylib inline
+    assert!(result.contains("TARGETS mylib"), "mylib should be inline with TARGETS");
+    // Artifact types should consume DESTINATION as sub_keyword (BinPack behavior)
+    assert!(result.contains("RUNTIME DESTINATION bin"), "RUNTIME should consume DESTINATION");
+    assert!(result.contains("LIBRARY DESTINATION lib"), "LIBRARY should consume DESTINATION");
+    assert!(result.contains("ARCHIVE DESTINATION lib"), "ARCHIVE should consume DESTINATION");
+    // Idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "Should be idempotent");
+}
+
+#[test]
+fn test_install_files_matching_still_groups_after_fix() {
+    // Ensure FILES_MATCHING still correctly groups PATTERN sub_keywords after the fix
+    let input = "install(\n\tDIRECTORY \"${SRC}/headers\"\n\tDESTINATION include\n\tFILES_MATCHING\n\tPATTERN \"*.h\"\n)\n";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // FILES_MATCHING should group PATTERN inline
+    assert!(result.contains("FILES_MATCHING PATTERN \"*.h\""), "PATTERN should be grouped with FILES_MATCHING");
+    // Idempotency
+    let pass2 = format_text(&result, &default_config());
+    assert_eq!(result, pass2, "Should be idempotent");
+}
+
+// ============================================================================
 // FILES_MATCHING COLLECTION FORMATTING TESTS
 // ============================================================================
 
