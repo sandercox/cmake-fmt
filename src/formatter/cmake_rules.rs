@@ -937,7 +937,10 @@ pub fn format_keyword_aware_args(
                             sections.get(i.saturating_sub(1)),
                             Some(prev) if prev.keyword.is_none()
                         );
-                        if (prev_is_flag || prev_is_pre_keyword) && config.collapse_empty_flags {
+                        let flag_has_trailing_args = !section.args.is_empty();
+                        if (prev_is_pre_keyword && flag_has_trailing_args)
+                            || ((prev_is_flag || prev_is_pre_keyword) && config.collapse_empty_flags)
+                        {
                             docs.push(RcDoc::space());
                         } else if signals.force_multiline {
                             docs.push(RcDoc::hardline());
