@@ -1,6 +1,6 @@
 {
   "name": "cmake-fmt",
-  "displayName": "CMake Format",
+  "displayName": "CMake Format (cmake-fmt)",
   "description": "Stop arguing about CMake formatting. Fast, grammar-aware formatter for CMakeLists.txt and .cmake files.",
   "version": "0.7.1",
   "publisher": "paralleldimension",
