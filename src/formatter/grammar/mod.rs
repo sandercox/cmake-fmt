@@ -72,6 +72,11 @@ pub struct CommandGrammar {
     /// Keywords that should be consumed as regular args when inside a BinPack section
     /// (e.g., DESTINATION inside LIBRARY BinPack section for install(TARGETS))
     pub sub_keywords: HashSet<String>,
+    /// MultiValue keywords that should consume sub_keywords as grouped values.
+    /// Only these specific MultiValue keywords will absorb sub_keywords;
+    /// other MultiValue keywords (like TARGETS) will not.
+    /// BinPack keywords always consume sub_keywords regardless.
+    pub collection_keywords: HashSet<String>,
 }
 
 impl CommandGrammar {
@@ -81,6 +86,7 @@ impl CommandGrammar {
             keywords: HashMap::new(),
             force_args_on_new_line: false,
             sub_keywords: HashSet::new(),
+            collection_keywords: HashSet::new(),
         }
     }
 
@@ -90,7 +96,7 @@ impl CommandGrammar {
         for (kw, ty) in keywords {
             map.insert(kw.to_string(), *ty);
         }
-        Self { keywords: map, force_args_on_new_line: false, sub_keywords: HashSet::new() }
+        Self { keywords: map, force_args_on_new_line: false, sub_keywords: HashSet::new(), collection_keywords: HashSet::new() }
     }
 
     /// Get the type of a keyword (case-sensitive lookup - CMake keywords are case-sensitive)

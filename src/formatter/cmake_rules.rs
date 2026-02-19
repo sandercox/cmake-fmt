@@ -460,8 +460,18 @@ pub fn parse_keyword_sections_with_grammar(
                     // Check if this keyword should be consumed by the current BinPack or MultiValue section
                     // (e.g., DESTINATION inside LIBRARY BinPack, or PATTERN inside FILES_MATCHING MultiValue)
                     let consumed_as_sub_keyword = is_kw
-                        && matches!(current_section.keyword_type, Some(KeywordType::BinPack) | Some(KeywordType::MultiValue))
-                        && grammar.map_or(false, |g| g.sub_keywords.contains(&text));
+                        && grammar.map_or(false, |g| g.sub_keywords.contains(&text))
+                        && match current_section.keyword_type {
+                            Some(KeywordType::BinPack) => true,
+                            Some(KeywordType::MultiValue) => {
+                                // Only consume sub_keywords in MultiValue sections that are
+                                // explicitly marked as collection keywords (e.g., FILES_MATCHING)
+                                current_section.keyword.as_ref().map_or(false, |kw|
+                                    grammar.map_or(false, |g| g.collection_keywords.contains(kw.as_str()))
+                                )
+                            }
+                            _ => false,
+                        };
 
                     if is_kw && !consumed_as_sub_keyword {
                         // Get the keyword type from grammar if available

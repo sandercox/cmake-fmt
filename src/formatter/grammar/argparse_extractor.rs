@@ -85,7 +85,7 @@ pub fn extract_command_grammars_from_body(
                     }
 
                     if !keywords.is_empty() {
-                        return Some(CommandGrammar { keywords, force_args_on_new_line: false, sub_keywords: HashSet::new() });
+                        return Some(CommandGrammar { keywords, force_args_on_new_line: false, sub_keywords: HashSet::new(), collection_keywords: HashSet::new() });
                     }
                 }
             }

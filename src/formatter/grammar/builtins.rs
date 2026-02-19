@@ -221,6 +221,7 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
             ]);
             g.sub_keywords = ["PATTERN", "REGEX", "EXCLUDE", "PERMISSIONS"]
                 .iter().map(|s| s.to_string()).collect();
+            g.collection_keywords = ["FILES_MATCHING"].iter().map(|s| s.to_string()).collect();
             g
         });
 
@@ -546,6 +547,7 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
             ]);
             g.sub_keywords = ["PATTERN", "REGEX", "EXCLUDE", "PERMISSIONS"]
                 .iter().map(|s| s.to_string()).collect();
+            g.collection_keywords = ["FILES_MATCHING"].iter().map(|s| s.to_string()).collect();
             g
         });
 
@@ -566,6 +568,7 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
             ]);
             g.sub_keywords = ["PATTERN", "REGEX", "EXCLUDE", "PERMISSIONS"]
                 .iter().map(|s| s.to_string()).collect();
+            g.collection_keywords = ["FILES_MATCHING"].iter().map(|s| s.to_string()).collect();
             g
         });
 
