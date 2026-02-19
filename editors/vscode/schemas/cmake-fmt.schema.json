@@ -63,9 +63,12 @@
       "description": "Force keyword-aware commands to use multiline layout regardless of line length"
     },
     "final_newline": {
-      "type": "boolean",
-      "default": true,
-      "description": "Ensure file ends with a newline. When false, the formatter will not append a trailing newline."
+      "oneOf": [
+        { "type": "string", "enum": ["leave", "remove", "force"] },
+        { "type": "boolean" }
+      ],
+      "default": "force",
+      "description": "Final newline handling. 'leave' preserves original file's trailing newline state, 'remove' strips trailing newline, 'force' ensures file ends with newline. Also accepts true (=force) and false (=remove) for backward compatibility."
     },
     "comment_style": {
       "type": "string",

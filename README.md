@@ -149,7 +149,7 @@ max_line_length = 120
 | `line_ending` | enum | `auto` | Line ending style: `auto`, `lf`, `crlf` |
 | `closing_style` | enum | `remove` | Closing statement style: `leave`, `remove`, `force` |
 | `force_break_keywords` | boolean | `false` | Always break keywords onto separate lines |
-| `final_newline` | boolean | `true` | Ensure file ends with newline |
+| `final_newline` | enum | `force` | Final newline: `leave`, `remove`, `force` (also accepts `true`/`false`) |
 | `comment_style` | enum | `hash_space` | Comment formatting: `leave`, `hash_space`, `hash_no_space` |
 | `source_grouping` | enum | `none` | Group source files: `none`, `headers_first`, `sources_first` |
 | `sort_sources` | enum | `none` | Sort source file lists: `none`, `alphabetical` |
@@ -284,7 +284,16 @@ Limits consecutive blank lines. For example, `max_blank_lines = 1` (default) all
 
 #### `final_newline`
 
-When `true` (default), ensures file ends with a newline character.
+**`final_newline = force` (default):**
+Ensures the file ends with a newline character. Equivalent to the previous `true` setting.
+
+**`final_newline = remove`:**
+Strips any trailing newline from the output. Equivalent to the previous `false` setting.
+
+**`final_newline = leave`:**
+Preserves the original file's trailing newline state. If the input file ended with a newline, the output will too. If it didn't, the output won't add one.
+
+For backward compatibility, `true` and `false` are still accepted (mapped to `force` and `remove` respectively).
 
 #### `disable_format`
 

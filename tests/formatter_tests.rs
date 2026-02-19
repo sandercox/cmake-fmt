@@ -1,4 +1,4 @@
-use cmake_fmt::formatter::{CommandCase, CommentStyle, FormatConfig, UserCommandCase};
+use cmake_fmt::formatter::{CommandCase, CommentStyle, FinalNewline, FormatConfig, UserCommandCase};
 use cmake_fmt::formatter::format_text;
 
 // Helper to create default config
@@ -857,16 +857,16 @@ fn test_final_newline_true_default() {
 fn test_final_newline_false_no_trailing_newline() {
     let input = "set(FOO bar)\n";
     let mut config = default_config();
-    config.final_newline = false;
+    config.final_newline = FinalNewline::Remove;
     let result = format_text(input, &config);
-    assert_eq!(result, "set(FOO bar)", "final_newline=false should not add trailing newline");
+    assert_eq!(result, "set(FOO bar)", "final_newline=Remove should not add trailing newline");
 }
 
 #[test]
 fn test_final_newline_false_empty_input() {
     let input = "";
     let mut config = default_config();
-    config.final_newline = false;
+    config.final_newline = FinalNewline::Remove;
     let result = format_text(input, &config);
     assert_eq!(result, "", "Empty input should remain empty regardless of final_newline");
 }
@@ -875,9 +875,9 @@ fn test_final_newline_false_empty_input() {
 fn test_final_newline_false_multiline() {
     let input = "set(A b)\nset(C d)\n";
     let mut config = default_config();
-    config.final_newline = false;
+    config.final_newline = FinalNewline::Remove;
     let result = format_text(input, &config);
-    assert_eq!(result, "set(A b)\nset(C d)", "final_newline=false should not add trailing newline on multiline");
+    assert_eq!(result, "set(A b)\nset(C d)", "final_newline=Remove should not add trailing newline on multiline");
 }
 
 #[test]
@@ -886,6 +886,101 @@ fn test_final_newline_true_preserves_existing_behavior() {
     let config = default_config();
     let result = format_text(input, &config);
     assert_eq!(result, "set(FOO bar)\n", "final_newline=true (default) should preserve single trailing newline");
+}
+
+// Force mode tests
+
+#[test]
+fn test_final_newline_force_adds_newline() {
+    let input = "set(FOO bar)";
+    let mut config = default_config();
+    config.final_newline = FinalNewline::Force;
+    let result = format_text(input, &config);
+    assert_eq!(result, "set(FOO bar)\n", "FinalNewline::Force should add trailing newline when missing");
+}
+
+// Leave mode tests
+
+#[test]
+fn test_final_newline_leave_with_trailing_newline() {
+    let input = "set(FOO bar)\n";
+    let mut config = default_config();
+    config.final_newline = FinalNewline::Leave;
+    let result = format_text(input, &config);
+    assert_eq!(result, "set(FOO bar)\n", "Leave mode should preserve trailing newline when present");
+}
+
+#[test]
+fn test_final_newline_leave_without_trailing_newline() {
+    let input = "set(FOO bar)";
+    let mut config = default_config();
+    config.final_newline = FinalNewline::Leave;
+    let result = format_text(input, &config);
+    assert_eq!(result, "set(FOO bar)", "Leave mode should not add trailing newline when input had none");
+}
+
+#[test]
+fn test_final_newline_leave_multiline_with_newline() {
+    let input = "set(A b)\nset(C d)\n";
+    let mut config = default_config();
+    config.final_newline = FinalNewline::Leave;
+    let result = format_text(input, &config);
+    assert_eq!(result, "set(A b)\nset(C d)\n", "Leave mode should preserve trailing newline in multiline input");
+}
+
+#[test]
+fn test_final_newline_leave_multiline_without_newline() {
+    let input = "set(A b)\nset(C d)";
+    let mut config = default_config();
+    config.final_newline = FinalNewline::Leave;
+    let result = format_text(input, &config);
+    assert_eq!(result, "set(A b)\nset(C d)", "Leave mode should not add trailing newline to multiline input without one");
+}
+
+#[test]
+fn test_final_newline_leave_empty_input() {
+    let input = "";
+    let mut config = default_config();
+    config.final_newline = FinalNewline::Leave;
+    let result = format_text(input, &config);
+    assert_eq!(result, "", "Leave mode should return empty for empty input");
+}
+
+// Backward-compat deserialization tests
+
+#[test]
+fn test_final_newline_deserialize_bool_true() {
+    let toml = "final_newline = true\n";
+    let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = true");
+    assert_eq!(config.final_newline, FinalNewline::Force, "bool true should map to Force");
+}
+
+#[test]
+fn test_final_newline_deserialize_bool_false() {
+    let toml = "final_newline = false\n";
+    let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = false");
+    assert_eq!(config.final_newline, FinalNewline::Remove, "bool false should map to Remove");
+}
+
+#[test]
+fn test_final_newline_deserialize_string_leave() {
+    let toml = "final_newline = \"leave\"\n";
+    let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = \"leave\"");
+    assert_eq!(config.final_newline, FinalNewline::Leave, "string \"leave\" should map to Leave");
+}
+
+#[test]
+fn test_final_newline_deserialize_string_remove() {
+    let toml = "final_newline = \"remove\"\n";
+    let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = \"remove\"");
+    assert_eq!(config.final_newline, FinalNewline::Remove, "string \"remove\" should map to Remove");
+}
+
+#[test]
+fn test_final_newline_deserialize_string_force() {
+    let toml = "final_newline = \"force\"\n";
+    let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = \"force\"");
+    assert_eq!(config.final_newline, FinalNewline::Force, "string \"force\" should map to Force");
 }
 
 // ============================================================================

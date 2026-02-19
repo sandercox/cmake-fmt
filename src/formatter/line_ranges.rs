@@ -227,11 +227,36 @@ mod tests {
     #[test]
     fn test_format_with_line_ranges_no_final_newline() {
         let input = "set(  FOO   bar)\nmessage(hello)";
-        let config = FormatConfig::default();
+        let mut config = FormatConfig::default();
+        // Use Leave mode to preserve input's trailing newline state
+        config.final_newline = FinalNewline::Leave;
         let ranges = vec![LineRange { start: 1, end: 1 }];
 
         let (result, _warnings) = format_with_line_ranges(&input, &config, &ranges, None, false);
 
-        assert!(!result.ends_with('\n'), "Should not add final newline if original didn't have one");
+        assert!(!result.ends_with('\n'), "Leave mode should not add final newline if original didn't have one");
+    }
+
+    #[test]
+    fn test_format_with_line_ranges_force_adds_newline() {
+        let input = "set(  FOO   bar)\nmessage(hello)";
+        let config = FormatConfig::default(); // default is Force
+        let ranges = vec![LineRange { start: 1, end: 1 }];
+
+        let (result, _warnings) = format_with_line_ranges(&input, &config, &ranges, None, false);
+
+        assert!(result.ends_with('\n'), "Force mode should add trailing newline even if original didn't have one");
+    }
+
+    #[test]
+    fn test_format_with_line_ranges_remove_strips_newline() {
+        let input = "set(  FOO   bar)\nmessage(hello)\n";
+        let mut config = FormatConfig::default();
+        config.final_newline = FinalNewline::Remove;
+        let ranges = vec![LineRange { start: 1, end: 1 }];
+
+        let (result, _warnings) = format_with_line_ranges(&input, &config, &ranges, None, false);
+
+        assert!(!result.ends_with('\n'), "Remove mode should strip trailing newline");
     }
 }
