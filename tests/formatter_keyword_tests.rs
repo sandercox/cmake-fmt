@@ -1946,3 +1946,62 @@ fn test_install_targets_global_destination_component() {
     let pass2 = format_text(&result, &default_config());
     assert_eq!(result, pass2, "Should be idempotent");
 }
+
+// ============================================================================
+// COLLAPSE EMPTY FLAGS TESTS
+// ============================================================================
+
+#[test]
+fn test_collapse_empty_flags_default_true() {
+    let input = "add_library(mylib STATIC src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp src/f.cpp src/g.cpp)";
+    let result = format_text(input, &default_config());
+    eprintln!("Result:\n{}", result);
+    // Default behavior: STATIC collapses onto same line as target name
+    assert!(result.contains("mylib STATIC\n"), "STATIC should collapse with target name");
+}
+
+#[test]
+fn test_collapse_empty_flags_false() {
+    let mut config = default_config();
+    config.collapse_empty_flags = false;
+    let input = "add_library(mylib STATIC src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp src/f.cpp src/g.cpp)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // With collapse disabled: STATIC gets its own indented line
+    assert!(result.contains("\tSTATIC\n"), "STATIC should be on its own line when collapse_empty_flags=false");
+    assert!(!result.contains("mylib STATIC"), "STATIC should NOT be on same line as target name");
+}
+
+#[test]
+fn test_collapse_empty_flags_false_find_package() {
+    let mut config = default_config();
+    config.collapse_empty_flags = false;
+    // Already-multiline input so force_multiline is true and flags break to their own lines
+    let input = "find_package(\n    Boost\n    REQUIRED\n    CONFIG\n    COMPONENTS system filesystem thread\n)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // REQUIRED and CONFIG should each be on their own line
+    assert!(result.contains("\tREQUIRED\n"), "REQUIRED should be on its own line");
+    assert!(result.contains("\tCONFIG\n"), "CONFIG should be on its own line");
+}
+
+#[test]
+fn test_collapse_empty_flags_idempotent() {
+    let mut config = default_config();
+    config.collapse_empty_flags = false;
+    let input = "add_library(mylib STATIC src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp src/f.cpp src/g.cpp)";
+    let pass1 = format_text(input, &config);
+    let pass2 = format_text(&pass1, &config);
+    assert_eq!(pass1, pass2, "Formatting with collapse_empty_flags=false should be idempotent");
+}
+
+#[test]
+fn test_collapse_empty_flags_short_command_still_flat() {
+    let mut config = default_config();
+    config.collapse_empty_flags = false;
+    let input = "add_library(mylib STATIC src/a.cpp)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // Short command still fits on one line (flat rendering, no breaking needed)
+    assert_eq!(result, "add_library(mylib STATIC src/a.cpp)\n");
+}

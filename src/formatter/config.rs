@@ -44,6 +44,11 @@ pub struct FormatConfig {
     pub source_grouping: SourceGrouping,
     /// Source file sorting mode (default: None)
     pub sort_sources: SortSources,
+
+    /// Collapse consecutive no-argument flags onto the same line (default: true)
+    /// When true: `add_library(mylib STATIC ...)` keeps STATIC inline with target name
+    /// When false: flags get their own indented line like other keywords
+    pub collapse_empty_flags: bool,
 }
 
 impl Default for FormatConfig {
@@ -65,6 +70,7 @@ impl Default for FormatConfig {
             grammar_files: Vec::new(),
             source_grouping: SourceGrouping::None,
             sort_sources: SortSources::None,
+            collapse_empty_flags: true,
         }
     }
 }
@@ -332,6 +338,15 @@ impl FormatConfig {
                         "Invalid value for comment_style (expected leave, hash_space, or hash_no_space): {}",
                         value
                     )),
+                }
+            }
+            "collapse_empty_flags" => {
+                match value.parse::<bool>() {
+                    Ok(v) => {
+                        self.collapse_empty_flags = v;
+                        Ok(())
+                    }
+                    Err(_) => Err(format!("Invalid value for collapse_empty_flags: {}", value)),
                 }
             }
             _ => Err(format!("Unknown config key: {}", key)),
