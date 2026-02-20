@@ -1,4 +1,4 @@
-use cmake_fmt::formatter::{format_text, CommandCase, CommandGrammarConfig, FormatConfig};
+use cmake_fmt::formatter::{format_text, ClosingStyle, CommandCase, CommandGrammarConfig, FormatConfig};
 use std::collections::HashMap;
 
 fn default_config() -> FormatConfig {
@@ -2310,4 +2310,144 @@ fn test_inline_single_keyword_with_force_break() {
     assert!(result.contains("myapp PUBLIC\n"), "PUBLIC must be inline with myapp even with force_break");
     assert!(result.contains("\tlib1\n"), "lib1 must be single-tab indented");
     assert!(!result.contains("\t\tlib1"), "lib1 must NOT be double-tab indented");
+}
+
+// ============================================================================
+// KEYWORD SPACE BEFORE PAREN TESTS
+// ============================================================================
+
+#[test]
+fn test_keyword_space_before_paren_if_enabled() {
+    // When enabled, if/endif get a space before (, but message does not.
+    let mut config = default_config();
+    config.keyword_space_before_paren = true;
+    let input = "if(TRUE)\n  message(\"hello\")\nendif()";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    assert!(result.contains("if (TRUE)"), "if must have space before (");
+    assert!(result.contains("endif ()"), "endif must have space before (");
+    assert!(result.contains("message(\"hello\")"), "message must NOT have space before (");
+}
+
+#[test]
+fn test_keyword_space_before_paren_foreach() {
+    // foreach and endforeach both get a space before (.
+    let mut config = default_config();
+    config.keyword_space_before_paren = true;
+    let input = "foreach(item IN LISTS a b c)\nendforeach()";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    assert!(result.contains("foreach (item"), "foreach must have space before (");
+    assert!(result.contains("endforeach ()"), "endforeach must have space before (");
+}
+
+#[test]
+fn test_keyword_space_before_paren_disabled_default() {
+    // Default config (false) produces no space before (.
+    let config = default_config();
+    let input = "if(TRUE)\nendif()";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    assert!(result.contains("if(TRUE)"), "if must NOT have space before ( with default config");
+    assert!(result.contains("endif()"), "endif must NOT have space before ( with default config");
+}
+
+#[test]
+fn test_keyword_space_before_paren_regular_commands_unaffected() {
+    // Regular commands are never affected, even when keyword_space_before_paren=true.
+    let mut config = default_config();
+    config.keyword_space_before_paren = true;
+    let input = "set(MY_VAR \"value\")\nmessage(\"hello\")\nadd_library(mylib STATIC src/a.cpp)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    assert!(result.contains("set(MY_VAR"), "set must NOT have space before (");
+    assert!(result.contains("message(\"hello\")"), "message must NOT have space before (");
+    assert!(result.contains("add_library(mylib"), "add_library must NOT have space before (");
+}
+
+#[test]
+fn test_keyword_space_before_paren_all_block_commands() {
+    // All 14 block commands get a space before ( when enabled.
+    let mut config = default_config();
+    config.keyword_space_before_paren = true;
+    let input = concat!(
+        "if(cond)\n",
+        "elseif(cond2)\n",
+        "else()\n",
+        "endif()\n",
+        "foreach(x IN LISTS a)\n",
+        "endforeach()\n",
+        "while(cond)\n",
+        "endwhile()\n",
+        "macro(my_macro)\n",
+        "endmacro()\n",
+        "function(my_func)\n",
+        "endfunction()\n",
+        "block()\n",
+        "endblock()\n",
+    );
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    assert!(result.contains("if (cond)"), "if must have space");
+    assert!(result.contains("elseif (cond2)"), "elseif must have space");
+    assert!(result.contains("else ()"), "else must have space");
+    assert!(result.contains("endif ()"), "endif must have space");
+    assert!(result.contains("foreach (x"), "foreach must have space");
+    assert!(result.contains("endforeach ()"), "endforeach must have space");
+    assert!(result.contains("while (cond)"), "while must have space");
+    assert!(result.contains("endwhile ()"), "endwhile must have space");
+    assert!(result.contains("macro (my_macro)"), "macro must have space");
+    assert!(result.contains("endmacro ()"), "endmacro must have space");
+    assert!(result.contains("function (my_func)"), "function must have space");
+    assert!(result.contains("endfunction ()"), "endfunction must have space");
+    assert!(result.contains("block ()"), "block must have space");
+    assert!(result.contains("endblock ()"), "endblock must have space");
+}
+
+#[test]
+fn test_keyword_space_before_paren_with_closing_style_remove() {
+    // Space is inserted before ( AND closing args are removed.
+    let mut config = default_config();
+    config.keyword_space_before_paren = true;
+    config.closing_style = ClosingStyle::Remove;
+    let input = "if(condition)\nendif(condition)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    assert!(result.contains("if (condition)"), "if must have space before (");
+    assert!(result.contains("endif ()"), "endif must have space before ( and closing args removed");
+}
+
+#[test]
+fn test_keyword_space_before_paren_idempotent() {
+    // Formatting twice produces the same result.
+    let mut config = default_config();
+    config.keyword_space_before_paren = true;
+    let input = "if(TRUE)\n  message(\"hello\")\nendif()";
+    let pass1 = format_text(input, &config);
+    let pass2 = format_text(&pass1, &config);
+    eprintln!("Pass 1:\n{}", pass1);
+    eprintln!("Pass 2:\n{}", pass2);
+    assert_eq!(pass1, pass2, "keyword_space_before_paren formatting must be idempotent");
+}
+
+#[test]
+fn test_keyword_space_before_paren_nested() {
+    // Nested if/foreach get correct indentation and spaces on all block commands.
+    let mut config = default_config();
+    config.keyword_space_before_paren = true;
+    let input = concat!(
+        "if(OUTER)\n",
+        "foreach(item IN LISTS my_list)\n",
+        "message(${item})\n",
+        "endforeach()\n",
+        "endif()\n",
+    );
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    assert!(result.contains("if (OUTER)"), "outer if must have space");
+    assert!(result.contains("foreach (item"), "foreach must have space");
+    assert!(result.contains("endforeach ()"), "endforeach must have space");
+    assert!(result.contains("endif ()"), "endif must have space");
+    // Regular command inside block — no space
+    assert!(result.contains("message(${item})"), "message must NOT have space");
 }
