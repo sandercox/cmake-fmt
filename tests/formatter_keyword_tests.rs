@@ -2312,6 +2312,49 @@ fn test_inline_single_keyword_with_force_break() {
     assert!(!result.contains("\t\tlib1"), "lib1 must NOT be double-tab indented");
 }
 
+#[test]
+fn test_inline_single_keyword_multiline_pre_args_no_inline() {
+    // When pre-keyword args don't fit on the opening line, keyword should NOT be inlined.
+    // Falls back to standard keyword formatting with keyword on its own line.
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.max_line_length = 60;
+    let input = "set_source_files_properties(\n\t# wui/patch/cord/cord_anchor.cpp\n\twui/patch/node/node_view.cpp\n\twui/skin/skin.cpp PROPERTIES\n\tCOMPILE_FLAGS\n\t/wd4996\n)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // PROPERTIES must NOT be on the same line as skin.cpp — it should be on its own line
+    assert!(!result.contains("skin.cpp PROPERTIES"), "keyword must NOT be inlined when pre-keyword args are multiline");
+    // Standard layout: keyword on own line, indented (values may follow on same line)
+    assert!(result.contains("\tPROPERTIES"), "PROPERTIES must be on its own indented line");
+}
+
+#[test]
+fn test_inline_single_keyword_multiline_pre_args_idempotent() {
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.max_line_length = 60;
+    let input = "set_source_files_properties(\n\twui/patch/node/node_view.cpp\n\twui/skin/skin.cpp\n\tPROPERTIES\n\t\tCOMPILE_FLAGS\n\t\t/wd4996\n)";
+    let result = format_text(input, &config);
+    let pass2 = format_text(&result, &config);
+    eprintln!("Pass 1:\n{}", result);
+    eprintln!("Pass 2:\n{}", pass2);
+    assert_eq!(result, pass2, "multiline pre-keyword args must be idempotent");
+}
+
+#[test]
+fn test_inline_single_keyword_two_short_pre_args_still_inlines() {
+    // Two short pre-keyword args that fit on the line: keyword should still inline.
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.max_line_length = 80;
+    let input = "set_source_files_properties(a.cpp b.cpp PROPERTIES COMPILE_FLAGS /wd4996)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // With max_line_length=80, "set_source_files_properties(a.cpp b.cpp PROPERTIES" = 51 chars, fits
+    // So inline should still apply
+    assert!(result.contains("b.cpp PROPERTIES"), "keyword should be inlined when pre-keyword args fit on opening line");
+}
+
 // ============================================================================
 // KEYWORD SPACE BEFORE PAREN TESTS
 // ============================================================================
