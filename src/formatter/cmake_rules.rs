@@ -854,6 +854,7 @@ pub fn format_keyword_aware_args(
     builtin_grammar: bool,
     force_args_on_new_line: bool,
     sub_keywords: Option<&HashSet<String>>,
+    command_name_len: usize,
 ) -> RcDoc<'static, ()> {
     if sections.is_empty() {
         return RcDoc::nil();
@@ -892,15 +893,39 @@ pub fn format_keyword_aware_args(
 
     // inline_single_keyword: when enabled and there is exactly one keyword section,
     // emit the keyword inline with the pre-keyword args and use single indentation for values.
+    // Guard: only inline if the pre-keyword args + keyword fit on the command's opening line.
+    // If pre-keyword args are multiline (don't fit), fall through to normal keyword formatting.
     let keyword_section_count = sections.iter().filter(|s| s.keyword.is_some()).count();
     if config.inline_single_keyword && keyword_section_count == 1 {
-        return format_keyword_aware_args_inline_single(
-            &sections,
-            config,
-            &signals,
-            &base_indent,
-            &keyword_indent,
-        );
+        // Compute whether pre-keyword args + keyword fit on the command's opening line.
+        // If they don't fit, the pre-keyword args will break to multiple lines and the
+        // keyword should NOT be inlined — fall through to normal formatting.
+        let pre_kw_section = sections.iter().find(|s| s.keyword.is_none());
+        let pre_kw_fits = if let Some(pre_section) = pre_kw_section {
+            // Check: would "indent + cmd_name( + pre_args_joined_by_space + space + keyword" fit?
+            let indent_width = config.indent_width; // used for both tab and space modes
+            let prefix_len = indent_level * indent_width + command_name_len + 1; // +1 for '('
+            let pre_args_len: usize = pre_section.args.iter().map(|a| a.len()).sum::<usize>()
+                + pre_section.args.len().saturating_sub(1); // spaces between args
+            let keyword_section = sections.iter().find(|s| s.keyword.is_some()).unwrap();
+            let keyword_len = keyword_section.keyword.as_ref().unwrap().len();
+            let total = prefix_len + pre_args_len + 1 + keyword_len; // +1 for space before keyword
+            // Also reject if pre-keyword section has comments (they force line breaks)
+            pre_section.comments.is_empty() && total <= config.max_line_length
+        } else {
+            true // No pre-keyword args — keyword is first thing, always OK to inline
+        };
+
+        if pre_kw_fits {
+            return format_keyword_aware_args_inline_single(
+                &sections,
+                config,
+                &signals,
+                &base_indent,
+                &keyword_indent,
+            );
+        }
+        // Otherwise fall through to normal keyword formatting
     }
 
     // Build keyword-aware Doc structure
