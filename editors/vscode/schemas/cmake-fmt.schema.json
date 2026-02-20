@@ -72,7 +72,7 @@
       "default": false,
       "description": "When true and a keyword command has only one keyword section, keep the keyword on the same line as the command arguments and single-indent values instead of double-indenting."
     },
-    "keyword_space_before_paren": {
+    "control_flow_space_before_paren": {
       "type": "boolean",
       "default": false,
       "description": "Insert a space before '(' in control flow and block statements (if, else, endif, foreach, while, function, macro, block, etc.). Regular commands like set() and message() are not affected."

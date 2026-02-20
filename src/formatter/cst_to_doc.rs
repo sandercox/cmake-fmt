@@ -683,7 +683,7 @@ fn format_command(
 
     // Format as: indent + name + ( + args + )
     // Conditionally insert a space before ( for block/control-flow commands
-    let paren_prefix = if ctx.config.keyword_space_before_paren && is_block_command(&name_lower) {
+    let paren_prefix = if ctx.config.control_flow_space_before_paren && is_block_command(&name_lower) {
         " ("
     } else {
         "("

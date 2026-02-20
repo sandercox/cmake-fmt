@@ -114,7 +114,7 @@ pub struct FormatConfig {
     pub inline_single_keyword: bool,
 
     /// Insert a space before '(' in control flow / block statements (default: false)
-    pub keyword_space_before_paren: bool,
+    pub control_flow_space_before_paren: bool,
 }
 
 impl Default for FormatConfig {
@@ -138,7 +138,7 @@ impl Default for FormatConfig {
             sort_sources: SortSources::None,
             collapse_empty_flags: true,
             inline_single_keyword: false,
-            keyword_space_before_paren: false,
+            control_flow_space_before_paren: false,
         }
     }
 }
@@ -437,13 +437,13 @@ impl FormatConfig {
                     Err(_) => Err(format!("Invalid value for inline_single_keyword: {}", value)),
                 }
             }
-            "keyword_space_before_paren" => {
+            "control_flow_space_before_paren" => {
                 match value.parse::<bool>() {
                     Ok(v) => {
-                        self.keyword_space_before_paren = v;
+                        self.control_flow_space_before_paren = v;
                         Ok(())
                     }
-                    Err(_) => Err(format!("Invalid value for keyword_space_before_paren: {}", value)),
+                    Err(_) => Err(format!("Invalid value for control_flow_space_before_paren: {}", value)),
                 }
             }
             _ => Err(format!("Unknown config key: {}", key)),

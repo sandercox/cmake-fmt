@@ -2317,10 +2317,10 @@ fn test_inline_single_keyword_with_force_break() {
 // ============================================================================
 
 #[test]
-fn test_keyword_space_before_paren_if_enabled() {
+fn test_control_flow_space_before_paren_if_enabled() {
     // When enabled, if/endif get a space before (, but message does not.
     let mut config = default_config();
-    config.keyword_space_before_paren = true;
+    config.control_flow_space_before_paren = true;
     let input = "if(TRUE)\n  message(\"hello\")\nendif()";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
@@ -2330,10 +2330,10 @@ fn test_keyword_space_before_paren_if_enabled() {
 }
 
 #[test]
-fn test_keyword_space_before_paren_foreach() {
+fn test_control_flow_space_before_paren_foreach() {
     // foreach and endforeach both get a space before (.
     let mut config = default_config();
-    config.keyword_space_before_paren = true;
+    config.control_flow_space_before_paren = true;
     let input = "foreach(item IN LISTS a b c)\nendforeach()";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
@@ -2342,7 +2342,7 @@ fn test_keyword_space_before_paren_foreach() {
 }
 
 #[test]
-fn test_keyword_space_before_paren_disabled_default() {
+fn test_control_flow_space_before_paren_disabled_default() {
     // Default config (false) produces no space before (.
     let config = default_config();
     let input = "if(TRUE)\nendif()";
@@ -2353,10 +2353,10 @@ fn test_keyword_space_before_paren_disabled_default() {
 }
 
 #[test]
-fn test_keyword_space_before_paren_regular_commands_unaffected() {
-    // Regular commands are never affected, even when keyword_space_before_paren=true.
+fn test_control_flow_space_before_paren_regular_commands_unaffected() {
+    // Regular commands are never affected, even when control_flow_space_before_paren=true.
     let mut config = default_config();
-    config.keyword_space_before_paren = true;
+    config.control_flow_space_before_paren = true;
     let input = "set(MY_VAR \"value\")\nmessage(\"hello\")\nadd_library(mylib STATIC src/a.cpp)";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
@@ -2366,10 +2366,10 @@ fn test_keyword_space_before_paren_regular_commands_unaffected() {
 }
 
 #[test]
-fn test_keyword_space_before_paren_all_block_commands() {
+fn test_control_flow_space_before_paren_all_block_commands() {
     // All 14 block commands get a space before ( when enabled.
     let mut config = default_config();
-    config.keyword_space_before_paren = true;
+    config.control_flow_space_before_paren = true;
     let input = concat!(
         "if(cond)\n",
         "elseif(cond2)\n",
@@ -2405,10 +2405,10 @@ fn test_keyword_space_before_paren_all_block_commands() {
 }
 
 #[test]
-fn test_keyword_space_before_paren_with_closing_style_remove() {
+fn test_control_flow_space_before_paren_with_closing_style_remove() {
     // Space is inserted before ( AND closing args are removed.
     let mut config = default_config();
-    config.keyword_space_before_paren = true;
+    config.control_flow_space_before_paren = true;
     config.closing_style = ClosingStyle::Remove;
     let input = "if(condition)\nendif(condition)";
     let result = format_text(input, &config);
@@ -2418,23 +2418,23 @@ fn test_keyword_space_before_paren_with_closing_style_remove() {
 }
 
 #[test]
-fn test_keyword_space_before_paren_idempotent() {
+fn test_control_flow_space_before_paren_idempotent() {
     // Formatting twice produces the same result.
     let mut config = default_config();
-    config.keyword_space_before_paren = true;
+    config.control_flow_space_before_paren = true;
     let input = "if(TRUE)\n  message(\"hello\")\nendif()";
     let pass1 = format_text(input, &config);
     let pass2 = format_text(&pass1, &config);
     eprintln!("Pass 1:\n{}", pass1);
     eprintln!("Pass 2:\n{}", pass2);
-    assert_eq!(pass1, pass2, "keyword_space_before_paren formatting must be idempotent");
+    assert_eq!(pass1, pass2, "control_flow_space_before_paren formatting must be idempotent");
 }
 
 #[test]
-fn test_keyword_space_before_paren_nested() {
+fn test_control_flow_space_before_paren_nested() {
     // Nested if/foreach get correct indentation and spaces on all block commands.
     let mut config = default_config();
-    config.keyword_space_before_paren = true;
+    config.control_flow_space_before_paren = true;
     let input = concat!(
         "if(OUTER)\n",
         "foreach(item IN LISTS my_list)\n",

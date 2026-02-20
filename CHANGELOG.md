@@ -8,12 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 - Update README with `collapse_empty_flags` example
 - `final_newline` now is `force`, `remove` or `leave` (default)
-
+- `inline_single_keyword` to keep simple source lists without excessive indentation
+- `control_flow_space_before_paren` if true `if ()` or `if()`
 
 ## [0.7.2] - 2026-02-20
 ### Fixed
 - VS Code extension display name
 - VS Code extension README
+- `collapse_empty_flags` to remove empty flags from generated files
 
 ## [0.7.1] - 2026-02-20
 ### Fixed

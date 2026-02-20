@@ -155,7 +155,7 @@ max_line_length = 120
 | `sort_sources` | enum | `none` | Sort source file lists: `none`, `alphabetical` |
 | `collapse_empty_flags` | boolean | `true` | Collapse no-argument flags inline with preceding positional args |
 | `inline_single_keyword` | boolean | `false` | Keep single keyword inline with args, single-indent values |
-| `keyword_space_before_paren` | boolean | `false` | Insert space before ( in control flow statements |
+| `control_flow_space_before_paren` | boolean | `false` | Insert space before ( in control flow statements |
 
 ### Per-Setting Examples
 
@@ -374,19 +374,19 @@ target_sources(mylib PUBLIC
 
 Note: When multiple keyword sections exist (e.g., both `PUBLIC` and `PRIVATE`), the standard double-indented layout is always used regardless of this setting.
 
-#### `keyword_space_before_paren`
+#### `control_flow_space_before_paren`
 
 Inserts a space between the command name and `(` for control flow and block statements only.
 Regular commands like `set()`, `message()`, and `add_library()` are never affected.
 
-**`keyword_space_before_paren = false` (default):**
+**`control_flow_space_before_paren = false` (default):**
 ```cmake
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
 ```
 
-**`keyword_space_before_paren = true`:**
+**`control_flow_space_before_paren = true`:**
 ```cmake
 if (BUILD_TESTING)
     add_subdirectory(tests)
