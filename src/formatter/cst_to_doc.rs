@@ -682,8 +682,14 @@ fn format_command(
     };
 
     // Format as: indent + name + ( + args + )
+    // Conditionally insert a space before ( for block/control-flow commands
+    let paren_prefix = if ctx.config.keyword_space_before_paren && is_block_command(&name_lower) {
+        " ("
+    } else {
+        "("
+    };
     let cmd_doc = RcDoc::text(formatted_name)
-        .append(RcDoc::text("("))
+        .append(RcDoc::text(paren_prefix))
         .append(args_doc)
         .append(RcDoc::text(")"));
 
@@ -1029,6 +1035,26 @@ pub(crate) fn indent_string(level: usize, config: &FormatConfig) -> String {
 /// Check if command is a block opener
 fn is_block_opener(name: &str) -> bool {
     matches!(name, "if" | "foreach" | "while" | "function" | "macro")
+}
+
+/// Check if command is a control flow / block statement (union of opener, mid, closer, plus block/endblock)
+fn is_block_command(name: &str) -> bool {
+    matches!(
+        name,
+        "if" | "elseif"
+            | "else"
+            | "endif"
+            | "foreach"
+            | "endforeach"
+            | "while"
+            | "endwhile"
+            | "macro"
+            | "endmacro"
+            | "function"
+            | "endfunction"
+            | "block"
+            | "endblock"
+    )
 }
 
 /// Check if command is a mid-block command (else/elseif)

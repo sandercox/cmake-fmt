@@ -112,6 +112,9 @@ pub struct FormatConfig {
     /// When true and a keyword command has only one keyword section, keep the keyword inline with args (default: false)
     /// E.g., `target_sources(mylib PUBLIC\n    src/a.cpp\n)` instead of `target_sources(mylib\n    PUBLIC\n        src/a.cpp\n)`
     pub inline_single_keyword: bool,
+
+    /// Insert a space before '(' in control flow / block statements (default: false)
+    pub keyword_space_before_paren: bool,
 }
 
 impl Default for FormatConfig {
@@ -135,6 +138,7 @@ impl Default for FormatConfig {
             sort_sources: SortSources::None,
             collapse_empty_flags: true,
             inline_single_keyword: false,
+            keyword_space_before_paren: false,
         }
     }
 }
@@ -431,6 +435,15 @@ impl FormatConfig {
                         Ok(())
                     }
                     Err(_) => Err(format!("Invalid value for inline_single_keyword: {}", value)),
+                }
+            }
+            "keyword_space_before_paren" => {
+                match value.parse::<bool>() {
+                    Ok(v) => {
+                        self.keyword_space_before_paren = v;
+                        Ok(())
+                    }
+                    Err(_) => Err(format!("Invalid value for keyword_space_before_paren: {}", value)),
                 }
             }
             _ => Err(format!("Unknown config key: {}", key)),
