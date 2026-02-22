@@ -1692,16 +1692,8 @@ pub fn format_keyword_aware_args(
         }
     }
 
-    // Closing paren position: base indent
-    if signals.force_multiline {
-        docs.push(RcDoc::hardline());
-        docs.push(RcDoc::text(base_indent));
-    } else {
-        docs.push(RcDoc::flat_alt(
-            RcDoc::hardline().append(RcDoc::text(base_indent)),
-            RcDoc::nil(),
-        ));
-    }
+    // Closing paren position
+    docs.push(super::cst_to_doc::closing_paren_position(config, indent_level, signals.force_multiline));
 
     let combined = RcDoc::concat(docs);
 
@@ -1957,14 +1949,35 @@ fn format_keyword_aware_args_inline_single(
         }
     }
 
-    // Closing paren at base indent
+    // Closing paren position
+    // Need indent_level to compute closing indent — derive from base_indent length
+    // The base_indent is already computed for us; use closing_paren_position with a reconstructed level.
+    // Since format_keyword_aware_args_inline_single doesn't take indent_level directly,
+    // we push the closing paren directly using the same logic as closing_paren_position.
+    let closing_indent = if config.indent_closing_paren {
+        // We need to add one extra indent level. base_indent is the current level string.
+        // Compute by checking config to get a single indent unit.
+        let one_indent = if config.use_tabs {
+            "\t".to_string()
+        } else {
+            " ".repeat(config.indent_width)
+        };
+        format!("{}{}", base_indent, one_indent)
+    } else {
+        base_indent.to_string()
+    };
+    let flat_text = if config.space_between_command_parens {
+        RcDoc::text(" ")
+    } else {
+        RcDoc::nil()
+    };
     if signals.force_multiline {
         docs.push(RcDoc::hardline());
-        docs.push(RcDoc::text(base_indent.to_string()));
+        docs.push(RcDoc::text(closing_indent));
     } else {
         docs.push(RcDoc::flat_alt(
-            RcDoc::hardline().append(RcDoc::text(base_indent.to_string())),
-            RcDoc::nil(),
+            RcDoc::hardline().append(RcDoc::text(closing_indent)),
+            flat_text,
         ));
     }
 
@@ -1978,7 +1991,6 @@ fn format_keyword_aware_args_inline_single(
 
 /// Format arguments without keyword awareness (simple line breaking)
 fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_multiline: bool, indent_level: usize, force_args_on_new_line: bool) -> RcDoc<'static, ()> {
-    let base_indent = super::cst_to_doc::indent_string(indent_level, config);
     let inner_indent = super::cst_to_doc::indent_string(indent_level + 1, config);
 
     let mut docs = Vec::new();
@@ -2105,15 +2117,7 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
     }
 
     // Closing paren position
-    if force_multiline {
-        docs.push(RcDoc::hardline());
-        docs.push(RcDoc::text(base_indent));
-    } else {
-        docs.push(RcDoc::flat_alt(
-            RcDoc::hardline().append(RcDoc::text(base_indent)),
-            RcDoc::nil(),
-        ));
-    }
+    docs.push(super::cst_to_doc::closing_paren_position(config, indent_level, force_multiline));
 
     let combined = RcDoc::concat(docs);
 

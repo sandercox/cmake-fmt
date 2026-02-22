@@ -115,6 +115,12 @@ pub struct FormatConfig {
 
     /// Insert a space before '(' in control flow / block statements (default: false)
     pub control_flow_space_before_paren: bool,
+
+    /// Insert a space inside command parentheses: `set( VAR value )` (default: false)
+    pub space_between_command_parens: bool,
+
+    /// Indent the closing paren by one level in multiline commands (default: false)
+    pub indent_closing_paren: bool,
 }
 
 impl Default for FormatConfig {
@@ -139,6 +145,8 @@ impl Default for FormatConfig {
             collapse_empty_flags: true,
             inline_single_keyword: false,
             control_flow_space_before_paren: false,
+            space_between_command_parens: false,
+            indent_closing_paren: false,
         }
     }
 }
@@ -444,6 +452,24 @@ impl FormatConfig {
                         Ok(())
                     }
                     Err(_) => Err(format!("Invalid value for control_flow_space_before_paren: {}", value)),
+                }
+            }
+            "space_between_command_parens" => {
+                match value.parse::<bool>() {
+                    Ok(v) => {
+                        self.space_between_command_parens = v;
+                        Ok(())
+                    }
+                    Err(_) => Err(format!("Invalid value for space_between_command_parens: {}", value)),
+                }
+            }
+            "indent_closing_paren" => {
+                match value.parse::<bool>() {
+                    Ok(v) => {
+                        self.indent_closing_paren = v;
+                        Ok(())
+                    }
+                    Err(_) => Err(format!("Invalid value for indent_closing_paren: {}", value)),
                 }
             }
             _ => Err(format!("Unknown config key: {}", key)),

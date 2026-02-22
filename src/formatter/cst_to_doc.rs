@@ -683,13 +683,31 @@ fn format_command(
 
     // Format as: indent + name + ( + args + )
     // Conditionally insert a space before ( for block/control-flow commands
-    let paren_prefix = if ctx.config.control_flow_space_before_paren && is_block_command(&name_lower) {
-        " ("
+    // and a space after ( if space_between_command_parens is enabled
+    let space_before = if ctx.config.control_flow_space_before_paren && is_block_command(&name_lower) {
+        " "
     } else {
-        "("
+        ""
     };
+    let has_args = cmd.argument_list().map_or(false, |al| {
+        al.syntax().children_with_tokens().any(|c| {
+            matches!(c.kind(), SyntaxKind::UNQUOTED_ARGUMENT
+                | SyntaxKind::QUOTED_ARGUMENT
+                | SyntaxKind::BRACKET_ARGUMENT
+                | SyntaxKind::VARIABLE_REF
+                | SyntaxKind::ENV_VAR_REF
+                | SyntaxKind::CACHE_VAR_REF
+                | SyntaxKind::GENERATOR_EXPR)
+        })
+    });
+    let space_after = if ctx.config.space_between_command_parens && has_args {
+        " "
+    } else {
+        ""
+    };
+    let paren_open = format!("{}({}", space_before, space_after);
     let cmd_doc = RcDoc::text(formatted_name)
-        .append(RcDoc::text(paren_prefix))
+        .append(RcDoc::text(paren_open))
         .append(args_doc)
         .append(RcDoc::text(")"));
 
@@ -765,7 +783,6 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
 
         // Use explicit text indentation via flat_alt instead of nest()
         // This correctly handles tabs and respects the command's nesting depth
-        let base_indent = indent_string(ctx.indent_level, ctx.config);
         let inner_indent = indent_string(ctx.indent_level + 1, ctx.config);
 
         if is_custom_command {
@@ -791,11 +808,8 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
                 all_docs.push(RcDoc::text(arg.clone()));
             }
 
-            // Closing paren position: broken → newline + base indent, flat → nothing
-            all_docs.push(RcDoc::flat_alt(
-                RcDoc::hardline().append(RcDoc::text(base_indent)),
-                RcDoc::nil(),
-            ));
+            // Closing paren position
+            all_docs.push(closing_paren_position(ctx.config, ctx.indent_level, false));
 
             // Group all arguments together - when it doesn't fit flat, all break
             return RcDoc::concat(all_docs).group();
@@ -813,11 +827,8 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
                 rest_docs.push(RcDoc::text(arg.clone()));
             }
 
-            // Closing paren position: broken → newline + base indent, flat → nothing
-            rest_docs.push(RcDoc::flat_alt(
-                RcDoc::hardline().append(RcDoc::text(base_indent)),
-                RcDoc::nil(),
-            ));
+            // Closing paren position
+            rest_docs.push(closing_paren_position(ctx.config, ctx.indent_level, false));
 
             // When flat: "first rest1 rest2"
             // When broken: "first\n<inner>rest1\n<inner>rest2\n<base>"
@@ -930,12 +941,19 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
         }
     }
 
+    // Compute closing indent for force-multiline path
+    let closing_indent = if ctx.config.indent_closing_paren {
+        indent_string(ctx.indent_level + 1, ctx.config)
+    } else {
+        base_indent.clone()
+    };
+
     // Build final Doc IR from pre-rendered string
     // Using RcDoc::text with pre-rendered content avoids deeply-nested concat trees
     if is_custom_command {
         if !rest_parts.is_empty() {
             RcDoc::text(rest_parts)
-                .append(RcDoc::text(format!("\n{}", base_indent)))
+                .append(RcDoc::text(format!("\n{}", closing_indent)))
         } else {
             RcDoc::nil()
         }
@@ -944,7 +962,7 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
             if !rest_parts.is_empty() {
                 RcDoc::text(first)
                     .append(RcDoc::text(rest_parts))
-                    .append(RcDoc::text(format!("\n{}", base_indent)))
+                    .append(RcDoc::text(format!("\n{}", closing_indent)))
             } else {
                 RcDoc::text(first)
             }
@@ -1029,6 +1047,36 @@ pub(crate) fn indent_string(level: usize, config: &FormatConfig) -> String {
         "\t".repeat(level)
     } else {
         " ".repeat(level * config.indent_width)
+    }
+}
+
+/// Build the Doc IR for the closing paren position in a command.
+///
+/// In flat mode: nothing (or a space if space_between_command_parens is set).
+/// In broken mode: newline + appropriate indent (base or base+1 depending on indent_closing_paren).
+pub(crate) fn closing_paren_position(
+    config: &FormatConfig,
+    indent_level: usize,
+    force_multiline: bool,
+) -> RcDoc<'static, ()> {
+    let closing_indent = if config.indent_closing_paren {
+        indent_string(indent_level + 1, config)
+    } else {
+        indent_string(indent_level, config)
+    };
+    let flat_text = if config.space_between_command_parens {
+        RcDoc::text(" ")
+    } else {
+        RcDoc::nil()
+    };
+
+    if force_multiline {
+        RcDoc::hardline().append(RcDoc::text(closing_indent))
+    } else {
+        RcDoc::flat_alt(
+            RcDoc::hardline().append(RcDoc::text(closing_indent)),
+            flat_text,
+        )
     }
 }
 
