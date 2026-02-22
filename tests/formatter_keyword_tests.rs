@@ -2587,6 +2587,45 @@ fn test_space_between_command_parens_no_trailing_whitespace() {
     }
 }
 
+#[test]
+fn test_space_between_command_parens_single_arg() {
+    // Core bug: single-arg commands must get space before closing paren
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    let input = r#"add_subdirectory("mevi-vktools/")"#;
+    let result = format_text(input, &config);
+    assert_eq!(result, r#"add_subdirectory( "mevi-vktools/" )"#);
+}
+
+#[test]
+fn test_space_between_command_parens_single_arg_unquoted() {
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    let input = "add_subdirectory(subdir)";
+    let result = format_text(input, &config);
+    assert_eq!(result, "add_subdirectory( subdir )");
+}
+
+#[test]
+fn test_space_between_command_parens_single_arg_custom_command() {
+    // Custom commands also go through the single-arg fast path
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    let input = "my_custom_func(arg1)";
+    let result = format_text(input, &config);
+    assert_eq!(result, "my_custom_func( arg1 )");
+}
+
+#[test]
+fn test_space_between_command_parens_single_arg_idempotent() {
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    let input = r#"add_subdirectory("mevi-vktools/")"#;
+    let first = format_text(input, &config);
+    let second = format_text(&first, &config);
+    assert_eq!(first, second, "formatting must be idempotent for single-arg commands");
+}
+
 // ============================================================================
 // INDENT CLOSING PAREN TESTS
 // ============================================================================
@@ -2643,6 +2682,20 @@ fn test_indent_closing_paren_idempotent() {
     let first = format_text(input, &config);
     let second = format_text(&first, &config);
     assert_eq!(first, second, "formatting must be idempotent");
+}
+
+#[test]
+fn test_indent_closing_paren_single_arg_force_multiline() {
+    // Force-multiline single-arg builtin: closing ) must be on its own indented line
+    let mut config = default_config();
+    config.indent_closing_paren = true;
+    // A command with a newline inside forces multiline rendering
+    let input = "set(\n  MY_VAR\n)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // The closing ) must be on its own line, indented one tab
+    let last_line = result.trim_end_matches('\n').lines().last().unwrap_or("");
+    assert_eq!(last_line, "\t)", "closing paren must be indented one tab for single-arg force-multiline");
 }
 
 // ============================================================================
