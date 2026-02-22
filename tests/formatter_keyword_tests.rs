@@ -2494,3 +2494,194 @@ fn test_control_flow_space_before_paren_nested() {
     // Regular command inside block — no space
     assert!(result.contains("message(${item})"), "message must NOT have space");
 }
+
+// ============================================================================
+// SPACE BETWEEN COMMAND PARENS TESTS
+// ============================================================================
+
+#[test]
+fn test_space_between_command_parens_single_line() {
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    let input = r#"set(MY_VAR "value")"#;
+    let result = format_text(input, &config);
+    assert_eq!(result, r#"set( MY_VAR "value" )"#);
+}
+
+#[test]
+fn test_space_between_command_parens_multiline_builtin() {
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // Space after opening paren (first arg follows on same line for builtin)
+    assert!(result.starts_with("set( MY_LONG_VARIABLE_NAME"), "opening paren must have space before first arg");
+    // Closing ) at base indent (no extra space before it)
+    let last_line = result.trim_end_matches('\n').lines().last().unwrap_or("");
+    assert_eq!(last_line, ")", "closing paren must be at column 0 with no leading space");
+}
+
+#[test]
+fn test_space_between_command_parens_empty_args() {
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    let input = "some_command()";
+    let result = format_text(input, &config);
+    // No space inside empty parens
+    assert_eq!(result, "some_command()");
+}
+
+#[test]
+fn test_space_between_command_parens_keyword_aware() {
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    let input = "target_link_libraries(myapp PRIVATE lib1)";
+    let result = format_text(input, &config);
+    // Short command fits on one line with spaces inside parens
+    assert_eq!(result, "target_link_libraries( myapp PRIVATE lib1 )");
+}
+
+#[test]
+fn test_space_between_command_parens_keyword_multiline() {
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    let input = "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 lib6 lib7 lib8 lib9 lib10)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // First line has space after ( before first arg
+    assert!(result.starts_with("target_link_libraries( myapp"), "first line must have space after (");
+    // Closing ) at base indent
+    let last_line = result.trim_end_matches('\n').lines().last().unwrap_or("");
+    assert_eq!(last_line, ")", "closing paren must be at column 0 with no leading space");
+}
+
+#[test]
+fn test_space_between_command_parens_false_default() {
+    let config = default_config();
+    let input = r#"set(MY_VAR "value")"#;
+    let result = format_text(input, &config);
+    // Default: no extra spaces
+    assert_eq!(result, r#"set(MY_VAR "value")"#);
+}
+
+#[test]
+fn test_space_between_command_parens_idempotent() {
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    let input = r#"set(MY_VAR "value")"#;
+    let first = format_text(input, &config);
+    let second = format_text(&first, &config);
+    assert_eq!(first, second, "formatting must be idempotent");
+}
+
+#[test]
+fn test_space_between_command_parens_no_trailing_whitespace() {
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    // A command that will break to multiline
+    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let result = format_text(input, &config);
+    for line in result.lines() {
+        assert_eq!(line, line.trim_end(), "no line should have trailing whitespace, got: {:?}", line);
+    }
+}
+
+// ============================================================================
+// INDENT CLOSING PAREN TESTS
+// ============================================================================
+
+#[test]
+fn test_indent_closing_paren_multiline() {
+    let mut config = default_config();
+    config.indent_closing_paren = true;
+    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // Closing ) is indented one level
+    let last_line = result.trim_end_matches('\n').lines().last().unwrap_or("");
+    assert_eq!(last_line, "\t)", "closing paren must be indented one tab");
+}
+
+#[test]
+fn test_indent_closing_paren_single_line_unchanged() {
+    let mut config = default_config();
+    config.indent_closing_paren = true;
+    let input = r#"set(MY_VAR "value")"#;
+    let result = format_text(input, &config);
+    // Single-line command is unchanged
+    assert_eq!(result, r#"set(MY_VAR "value")"#);
+}
+
+#[test]
+fn test_indent_closing_paren_keyword_aware() {
+    let mut config = default_config();
+    config.indent_closing_paren = true;
+    let input = "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 lib6 lib7 lib8 lib9 lib10)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // Closing ) indented one level
+    let last_line = result.trim_end_matches('\n').lines().last().unwrap_or("");
+    assert_eq!(last_line, "\t)", "closing paren must be indented one tab");
+}
+
+#[test]
+fn test_indent_closing_paren_false_default() {
+    let config = default_config();
+    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let result = format_text(input, &config);
+    // Default: closing ) at column 0
+    let last_line = result.trim_end_matches('\n').lines().last().unwrap_or("");
+    assert_eq!(last_line, ")", "closing paren must be at column 0 by default");
+}
+
+#[test]
+fn test_indent_closing_paren_idempotent() {
+    let mut config = default_config();
+    config.indent_closing_paren = true;
+    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let first = format_text(input, &config);
+    let second = format_text(&first, &config);
+    assert_eq!(first, second, "formatting must be idempotent");
+}
+
+// ============================================================================
+// COMBINED: SPACE BETWEEN PARENS + INDENT CLOSING PAREN
+// ============================================================================
+
+#[test]
+fn test_combined_space_parens_and_indent_closing() {
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    config.indent_closing_paren = true;
+    let input = r#"set(MY_VAR "value")"#;
+    let result = format_text(input, &config);
+    // Single-line: spaces inside parens, no indent effect (no multiline)
+    assert_eq!(result, r#"set( MY_VAR "value" )"#);
+}
+
+#[test]
+fn test_combined_space_parens_and_indent_closing_multiline() {
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    config.indent_closing_paren = true;
+    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // Space after opening paren on first line
+    assert!(result.starts_with("set( MY_LONG_VARIABLE_NAME"), "opening paren must have space");
+    // Closing ) indented one level, no extra space before it
+    let last_line = result.trim_end_matches('\n').lines().last().unwrap_or("");
+    assert_eq!(last_line, "\t)", "closing paren must be indented one tab without extra space");
+}
+
+#[test]
+fn test_combined_idempotent() {
+    let mut config = default_config();
+    config.space_between_command_parens = true;
+    config.indent_closing_paren = true;
+    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let first = format_text(input, &config);
+    let second = format_text(&first, &config);
+    assert_eq!(first, second, "combined options must be idempotent");
+}

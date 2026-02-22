@@ -77,6 +77,16 @@
       "default": false,
       "description": "Insert a space before '(' in control flow and block statements (if, else, endif, foreach, while, function, macro, block, etc.). Regular commands like set() and message() are not affected."
     },
+    "space_between_command_parens": {
+      "type": "boolean",
+      "default": false,
+      "description": "Insert a space inside command parentheses. Single-line: set( VAR value ). Multiline: space after ( on first line, closing ) at normal indentation."
+    },
+    "indent_closing_paren": {
+      "type": "boolean",
+      "default": false,
+      "description": "Indent the closing parenthesis by one level in multiline commands. Can be combined with space_between_command_parens."
+    },
     "final_newline": {
       "oneOf": [
         { "type": "string", "enum": ["leave", "remove", "force"] },

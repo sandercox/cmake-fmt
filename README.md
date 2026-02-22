@@ -156,6 +156,8 @@ max_line_length = 120
 | `collapse_empty_flags` | boolean | `true` | Collapse no-argument flags inline with preceding positional args |
 | `inline_single_keyword` | boolean | `false` | Keep single keyword inline with args, single-indent values |
 | `control_flow_space_before_paren` | boolean | `false` | Insert space before ( in control flow statements |
+| `space_between_command_parens` | boolean | `false` | Insert space inside command parentheses |
+| `indent_closing_paren` | boolean | `false` | Indent closing `)` one level in multiline commands |
 
 ### Per-Setting Examples
 
@@ -391,6 +393,53 @@ endif()
 if (BUILD_TESTING)
     add_subdirectory(tests)
 endif ()
+```
+
+#### `space_between_command_parens`
+
+Inserts a space inside the parentheses of commands. In single-line commands, both opening and
+closing parens get an inner space. In multiline commands, the opening `(` gets a trailing space
+(when followed by content on the same line), but the closing `)` stays at its normal indentation.
+
+**`space_between_command_parens = false` (default):**
+```cmake
+set(MY_VAR "value")
+target_sources(mylib
+    PUBLIC
+        src/a.cpp
+)
+```
+
+**`space_between_command_parens = true`:**
+```cmake
+set( MY_VAR "value" )
+target_sources( mylib
+    PUBLIC
+        src/a.cpp
+)
+```
+
+#### `indent_closing_paren`
+
+Indents the closing `)` by one indent level in multiline commands. Has no effect on single-line
+commands. Can be combined with `space_between_command_parens`.
+
+**`indent_closing_paren = false` (default):**
+```cmake
+target_sources(mylib
+    PUBLIC
+        src/a.cpp
+        src/b.cpp
+)
+```
+
+**`indent_closing_paren = true`:**
+```cmake
+target_sources(mylib
+    PUBLIC
+        src/a.cpp
+        src/b.cpp
+    )
 ```
 
 ### Custom Command Grammars
