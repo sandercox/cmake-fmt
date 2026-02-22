@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -72,6 +72,14 @@ pub struct Cli {
     /// Format only specific line ranges (e.g., "1:5,10:15")
     #[arg(long = "line-ranges", value_name = "RANGES")]
     pub line_ranges: Option<String>,
+
+    /// Recursively format files in directories
+    #[arg(short = 'r', long = "recursive")]
+    pub recursive: bool,
+
+    /// Path to additional ignore file (gitignore syntax)
+    #[arg(long = "ignore-file", value_name = "FILE")]
+    pub ignore_file: Option<PathBuf>,
 }
 
 /// Print suppression warnings to stderr
@@ -340,10 +348,15 @@ pub fn run() -> Result<ExitCode> {
     let check_mode = cli.check || cli.dry_run;
 
     // Determine if we're in diff mode
-    let diff_mode = cli.diff;
+    let mut diff_mode = cli.diff;
 
-    // Determine if we're processing stdin or files
-    let is_stdin = cli.files.is_empty() || (cli.files.len() == 1 && cli.files[0] == PathBuf::from("-"));
+    // Determine if we're processing stdin or files.
+    // stdin is active when:
+    //   - files list is empty AND stdin is NOT a terminal (piped input), OR
+    //   - the single argument is "-"
+    let explicit_stdin = cli.files.len() == 1 && cli.files[0] == PathBuf::from("-");
+    let stdin_is_terminal = std::io::stdin().is_terminal();
+    let is_stdin = explicit_stdin || (cli.files.is_empty() && !stdin_is_terminal);
 
     // Validate --assume-filename is only used with stdin
     if cli.assume_filename.is_some() && !is_stdin {
@@ -371,57 +384,90 @@ pub fn run() -> Result<ExitCode> {
         let config = crate::config::resolve_config(assume_path.as_deref(), cli.style.as_deref(), &cli.grammar_files);
         process_stdin(&config, check_mode, diff_mode, assume_path.as_deref(), parsed_line_ranges.as_deref())
     } else {
-        // Expand glob patterns
-        let expanded = expand_files(&cli.files)?;
+        // Determine the paths to process.
+        // If no paths given and stdin is a terminal, default to current directory ".".
+        let paths_to_search: Vec<PathBuf> = if cli.files.is_empty() {
+            vec![PathBuf::from(".")]
+        } else {
+            cli.files.clone()
+        };
 
-        // Handle case where glob patterns match no files
-        if expanded.is_empty() {
+        // Collect files, expanding directories and glob patterns
+        let collected = collect_cmake_files(
+            &paths_to_search,
+            cli.recursive,
+            cli.ignore_file.as_deref(),
+        )?;
+
+        // Handle case where no files found
+        if collected.is_empty() {
             eprintln!("No files found");
             return Ok(ExitCode::SUCCESS);
         }
 
         // Validate --line-ranges with multiple files
-        if parsed_line_ranges.is_some() && expanded.len() > 1 {
+        if parsed_line_ranges.is_some() && collected.len() > 1 {
             eprintln!("error: --line-ranges can only be used with a single file");
             return Ok(ExitCode::FAILURE);
+        }
+
+        // Implicit diff mode: when multiple files are found AND outputting to a
+        // terminal AND not in-place/check mode, imply --diff so output is useful.
+        let stdout_is_terminal = std::io::stdout().is_terminal();
+        if collected.len() > 1 && !cli.in_place && !check_mode && stdout_is_terminal {
+            diff_mode = true;
         }
 
         // Handle --export-grammar (exports custom grammars from input files)
         if let Some(ref export_path) = cli.export_grammar {
             return export_custom_grammar_to_file(
                 export_path,
-                &expanded,
+                &collected,
                 cli.style.as_deref(),
                 &cli.grammar_files,
                 cli.verbose,
             );
         }
 
-        process_files(&expanded, cli.style.as_deref(), &cli.grammar_files, cli.in_place, check_mode, diff_mode, cli.verbose, parsed_line_ranges.as_deref())
+        process_files(&collected, cli.style.as_deref(), &cli.grammar_files, cli.in_place, check_mode, diff_mode, cli.verbose, parsed_line_ranges.as_deref())
     }
 }
 
-/// Expand glob patterns in file paths
-fn expand_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
-    let mut expanded = Vec::new();
+/// Collect CMake files from a list of paths, expanding directories.
+///
+/// For each path:
+/// - If it's a file, include it directly.
+/// - If it's a glob pattern, expand it and include matching files.
+/// - If it's a directory, walk it and collect .cmake / CMakeLists.txt files.
+///
+/// Directory walking respects .gitignore, .cmake-fmt-ignore (in every walked
+/// directory), and the optional extra `ignore_file`.  When `recursive` is false
+/// the walk is limited to depth 1 (immediate directory contents).
+fn collect_cmake_files(
+    paths: &[PathBuf],
+    recursive: bool,
+    ignore_file: Option<&Path>,
+) -> Result<Vec<PathBuf>> {
+    use ignore::WalkBuilder;
+
+    let mut result: Vec<PathBuf> = Vec::new();
+    let mut dir_paths: Vec<PathBuf> = Vec::new();
 
     for path in paths {
         let path_str = path.to_string_lossy();
 
-        // Check if the path contains glob characters
         if path_str.contains('*') || path_str.contains('?') || path_str.contains('[') {
-            // Expand glob pattern
+            // Glob pattern — expand and collect files
             match glob::glob(&path_str) {
                 Ok(entries) => {
                     let mut found_any = false;
                     for entry in entries {
                         match entry {
-                            Ok(p) => {
-                                if p.is_file() {
-                                    expanded.push(p);
-                                    found_any = true;
-                                }
+                            Ok(p) if p.is_file() => {
+                                result.push(p);
+                                found_any = true;
                             }
+                            Ok(_) => {}
                             Err(e) => {
                                 eprintln!("Warning: Error reading glob entry: {:#}", e);
                             }
@@ -435,16 +481,83 @@ fn expand_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
                     eprintln!("Warning: Invalid glob pattern '{}': {:#}", path_str, e);
                 }
             }
+        } else if path.is_dir() {
+            dir_paths.push(path.clone());
         } else {
-            // Not a glob pattern, use as-is
-            expanded.push(path.clone());
+            // Regular file path — include as-is
+            result.push(path.clone());
         }
     }
 
-    // Sort for deterministic order
-    expanded.sort();
+    // Walk directories using the `ignore` crate
+    if !dir_paths.is_empty() {
+        let first = dir_paths[0].clone();
+        let mut builder = WalkBuilder::new(&first);
 
-    Ok(expanded)
+        // Add remaining directories
+        for dir in &dir_paths[1..] {
+            builder.add(dir);
+        }
+
+        // Depth: 1 means the directory itself + its immediate children (depth 0 = root only)
+        if !recursive {
+            builder.max_depth(Some(1));
+        }
+
+        // Respect .cmake-fmt-ignore in every walked directory (like .gitignore)
+        builder.add_custom_ignore_filename(".cmake-fmt-ignore");
+
+        // Respect .gitignore, global gitignore, and .git/info/exclude
+        builder.git_ignore(true);
+        builder.git_global(true);
+        builder.git_exclude(true);
+
+        // Do NOT skip hidden directories/files — let ignore rules handle exclusions
+        builder.hidden(false);
+
+        // Load the user-specified extra ignore file if provided
+        if let Some(extra) = ignore_file {
+            builder.add_ignore(extra);
+        }
+
+        let walk = builder.build();
+
+        for entry in walk {
+            match entry {
+                Ok(e) => {
+                    if e.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
+                        let p = e.into_path();
+                        if is_cmake_file(&p) {
+                            result.push(p);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: Error walking directory: {:#}", e);
+                }
+            }
+        }
+    }
+
+    result.sort();
+    result.dedup();
+    Ok(result)
+}
+
+/// Returns true if the path is a CMake file (CMakeLists.txt or *.cmake)
+fn is_cmake_file(path: &Path) -> bool {
+    if let Some(name) = path.file_name() {
+        let name_str = name.to_string_lossy();
+        if name_str == "CMakeLists.txt" {
+            return true;
+        }
+        if let Some(ext) = path.extension() {
+            if ext.to_string_lossy().eq_ignore_ascii_case("cmake") {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Process stdin to stdout
