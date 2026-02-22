@@ -131,7 +131,7 @@ pub fn format_with_line_ranges(
                 result.truncate(trim_len);
             }
         }
-        FinalNewline::Leave => {
+        FinalNewline::Preserve => {
             // Preserve input's trailing newline state
             if input_had_newline {
                 if !result.ends_with(separator) && !result.is_empty() {
@@ -228,13 +228,13 @@ mod tests {
     fn test_format_with_line_ranges_no_final_newline() {
         let input = "set(  FOO   bar)\nmessage(hello)";
         let mut config = FormatConfig::default();
-        // Use Leave mode to preserve input's trailing newline state
-        config.final_newline = FinalNewline::Leave;
+        // Use Preserve mode to preserve input's trailing newline state
+        config.final_newline = FinalNewline::Preserve;
         let ranges = vec![LineRange { start: 1, end: 1 }];
 
         let (result, _warnings) = format_with_line_ranges(&input, &config, &ranges, None, false);
 
-        assert!(!result.ends_with('\n'), "Leave mode should not add final newline if original didn't have one");
+        assert!(!result.ends_with('\n'), "Preserve mode should not add final newline if original didn't have one");
     }
 
     #[test]

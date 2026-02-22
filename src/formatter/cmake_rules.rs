@@ -27,7 +27,7 @@ fn is_source_file(name: &str) -> bool {
 /// Only affects line comments (not bracket comments).
 /// Multi-hash comments (##, ###, etc.) are always preserved as-is.
 /// Examples:
-///   - Leave: "#\t\tfoo" -> "#\t\tfoo" (unchanged)
+///   - Preserve: "#\t\tfoo" -> "#\t\tfoo" (unchanged)
 ///   - HashSpace: "#\t\tfoo" -> "# foo", "#no-space" -> "# no-space", "#" -> "#"
 ///   - HashNoSpace: "#  foo" -> "#foo", "#" -> "#"
 ///   - Any style: "## heading" -> "## heading" (multi-hash preserved)
@@ -40,7 +40,7 @@ pub fn normalize_comment_whitespace(comment: &str, style: super::config::Comment
     }
 
     match style {
-        CommentStyle::Leave => comment.to_string(),
+        CommentStyle::Preserve => comment.to_string(),
         CommentStyle::HashSpace => {
             if let Some(content) = comment.strip_prefix('#') {
                 let trimmed = content.trim_start();

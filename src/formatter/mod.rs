@@ -199,7 +199,7 @@ pub(crate) fn post_process_rendered_output(result: &str, final_newline: config::
                 // Never append trailing newline
                 trimmed.to_string()
             }
-            config::FinalNewline::Leave => {
+            config::FinalNewline::Preserve => {
                 // Preserve input's trailing newline state
                 if input_had_trailing_newline {
                     if trimmed.ends_with('\n') {

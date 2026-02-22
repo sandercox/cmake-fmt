@@ -260,7 +260,7 @@ fn test_config_line_length_120() {
 #[test]
 fn test_block_closer_leave_mode() {
     let config = FormatConfig {
-        closing_style: ClosingStyle::Leave,
+        closing_style: ClosingStyle::Preserve,
         ..FormatConfig::default()
     };
     let input = std::fs::read_to_string("tests/format_fixtures/block_closer_keep.cmake").unwrap();
@@ -296,8 +296,8 @@ fn test_block_closer_force_mode() {
 fn test_block_closer_idempotency() {
     let fixtures = [
         (
-            "leave",
-            ClosingStyle::Leave,
+            "preserve",
+            ClosingStyle::Preserve,
             "tests/format_fixtures/block_closer_keep.cmake",
         ),
         (

@@ -1,4 +1,4 @@
-use cmake_fmt::formatter::{CommandCase, CommentStyle, FinalNewline, FormatConfig, UserCommandCase};
+use cmake_fmt::formatter::{ClosingStyle, CommandCase, CommentStyle, FinalNewline, FormatConfig, UserCommandCase};
 use cmake_fmt::formatter::format_text;
 
 // Helper to create default config
@@ -81,7 +81,7 @@ fn test_case_uppercase() {
 fn test_case_preserve() {
     let input = "SeT(FOO bar)\n";
     let config = FormatConfig {
-        command_case: CommandCase::Leave,
+        command_case: CommandCase::Preserve,
         ..default_config()
     };
     let result = format_text(input, &config);
@@ -659,13 +659,13 @@ fn test_user_command_case_explicit_uppercase() {
 fn test_user_command_case_leave() {
     let input = "function(MyHelper)\nendfunction()\nmyhelper(foo)\n";
     let config = FormatConfig {
-        user_command_case: UserCommandCase::Leave,
+        user_command_case: UserCommandCase::Preserve,
         ..default_config()
     };
     let result = format_text(input, &config);
-    // Even though definition says MyHelper, Leave mode keeps original casing
+    // Even though definition says MyHelper, Preserve mode keeps original casing
     assert!(result.contains("myhelper(foo)"),
-        "Leave mode should keep original casing, got: {}", result);
+        "Preserve mode should keep original casing, got: {}", result);
 }
 
 #[test]
@@ -847,15 +847,15 @@ fn test_blank_line_between_commands_across_batch_boundary() {
 
 #[test]
 fn test_final_newline_leave_default() {
-    // Default is Leave — preserves input's trailing newline state
+    // Default is Preserve — preserves input's trailing newline state
     let input_no_nl = "set(FOO bar)";
     let config = default_config();
     let result = format_text(input_no_nl, &config);
-    assert_eq!(result, "set(FOO bar)", "Default Leave should not add trailing newline when input lacks one");
+    assert_eq!(result, "set(FOO bar)", "Default Preserve should not add trailing newline when input lacks one");
 
     let input_with_nl = "set(FOO bar)\n";
     let result = format_text(input_with_nl, &config);
-    assert_eq!(result, "set(FOO bar)\n", "Default Leave should preserve trailing newline when input has one");
+    assert_eq!(result, "set(FOO bar)\n", "Default Preserve should preserve trailing newline when input has one");
 }
 
 #[test]
@@ -904,51 +904,51 @@ fn test_final_newline_force_adds_newline() {
     assert_eq!(result, "set(FOO bar)\n", "FinalNewline::Force should add trailing newline when missing");
 }
 
-// Leave mode tests
+// Preserve mode tests
 
 #[test]
 fn test_final_newline_leave_with_trailing_newline() {
     let input = "set(FOO bar)\n";
     let mut config = default_config();
-    config.final_newline = FinalNewline::Leave;
+    config.final_newline = FinalNewline::Preserve;
     let result = format_text(input, &config);
-    assert_eq!(result, "set(FOO bar)\n", "Leave mode should preserve trailing newline when present");
+    assert_eq!(result, "set(FOO bar)\n", "Preserve mode should preserve trailing newline when present");
 }
 
 #[test]
 fn test_final_newline_leave_without_trailing_newline() {
     let input = "set(FOO bar)";
     let mut config = default_config();
-    config.final_newline = FinalNewline::Leave;
+    config.final_newline = FinalNewline::Preserve;
     let result = format_text(input, &config);
-    assert_eq!(result, "set(FOO bar)", "Leave mode should not add trailing newline when input had none");
+    assert_eq!(result, "set(FOO bar)", "Preserve mode should not add trailing newline when input had none");
 }
 
 #[test]
 fn test_final_newline_leave_multiline_with_newline() {
     let input = "set(A b)\nset(C d)\n";
     let mut config = default_config();
-    config.final_newline = FinalNewline::Leave;
+    config.final_newline = FinalNewline::Preserve;
     let result = format_text(input, &config);
-    assert_eq!(result, "set(A b)\nset(C d)\n", "Leave mode should preserve trailing newline in multiline input");
+    assert_eq!(result, "set(A b)\nset(C d)\n", "Preserve mode should preserve trailing newline in multiline input");
 }
 
 #[test]
 fn test_final_newline_leave_multiline_without_newline() {
     let input = "set(A b)\nset(C d)";
     let mut config = default_config();
-    config.final_newline = FinalNewline::Leave;
+    config.final_newline = FinalNewline::Preserve;
     let result = format_text(input, &config);
-    assert_eq!(result, "set(A b)\nset(C d)", "Leave mode should not add trailing newline to multiline input without one");
+    assert_eq!(result, "set(A b)\nset(C d)", "Preserve mode should not add trailing newline to multiline input without one");
 }
 
 #[test]
 fn test_final_newline_leave_empty_input() {
     let input = "";
     let mut config = default_config();
-    config.final_newline = FinalNewline::Leave;
+    config.final_newline = FinalNewline::Preserve;
     let result = format_text(input, &config);
-    assert_eq!(result, "", "Leave mode should return empty for empty input");
+    assert_eq!(result, "", "Preserve mode should return empty for empty input");
 }
 
 // Backward-compat deserialization tests
@@ -971,7 +971,7 @@ fn test_final_newline_deserialize_bool_false() {
 fn test_final_newline_deserialize_string_leave() {
     let toml = "final_newline = \"leave\"\n";
     let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = \"leave\"");
-    assert_eq!(config.final_newline, FinalNewline::Leave, "string \"leave\" should map to Leave");
+    assert_eq!(config.final_newline, FinalNewline::Preserve, "string \"leave\" should map to Preserve");
 }
 
 #[test]
@@ -986,6 +986,28 @@ fn test_final_newline_deserialize_string_force() {
     let toml = "final_newline = \"force\"\n";
     let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = \"force\"");
     assert_eq!(config.final_newline, FinalNewline::Force, "string \"force\" should map to Force");
+}
+
+#[test]
+fn test_final_newline_deserialize_string_preserve() {
+    let toml = "final_newline = \"preserve\"\n";
+    let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = \"preserve\"");
+    assert_eq!(config.final_newline, FinalNewline::Preserve, "string \"preserve\" should map to Preserve");
+}
+
+// Backward-compatibility: "leave" still accepted as alias for "preserve"
+#[test]
+fn test_command_case_leave_backward_compat() {
+    let toml = "command_case = \"leave\"\n";
+    let config: FormatConfig = toml::from_str(toml).expect("Should parse command_case = \"leave\"");
+    assert_eq!(config.command_case, CommandCase::Preserve, "\"leave\" should be accepted as alias for CommandCase::Preserve");
+}
+
+#[test]
+fn test_closing_style_leave_backward_compat() {
+    let toml = "closing_style = \"leave\"\n";
+    let config: FormatConfig = toml::from_str(toml).expect("Should parse closing_style = \"leave\"");
+    assert_eq!(config.closing_style, ClosingStyle::Preserve, "\"leave\" should be accepted as alias for ClosingStyle::Preserve");
 }
 
 // ============================================================================
@@ -1061,7 +1083,7 @@ fn test_comment_multiple_spaces_normalized() {
 fn test_comment_style_leave_preserves_original() {
     let input = "set(SOURCES\n\t#no-space\n\tvalue\n)\n";
     let config = FormatConfig {
-        comment_style: CommentStyle::Leave,
+        comment_style: CommentStyle::Preserve,
         ..default_config()
     };
     let result = format_text(input, &config);
@@ -1096,7 +1118,7 @@ fn test_comment_style_hash_space_is_default() {
 fn test_comment_style_leave_preserves_tabs() {
     let input = "set(SOURCES\n\t#\t\ttabbed\n\tvalue\n)\n";
     let config = FormatConfig {
-        comment_style: CommentStyle::Leave,
+        comment_style: CommentStyle::Preserve,
         ..default_config()
     };
     let result = format_text(input, &config);
@@ -1123,7 +1145,7 @@ fn test_comment_style_hash_no_space_hash_only() {
 fn test_standalone_comment_respects_comment_style() {
     let input = "#no-space standalone\nset(X value)\n";
     let config = FormatConfig {
-        comment_style: CommentStyle::Leave,
+        comment_style: CommentStyle::Preserve,
         ..default_config()
     };
     let result = format_text(input, &config);
@@ -1135,7 +1157,7 @@ fn test_standalone_comment_respects_comment_style() {
 fn test_trailing_comment_respects_comment_style() {
     let input = "set(X value) #no-space trailing\n";
     let config = FormatConfig {
-        comment_style: CommentStyle::Leave,
+        comment_style: CommentStyle::Preserve,
         ..default_config()
     };
     let result = format_text(input, &config);
@@ -1387,7 +1409,7 @@ set(RESAPI_SOURCE_MAC
 )
 ";
     let config = FormatConfig {
-        comment_style: CommentStyle::Leave,
+        comment_style: CommentStyle::Preserve,
         ..default_config()
     };
     let result = format_text(input, &config);
@@ -1409,7 +1431,7 @@ target_link_libraries(myapp
 )
 ";
     let config = FormatConfig {
-        comment_style: CommentStyle::Leave,
+        comment_style: CommentStyle::Preserve,
         ..default_config()
     };
     let result = format_text(input, &config);
@@ -1429,7 +1451,7 @@ some_custom_command(
 )
 ";
     let config = FormatConfig {
-        comment_style: CommentStyle::Leave,
+        comment_style: CommentStyle::Preserve,
         ..default_config()
     };
     let result = format_text(input, &config);
@@ -1451,7 +1473,7 @@ set(RESAPI_SOURCE_MAC
 )
 ";
     let config = FormatConfig {
-        comment_style: CommentStyle::Leave,
+        comment_style: CommentStyle::Preserve,
         ..default_config()
     };
     let once = format_text(input, &config);

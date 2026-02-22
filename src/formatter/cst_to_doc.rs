@@ -570,13 +570,13 @@ fn format_command(
         match ctx.config.command_case {
             CommandCase::Lowercase => name_lower.clone(),
             CommandCase::Uppercase => name.to_uppercase(),
-            CommandCase::Leave => name.clone(),
+            CommandCase::Preserve => name.clone(),
         }
     } else {
         match ctx.config.user_command_case {
             UserCommandCase::Lowercase => name_lower.clone(),
             UserCommandCase::Uppercase => name.to_uppercase(),
-            UserCommandCase::Leave => name.clone(),
+            UserCommandCase::Preserve => name.clone(),
             UserCommandCase::Infer => {
                 // Look up from function()/macro() definitions; if not found, leave as-is
                 ctx.user_defs.get(&name_lower).cloned().unwrap_or(name.clone())
@@ -597,8 +597,8 @@ fn format_command(
         } else {
             // True closers (endif, endforeach, etc.) — apply closing_style
             match ctx.config.closing_style {
-                ClosingStyle::Leave => {
-                    // Leave mode: format normally, ignore closer_context
+                ClosingStyle::Preserve => {
+                    // Preserve mode: format normally, ignore closer_context
                     if let Some(arg_list) = cmd.argument_list() {
                         let grammar_enum = GrammarRegistry::global().get(&name_lower);
                         // Resolve multi-mode grammar

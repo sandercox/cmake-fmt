@@ -5,7 +5,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FinalNewline {
     /// Preserve original file's trailing newline state (default)
-    Leave,
+    Preserve,
     /// Strip trailing newline from output
     Remove,
     /// Ensure output ends with trailing newline
@@ -14,7 +14,7 @@ pub enum FinalNewline {
 
 impl Default for FinalNewline {
     fn default() -> Self {
-        Self::Leave
+        Self::Preserve
     }
 }
 
@@ -29,7 +29,7 @@ impl<'de> Deserialize<'de> for FinalNewline {
             type Value = FinalNewline;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a boolean (true/false) or string (\"leave\", \"remove\", \"force\")")
+                formatter.write_str("a boolean (true/false) or string (\"preserve\", \"leave\", \"remove\", \"force\")")
             }
 
             fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
@@ -48,10 +48,10 @@ impl<'de> Deserialize<'de> for FinalNewline {
                 E: serde::de::Error,
             {
                 match v {
-                    "leave" => Ok(FinalNewline::Leave),
+                    "preserve" | "leave" => Ok(FinalNewline::Preserve),
                     "remove" => Ok(FinalNewline::Remove),
                     "force" => Ok(FinalNewline::Force),
-                    other => Err(serde::de::Error::unknown_variant(other, &["leave", "remove", "force"])),
+                    other => Err(serde::de::Error::unknown_variant(other, &["preserve", "leave", "remove", "force"])),
                 }
             }
         }
@@ -85,7 +85,7 @@ pub struct FormatConfig {
     pub closing_style: ClosingStyle,
     /// Force keyword-aware commands to use multiline layout regardless of line length (default: false)
     pub force_break_keywords: bool,
-    /// Final newline handling (default: Leave)
+    /// Final newline handling (default: Preserve)
     pub final_newline: FinalNewline,
     /// Comment whitespace normalization style (default: HashSpace)
     pub comment_style: CommentStyle,
@@ -136,7 +136,7 @@ impl Default for FormatConfig {
             line_ending: LineEnding::Auto,
             closing_style: ClosingStyle::Remove,
             force_break_keywords: false,
-            final_newline: FinalNewline::Leave,
+            final_newline: FinalNewline::Preserve,
             comment_style: CommentStyle::HashSpace,
             command_grammars: HashMap::new(),
             grammar_files: Vec::new(),
@@ -172,8 +172,9 @@ pub enum CommandCase {
     Lowercase,
     /// Convert to uppercase (e.g., "SET")
     Uppercase,
-    /// Leave original casing unchanged
-    Leave,
+    /// Preserve original casing unchanged
+    #[serde(rename = "preserve", alias = "leave")]
+    Preserve,
 }
 
 /// User-defined command name casing options
@@ -184,8 +185,9 @@ pub enum UserCommandCase {
     Lowercase,
     /// Convert to uppercase
     Uppercase,
-    /// Leave original casing unchanged
-    Leave,
+    /// Preserve original casing unchanged
+    #[serde(rename = "preserve", alias = "leave")]
+    Preserve,
     /// Infer casing from function()/macro() definitions; if not found, leave as-is
     Infer,
 }
@@ -194,8 +196,9 @@ pub enum UserCommandCase {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ClosingStyle {
-    /// Leave arguments as written in input
-    Leave,
+    /// Preserve arguments as written in input
+    #[serde(rename = "preserve", alias = "leave")]
+    Preserve,
     /// Remove arguments from closers (default, modernize)
     Remove,
     /// Add arguments to match openers (enforce explicit)
@@ -250,12 +253,12 @@ impl FormatConfig {
                         self.command_case = CommandCase::Uppercase;
                         Ok(())
                     }
-                    "leave" => {
-                        self.command_case = CommandCase::Leave;
+                    "preserve" | "leave" => {
+                        self.command_case = CommandCase::Preserve;
                         Ok(())
                     }
                     _ => Err(format!(
-                        "Invalid value for command_case (expected lowercase, uppercase, or leave): {}",
+                        "Invalid value for command_case (expected lowercase, uppercase, or preserve): {}",
                         value
                     )),
                 }
@@ -299,8 +302,8 @@ impl FormatConfig {
                         self.user_command_case = UserCommandCase::Uppercase;
                         Ok(())
                     }
-                    "leave" => {
-                        self.user_command_case = UserCommandCase::Leave;
+                    "preserve" | "leave" => {
+                        self.user_command_case = UserCommandCase::Preserve;
                         Ok(())
                     }
                     "infer" => {
@@ -308,15 +311,15 @@ impl FormatConfig {
                         Ok(())
                     }
                     _ => Err(format!(
-                        "Invalid value for user_command_case (expected lowercase, uppercase, leave, or infer): {}",
+                        "Invalid value for user_command_case (expected lowercase, uppercase, preserve, or infer): {}",
                         value
                     )),
                 }
             }
             "closing_style" => {
                 match value {
-                    "leave" => {
-                        self.closing_style = ClosingStyle::Leave;
+                    "preserve" | "leave" => {
+                        self.closing_style = ClosingStyle::Preserve;
                         Ok(())
                     }
                     "remove" => {
@@ -328,7 +331,7 @@ impl FormatConfig {
                         Ok(())
                     }
                     _ => Err(format!(
-                        "Invalid value for closing_style (expected leave, remove, or force): {}",
+                        "Invalid value for closing_style (expected preserve, remove, or force): {}",
                         value
                     )),
                 }
@@ -389,8 +392,8 @@ impl FormatConfig {
             }
             "final_newline" => {
                 match value {
-                    "leave" => {
-                        self.final_newline = FinalNewline::Leave;
+                    "preserve" | "leave" => {
+                        self.final_newline = FinalNewline::Preserve;
                         Ok(())
                     }
                     "remove" | "false" => {
@@ -402,15 +405,15 @@ impl FormatConfig {
                         Ok(())
                     }
                     _ => Err(format!(
-                        "Invalid value for final_newline (expected leave, remove, or force): {}",
+                        "Invalid value for final_newline (expected preserve, remove, or force): {}",
                         value
                     )),
                 }
             }
             "comment_style" => {
                 match value {
-                    "leave" => {
-                        self.comment_style = CommentStyle::Leave;
+                    "preserve" | "leave" => {
+                        self.comment_style = CommentStyle::Preserve;
                         Ok(())
                     }
                     "hash_space" => {
@@ -422,7 +425,7 @@ impl FormatConfig {
                         Ok(())
                     }
                     _ => Err(format!(
-                        "Invalid value for comment_style (expected leave, hash_space, or hash_no_space): {}",
+                        "Invalid value for comment_style (expected preserve, hash_space, or hash_no_space): {}",
                         value
                     )),
                 }
@@ -516,7 +519,8 @@ impl Default for SortSources {
 #[serde(rename_all = "snake_case")]
 pub enum CommentStyle {
     /// Preserve original whitespace after # unchanged
-    Leave,
+    #[serde(rename = "preserve", alias = "leave")]
+    Preserve,
     /// Normalize to "# text" - single space after hash (default, backward compat)
     HashSpace,
     /// Normalize to "#text" - no space after hash
