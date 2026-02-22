@@ -777,8 +777,11 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
     // (a 200+ arg command will never fit on one line anyway)
     if !signals.force_multiline && args.len() <= 200 {
         if args.len() == 1 {
-            // Single argument: simple case
-            return RcDoc::text(args[0].clone());
+            // Single argument: simple case, but still need closing paren position
+            // so that space_between_command_parens / indent_closing_paren apply.
+            return RcDoc::text(args[0].clone())
+                .append(closing_paren_position(ctx.config, ctx.indent_level, false))
+                .group();
         }
 
         // Use explicit text indentation via flat_alt instead of nest()
@@ -964,7 +967,9 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
                     .append(RcDoc::text(rest_parts))
                     .append(RcDoc::text(format!("\n{}", closing_indent)))
             } else {
+                // Single-arg force-multiline builtin: still need closing paren on its own line
                 RcDoc::text(first)
+                    .append(RcDoc::text(format!("\n{}", closing_indent)))
             }
         } else {
             RcDoc::nil()
