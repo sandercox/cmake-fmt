@@ -29,15 +29,15 @@
     },
     "command_case": {
       "type": "string",
-      "enum": ["lowercase", "uppercase", "leave"],
+      "enum": ["lowercase", "uppercase", "preserve", "leave"],
       "default": "lowercase",
-      "description": "Builtin command name casing transformation"
+      "description": "Builtin command name casing transformation. 'preserve' keeps original casing unchanged (alias: 'leave')."
     },
     "user_command_case": {
       "type": "string",
-      "enum": ["lowercase", "uppercase", "leave", "infer"],
+      "enum": ["lowercase", "uppercase", "preserve", "leave", "infer"],
       "default": "infer",
-      "description": "User-defined command name casing. 'infer' analyzes function()/macro() definitions to determine casing."
+      "description": "User-defined command name casing. 'infer' analyzes function()/macro() definitions to determine casing. 'preserve' keeps original casing unchanged (alias: 'leave')."
     },
     "max_blank_lines": {
       "type": "integer",
@@ -53,9 +53,9 @@
     },
     "closing_style": {
       "type": "string",
-      "enum": ["leave", "remove", "force"],
+      "enum": ["preserve", "leave", "remove", "force"],
       "default": "remove",
-      "description": "Block closer argument handling. 'leave' preserves arguments, 'remove' strips them (modernize), 'force' adds them to match openers."
+      "description": "Block closer argument handling. 'preserve' keeps arguments as-is (alias: 'leave'), 'remove' strips them (modernize), 'force' adds them to match openers."
     },
     "force_break_keywords": {
       "type": "boolean",
@@ -89,17 +89,17 @@
     },
     "final_newline": {
       "oneOf": [
-        { "type": "string", "enum": ["leave", "remove", "force"] },
+        { "type": "string", "enum": ["preserve", "leave", "remove", "force"] },
         { "type": "boolean" }
       ],
-      "default": "leave",
-      "description": "Final newline handling. 'leave' preserves original file's trailing newline state, 'remove' strips trailing newline, 'force' ensures file ends with newline. Also accepts true (=force) and false (=remove) for backward compatibility."
+      "default": "preserve",
+      "description": "Final newline handling. 'preserve' keeps original file's trailing newline state (alias: 'leave'), 'remove' strips trailing newline, 'force' ensures file ends with newline. Also accepts true (=force) and false (=remove) for backward compatibility."
     },
     "comment_style": {
       "type": "string",
-      "enum": ["leave", "hash_space", "hash_no_space"],
+      "enum": ["preserve", "leave", "hash_space", "hash_no_space"],
       "default": "hash_space",
-      "description": "Comment whitespace normalization style. 'leave' preserves original whitespace, 'hash_space' normalizes to '# text', 'hash_no_space' normalizes to '#text'."
+      "description": "Comment whitespace normalization style. 'preserve' keeps original whitespace after # unchanged (alias: 'leave'), 'hash_space' normalizes to '# text', 'hash_no_space' normalizes to '#text'."
     },
     "source_grouping": {
       "type": "string",

@@ -143,14 +143,14 @@ max_line_length = 120
 | `indent_width` | integer | `4` | Number of spaces per indent level |
 | `max_line_length` | integer | `80` | Max line length (0 = unlimited) |
 | `use_tabs` | boolean | `true` | Use tabs for indentation |
-| `command_case` | enum | `lowercase` | Built-in command casing: `lowercase`, `uppercase`, `leave` |
-| `user_command_case` | enum | `infer` | User-defined command casing: `lowercase`, `uppercase`, `leave`, `infer` |
+| `command_case` | enum | `lowercase` | Built-in command casing: `lowercase`, `uppercase`, `preserve` |
+| `user_command_case` | enum | `infer` | User-defined command casing: `lowercase`, `uppercase`, `preserve`, `infer` |
 | `max_blank_lines` | integer | `1` | Maximum consecutive blank lines allowed |
 | `line_ending` | enum | `auto` | Line ending style: `auto`, `lf`, `crlf` |
-| `closing_style` | enum | `remove` | Closing statement style: `leave`, `remove`, `force` |
+| `closing_style` | enum | `remove` | Closing statement style: `preserve`, `remove`, `force` |
 | `force_break_keywords` | boolean | `false` | Always break keywords onto separate lines |
-| `final_newline` | enum | `leave` | Final newline: `leave`, `remove`, `force` (also accepts `true`/`false`) |
-| `comment_style` | enum | `hash_space` | Comment formatting: `leave`, `hash_space`, `hash_no_space` |
+| `final_newline` | enum | `preserve` | Final newline: `preserve`, `remove`, `force` (also accepts `true`/`false`; `leave` accepted as alias for `preserve`) |
+| `comment_style` | enum | `hash_space` | Comment formatting: `preserve`, `hash_space`, `hash_no_space` |
 | `source_grouping` | enum | `none` | Group source files: `none`, `headers_first`, `sources_first` |
 | `sort_sources` | enum | `none` | Sort source file lists: `none`, `alphabetical` |
 | `collapse_empty_flags` | boolean | `true` | Collapse no-argument flags inline with preceding positional args |
@@ -214,8 +214,8 @@ ADD_EXECUTABLE(myapp main.cpp)
 TARGET_LINK_LIBRARIES(myapp PUBLIC Boost::system)
 ```
 
-**`command_case = leave`:**
-Preserves original casing from source file.
+**`command_case = preserve`:**
+Preserves original casing from source file. (`"leave"` is accepted as a backward-compatible alias.)
 
 #### `use_tabs`
 
@@ -243,8 +243,8 @@ if(BUILD_TESTING)
 endif(BUILD_TESTING)
 ```
 
-**`closing_style = leave`:**
-Preserves original closing style from source file.
+**`closing_style = preserve`:**
+Preserves original closing style from source file. (`"leave"` is accepted as a backward-compatible alias.)
 
 #### `force_break_keywords`
 
@@ -279,8 +279,8 @@ Removes space after `#`:
 #This is a comment
 ```
 
-**`comment_style = leave`:**
-Preserves original comment formatting.
+**`comment_style = preserve`:**
+Preserves original comment formatting. (`"leave"` is accepted as a backward-compatible alias.)
 
 #### `max_blank_lines`
 
@@ -288,8 +288,8 @@ Limits consecutive blank lines. For example, `max_blank_lines = 1` (default) all
 
 #### `final_newline`
 
-**`final_newline = leave` (default):**
-Preserves the original file's trailing newline state. If the input file ended with a newline, the output will too. If it didn't, the output won't add one.
+**`final_newline = preserve` (default):**
+Preserves the original file's trailing newline state. If the input file ended with a newline, the output will too. If it didn't, the output won't add one. (`"leave"` is accepted as a backward-compatible alias.)
 
 **`final_newline = force`:**
 Ensures the file ends with a newline character. Equivalent to the previous `true` setting.
