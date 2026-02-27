@@ -904,7 +904,8 @@ pub fn format_keyword_aware_args(
         let pre_kw_fits = if let Some(pre_section) = pre_kw_section {
             // Check: would "indent + cmd_name( + pre_args_joined_by_space + space + keyword" fit?
             let indent_width = config.indent_width; // used for both tab and space modes
-            let prefix_len = indent_level * indent_width + command_name_len + 1; // +1 for '('
+            let paren_extra = if config.space_between_command_parens { 2 } else { 1 }; // '(' plus optional space
+            let prefix_len = indent_level * indent_width + command_name_len + paren_extra;
             let pre_args_len: usize = pre_section.args.iter().map(|a| a.len()).sum::<usize>()
                 + pre_section.args.len().saturating_sub(1); // spaces between args
             let keyword_section = sections.iter().find(|s| s.keyword.is_some()).unwrap();
@@ -1727,17 +1728,18 @@ fn format_keyword_aware_args_inline_single(
             // There is exactly one keyword section — emit keyword INLINE with preceding args.
             // Separator: space (flat and broken both use space here)
             if is_first_arg {
-                // Keyword is the very first thing (no pre-keyword args)
+                // Keyword is the very first thing (no pre-keyword args).
+                // In inline_single_keyword mode the keyword appears directly after '(' — no separator.
+                // This is correct for both flat and broken (force_multiline) rendering since the
+                // keyword's position on the opening line is the whole point of this function.
                 is_first_arg = false;
-                if signals.force_multiline {
-                    docs.push(RcDoc::hardline());
-                    docs.push(RcDoc::text(keyword_indent.to_string()));
-                } else {
+                if !signals.force_multiline {
                     docs.push(RcDoc::flat_alt(
                         RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
                         RcDoc::nil(),
                     ));
                 }
+                // force_multiline=true: emit nothing — keyword stays on the opening line after '('
             } else {
                 // Keyword follows pre-keyword args — stays on same line as the last pre-keyword arg.
                 // In flat mode this is already inline; in broken mode we want a space (not a newline).
@@ -1746,8 +1748,21 @@ fn format_keyword_aware_args_inline_single(
             }
             docs.push(RcDoc::text(keyword.clone()));
 
-            // Values are indented at keyword_indent level (single indent, not double)
-            if !section.args.is_empty() {
+            // For SingleValue keywords with exactly one arg, render the value inline (same line as
+            // the keyword) rather than indented below. This keeps "APPEND SOURCES" together on the
+            // opening line when the overflow positional args follow in the next section.
+            let is_single_value_with_one_arg = section.keyword_type == Some(KeywordType::SingleValue)
+                && section.args.len() == 1
+                && section.comments.is_empty()
+                && section.trailing_comments.is_empty()
+                && section.blank_lines.is_empty();
+
+            if is_single_value_with_one_arg {
+                // Always emit inline with a space — even when force_multiline is true.
+                docs.push(RcDoc::space());
+                docs.push(RcDoc::text(section.args[0].clone()));
+            } else if !section.args.is_empty() {
+                // Values are indented at keyword_indent level (single indent, not double)
                 let use_per_line = section.values_on_new_line
                     || !section.comments.is_empty()
                     || !section.trailing_comments.is_empty()
