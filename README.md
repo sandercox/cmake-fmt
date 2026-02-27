@@ -86,6 +86,23 @@ Supported platforms:
 - Windows x64
 - Windows ARM64
 
+### Docker
+
+Pull from Docker Hub:
+```bash
+docker pull paralleldimension/cmake-fmt
+```
+
+Or from GitHub Container Registry:
+```bash
+docker pull ghcr.io/sandercox/cmake-fmt
+```
+
+Format files using Docker:
+```bash
+docker run --rm -v "$(pwd):/work" -w /work paralleldimension/cmake-fmt cmake-fmt -i CMakeLists.txt
+```
+
 ## Usage
 
 Format a file to stdout:

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `space_between_command_parens` to control `set(SOURCES a.cpp)` vs `set( SOURCES a.cpp )`
 - `indent_closing_paren` to control if closing parens should be indented or not when multiline
 - Directory walking with recursive flag (`-r`) and `.cmake-fmt-ignore` file support
+- Docker images published to Docker Hub and GitHub Container Registry on release
 
 ## [0.7.2] - 2026-02-20
 ### Fixed

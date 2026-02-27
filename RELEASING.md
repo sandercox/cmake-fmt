@@ -10,6 +10,10 @@ The following GitHub repository secrets must be configured before the first rele
 |--------|--------|---------|
 | `VSCE_PAT` | Azure DevOps PAT with **Marketplace > Manage** scope | Publish to VS Code Marketplace |
 | `OVSX_PAT` | [Open VSX access token](https://open-vsx.org/user-settings/tokens) | Publish to Open VSX Registry |
+| `DOCKERHUB_USERNAME` | [Docker Hub](https://hub.docker.com/settings/security) account username | Push images to Docker Hub |
+| `DOCKERHUB_TOKEN` | [Docker Hub](https://hub.docker.com/settings/security) access token | Push images to Docker Hub |
+
+Note: GHCR authentication uses the built-in `GITHUB_TOKEN` — no additional secret needed.
 
 ### crates.io Authentication
 
@@ -131,6 +135,15 @@ Publishes all 6 platform-specific VSIXs to the VS Code Marketplace.
 ### 7. Publish to Open VSX Registry
 
 Publishes all 6 platform-specific VSIXs to the Open VSX Registry. For pre-release tags, the `--pre-release` flag is passed.
+
+### 8. Publish Docker Images
+
+A separate `docker.yml` workflow runs in parallel with the release pipeline (triggered by the same `v*.*.*` tag). It builds and pushes Docker images to both Docker Hub (`paralleldimension/cmake-fmt`) and GHCR (`ghcr.io/sandercox/cmake-fmt`).
+
+- **Stable releases:** Images are tagged with `latest` and the version number on both registries (e.g., `paralleldimension/cmake-fmt:0.8.0` and `paralleldimension/cmake-fmt:latest`)
+- **Pre-releases:** Images are tagged with the version number only — `latest` is never updated (e.g., `paralleldimension/cmake-fmt:0.8.0-beta.1`)
+
+Because `docker.yml` is independent, a Docker build failure does not block crates.io, GitHub Release, or VS Code Marketplace publishing.
 
 ## Recovery Procedures
 
@@ -254,6 +267,27 @@ for vsix in vsix/*.vsix; do
 done
 ```
 
+### Docker Publish Failed
+
+**Symptoms:** Docker build failure, registry authentication error, or push failure in the `docker.yml` workflow.
+
+**Recovery:** Build and push manually.
+
+```bash
+# Build the image
+docker build --build-arg REV=vx.y.z -t paralleldimension/cmake-fmt:x.y.z -t ghcr.io/sandercox/cmake-fmt:x.y.z .
+
+# For stable releases, also tag as latest
+docker tag paralleldimension/cmake-fmt:x.y.z paralleldimension/cmake-fmt:latest
+docker tag ghcr.io/sandercox/cmake-fmt:x.y.z ghcr.io/sandercox/cmake-fmt:latest
+
+# Push to Docker Hub
+docker push paralleldimension/cmake-fmt --all-tags
+
+# Push to GHCR
+docker push ghcr.io/sandercox/cmake-fmt --all-tags
+```
+
 ## Pre-Release Releases
 
 Pre-release tags use any semver pre-release suffix after a hyphen:
@@ -272,6 +306,7 @@ v2.0.0-alpha.3
 | GitHub Release | Marked as **pre-release** (not shown as "Latest") |
 | VS Code Marketplace | VSIX packaged and published with `--pre-release` flag |
 | Open VSX Registry | Published with `--pre-release` flag |
+| Docker Hub / GHCR | Tagged with version only (no `latest` tag) |
 
 ### Version in Source Files
 
