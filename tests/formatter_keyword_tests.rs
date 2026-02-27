@@ -2356,6 +2356,94 @@ fn test_inline_single_keyword_two_short_pre_args_still_inlines() {
 }
 
 // ============================================================================
+// INLINE SINGLE KEYWORD + LIST(APPEND) TESTS
+// ============================================================================
+
+#[test]
+fn test_inline_single_keyword_list_append() {
+    // list(APPEND SOURCES ...) with inline_single_keyword=true keeps "APPEND SOURCES"
+    // on the command opening line with values indented below.
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.max_line_length = 60;
+    let input = "list(APPEND SOURCES file1.cpp file2.cpp file3.cpp file4.cpp file5.cpp)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // APPEND SOURCES must be on the opening line (inline with the command)
+    assert!(result.contains("list(APPEND SOURCES\n"), "APPEND SOURCES must be on the command opening line");
+    // Files must be single-tab indented
+    assert!(result.contains("\tfile1.cpp\n"), "files must be single-tab indented");
+    assert!(result.contains("\tfile2.cpp\n"), "files must be single-tab indented");
+    // APPEND must NOT be on its own line
+    assert!(!result.contains("\nAPPEND\n"), "APPEND must NOT be on its own line");
+    assert!(!result.contains("\tAPPEND\n"), "APPEND must NOT be on its own indented line");
+}
+
+#[test]
+fn test_inline_single_keyword_list_append_with_space_parens() {
+    // Same as above but with space_between_command_parens=true.
+    // Expected: list( APPEND SOURCES\n\tfile1.cpp\n...
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.space_between_command_parens = true;
+    config.max_line_length = 60;
+    let input = "list(APPEND SOURCES file1.cpp file2.cpp file3.cpp file4.cpp file5.cpp)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // With space_between_command_parens, opening has "list( APPEND SOURCES"
+    assert!(result.starts_with("list( APPEND SOURCES\n"), "must start with 'list( APPEND SOURCES\\n'");
+    // Files must be single-tab indented
+    assert!(result.contains("\tfile1.cpp\n"), "files must be single-tab indented");
+    assert!(result.contains("\tfile2.cpp\n"), "files must be single-tab indented");
+}
+
+#[test]
+fn test_inline_single_keyword_list_append_multiline_input() {
+    // The exact user-reported case: multiline input with space_between_command_parens.
+    // Formatting should preserve structure: APPEND SOURCES inline on opening line.
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.space_between_command_parens = true;
+    config.max_line_length = 160;
+    let input = "list( APPEND SOURCES\n    TestCoreJSON.cpp\n    TestPrimitiveJSON.cpp\n)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // APPEND SOURCES must be on the opening line
+    assert!(result.contains("list( APPEND SOURCES\n"), "APPEND SOURCES must be on the command opening line");
+    // Files must be single-tab indented
+    assert!(result.contains("\tTestCoreJSON.cpp\n"), "files must be single-tab indented");
+    assert!(result.contains("\tTestPrimitiveJSON.cpp\n"), "files must be single-tab indented");
+    // APPEND must NOT be on its own line
+    assert!(!result.contains("\tAPPEND\n"), "APPEND must NOT be on its own indented line");
+}
+
+#[test]
+fn test_inline_single_keyword_list_append_idempotent() {
+    // Formatting the output of list(APPEND) again produces identical output.
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.max_line_length = 60;
+    let input = "list(APPEND SOURCES file1.cpp file2.cpp file3.cpp file4.cpp file5.cpp)";
+    let pass1 = format_text(input, &config);
+    let pass2 = format_text(&pass1, &config);
+    eprintln!("Pass 1:\n{}", pass1);
+    eprintln!("Pass 2:\n{}", pass2);
+    assert_eq!(pass1, pass2, "list(APPEND) + inline_single_keyword formatting must be idempotent");
+}
+
+#[test]
+fn test_inline_single_keyword_list_append_short_fits_one_line() {
+    // Short list(APPEND mylist item) stays on one line with inline_single_keyword=true.
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    let input = "list(APPEND mylist item)";
+    let result = format_text(input, &config);
+    eprintln!("Result:\n{}", result);
+    // Short enough to fit on one line
+    assert_eq!(result, "list(APPEND mylist item)");
+}
+
+// ============================================================================
 // KEYWORD SPACE BEFORE PAREN TESTS
 // ============================================================================
 
