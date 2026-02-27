@@ -2856,3 +2856,31 @@ fn test_inline_single_keyword_pair_value_single_pair() {
     let result = format_text(input, &config);
     assert_eq!(result, input, "Single property pair should stay inline with keyword");
 }
+
+// Regression: source_grouping headers_first should apply to keyword section args
+// in the inline_single_keyword path (e.g., files after PUBLIC in target_sources)
+#[test]
+fn test_inline_single_keyword_source_grouping_headers_first() {
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.source_grouping = cmake_fmt::formatter::SourceGrouping::HeadersFirst;
+    let input = "target_sources(myTarget PUBLIC\n\tfoo.h\n\tfoo.cpp\n\tbar.h\n\tbaz.cpp\n)\n";
+    let result = format_text(input, &config);
+    // foo.h + foo.cpp should be paired on same line
+    assert!(result.contains("foo.h foo.cpp"), "header+source pair should be grouped: got {}", result);
+    // bar.h has no matching bar.cpp so stays alone
+    assert!(result.contains("\tbar.h\n"), "unmatched header stays on its own line: got {}", result);
+}
+
+#[test]
+fn test_inline_single_keyword_source_grouping_with_blank_lines() {
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.source_grouping = cmake_fmt::formatter::SourceGrouping::HeadersFirst;
+    config.space_between_command_parens = true;
+    // Blank line between groups should be preserved
+    let input = "target_sources( myTarget PUBLIC\n\talpha.h alpha.cpp\n\n\tbeta.h beta.cpp\n)\n";
+    let result = format_text(input, &config);
+    let second = format_text(&result, &config);
+    assert_eq!(result, second, "source_grouping + inline_single_keyword must be idempotent: got {}", result);
+}

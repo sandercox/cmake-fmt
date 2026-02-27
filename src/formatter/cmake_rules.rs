@@ -1821,22 +1821,45 @@ fn format_keyword_aware_args_inline_single(
                     }
                 }
             } else if !section.args.is_empty() {
+                // Apply source grouping to keyword section args (e.g., source files after PUBLIC)
+                let (effective_args, effective_blank_lines, effective_comments, _effective_post_comment_blanks, effective_comment_blank_indices) =
+                    if config.source_grouping != super::config::SourceGrouping::None
+                        && section.trailing_comments.is_empty()
+                    {
+                        group_source_pairs_preserving_blanks(
+                            &section.args,
+                            &section.blank_lines,
+                            &section.comments,
+                            &section.post_comment_blanks,
+                            &section.comment_blank_indices,
+                            config.source_grouping,
+                        )
+                    } else {
+                        (
+                            section.args.clone(),
+                            section.blank_lines.clone(),
+                            section.comments.clone(),
+                            section.post_comment_blanks.clone(),
+                            section.comment_blank_indices.clone(),
+                        )
+                    };
+
                 // Values are indented at keyword_indent level (single indent, not double)
                 let use_per_line = section.values_on_new_line
-                    || !section.comments.is_empty()
+                    || !effective_comments.is_empty()
                     || !section.trailing_comments.is_empty()
-                    || !section.blank_lines.is_empty();
+                    || !effective_blank_lines.is_empty();
 
                 if use_per_line {
-                    let mut comment_iter = section.comments.iter().peekable();
+                    let mut comment_iter = effective_comments.iter().peekable();
                     let mut comment_index = 0usize;
-                    for (arg_idx, arg) in section.args.iter().enumerate() {
-                        if section.blank_lines.contains(&arg_idx) && signals.force_multiline {
+                    for (arg_idx, arg) in effective_args.iter().enumerate() {
+                        if effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
                             docs.push(RcDoc::hardline());
                         }
                         while let Some((pos, comment)) = comment_iter.peek() {
                             if *pos == arg_idx {
-                                if section.comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                                if effective_comment_blank_indices.contains(&comment_index) && signals.force_multiline {
                                     docs.push(RcDoc::hardline());
                                 }
                                 if signals.force_multiline {
@@ -1871,11 +1894,11 @@ fn format_keyword_aware_args_inline_single(
                             }
                         }
                     }
-                    if comment_iter.peek().is_some() && section.blank_lines.contains(&section.args.len()) && signals.force_multiline {
+                    if comment_iter.peek().is_some() && effective_blank_lines.contains(&effective_args.len()) && signals.force_multiline {
                         docs.push(RcDoc::hardline());
                     }
                     while let Some((_, comment)) = comment_iter.next() {
-                        if section.comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                        if effective_comment_blank_indices.contains(&comment_index) && signals.force_multiline {
                             docs.push(RcDoc::hardline());
                         }
                         if signals.force_multiline {
@@ -1892,7 +1915,7 @@ fn format_keyword_aware_args_inline_single(
                     }
                 } else {
                     // Flat layout: values go on new lines below keyword (single indent) when broken
-                    for (arg_idx, arg) in section.args.iter().enumerate() {
+                    for (arg_idx, arg) in effective_args.iter().enumerate() {
                         docs.push(RcDoc::flat_alt(
                             RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
                             RcDoc::space(),
