@@ -1757,10 +1757,69 @@ fn format_keyword_aware_args_inline_single(
                 && section.trailing_comments.is_empty()
                 && section.blank_lines.is_empty();
 
+            let is_pair_value = section.keyword_type == Some(KeywordType::PairValue);
+
             if is_single_value_with_one_arg {
                 // Always emit inline with a space — even when force_multiline is true.
                 docs.push(RcDoc::space());
                 docs.push(RcDoc::text(section.args[0].clone()));
+            } else if is_pair_value && !section.args.is_empty() {
+                // PairValue keywords (e.g., PROPERTIES): format as key-value pairs
+                // Use keyword_indent (single indent) since the keyword is inlined on the command line
+                let pairs: Vec<_> = section.args.chunks(2).collect();
+                let use_per_line = section.values_on_new_line
+                    || !section.comments.is_empty()
+                    || !section.trailing_comments.is_empty()
+                    || !section.blank_lines.is_empty();
+
+                if pairs.len() == 1 {
+                    // Single pair: keep inline with keyword
+                    docs.push(RcDoc::space());
+                    docs.push(RcDoc::text(pairs[0][0].clone()));
+                    if pairs[0].len() > 1 {
+                        docs.push(RcDoc::space());
+                        docs.push(RcDoc::text(pairs[0][1].clone()));
+                    }
+                } else if use_per_line || signals.force_multiline {
+                    for (pair_idx, chunk) in pairs.iter().enumerate() {
+                        if section.blank_lines.contains(&(pair_idx * 2)) && signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                        }
+                        if signals.force_multiline {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.to_string()));
+                        } else {
+                            docs.push(RcDoc::flat_alt(
+                                RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
+                                RcDoc::space(),
+                            ));
+                        }
+                        docs.push(RcDoc::text(chunk[0].clone()));
+                        if chunk.len() > 1 {
+                            docs.push(RcDoc::space());
+                            docs.push(RcDoc::text(chunk[1].clone()));
+                        }
+                        // Trailing comments for key (even index) and value (odd index)
+                        for (tc_idx, tc_text) in &section.trailing_comments {
+                            let key_idx = pair_idx * 2;
+                            if *tc_idx == key_idx || (chunk.len() > 1 && *tc_idx == key_idx + 1) {
+                                docs.push(RcDoc::text(format!(" {}", tc_text)));
+                            }
+                        }
+                    }
+                } else {
+                    for chunk in pairs {
+                        docs.push(RcDoc::flat_alt(
+                            RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
+                            RcDoc::space(),
+                        ));
+                        docs.push(RcDoc::text(chunk[0].clone()));
+                        if chunk.len() > 1 {
+                            docs.push(RcDoc::space());
+                            docs.push(RcDoc::text(chunk[1].clone()));
+                        }
+                    }
+                }
             } else if !section.args.is_empty() {
                 // Values are indented at keyword_indent level (single indent, not double)
                 let use_per_line = section.values_on_new_line

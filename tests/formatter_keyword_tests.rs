@@ -2826,3 +2826,33 @@ fn test_combined_idempotent() {
     let second = format_text(&first, &config);
     assert_eq!(first, second, "combined options must be idempotent");
 }
+
+// Regression: inline_single_keyword + PairValue keyword (PROPERTIES) should keep
+// key-value pairs together, not split them onto separate lines
+#[test]
+fn test_inline_single_keyword_pair_value_properties() {
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    let input = "set_target_properties(myTarget PROPERTIES\n\tMACOSX_BUNDLE TRUE\n\tXCODE_ATTRIBUTE_CODE_SIGN_IDENTITY \"\"\n\tINSTALL_RPATH @executable_path/../Frameworks\n)\n";
+    let result = format_text(input, &config);
+    assert_eq!(result, input, "PairValue properties should stay as key-value pairs");
+}
+
+#[test]
+fn test_inline_single_keyword_pair_value_with_space_parens() {
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    config.space_between_command_parens = true;
+    let input = "set_target_properties( ${targetName} PROPERTIES\n\tMACOSX_BUNDLE TRUE\n\tXCODE_ATTRIBUTE_CODE_SIGN_IDENTITY \"\"\n\tINSTALL_RPATH @executable_path/../Frameworks\n)\n";
+    let result = format_text(input, &config);
+    assert_eq!(result, input, "PairValue with space_between_command_parens should be idempotent");
+}
+
+#[test]
+fn test_inline_single_keyword_pair_value_single_pair() {
+    let mut config = default_config();
+    config.inline_single_keyword = true;
+    let input = "set_target_properties(myTarget PROPERTIES MACOSX_BUNDLE TRUE)\n";
+    let result = format_text(input, &config);
+    assert_eq!(result, input, "Single property pair should stay inline with keyword");
+}
