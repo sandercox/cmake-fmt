@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 - Update README with `collapse_empty_flags` example
-- `final_newline` now is `force`, `remove` or `leave` (default)
+- `final_newline` now is `force`, `remove` or `preserve` (default)
 - `inline_single_keyword` to keep simple source lists without excessive indentation
 - `control_flow_space_before_paren` if true `if ()` or `if()`
+- Change `leave` to `preserve` wherever it was used in styles (`leave` will still be accepted for backward compatibility)
+- `space_between_command_parens` to control `set(SOURCES a.cpp)` vs `set( SOURCES a.cpp )`
+- `indent_closing_paren` to control if closing parens should be indented or not when multiline
+- Directory walking with recursive flag (`-r`) and `.cmake-fmt-ignore` file support
 
 ## [0.7.2] - 2026-02-20
 ### Fixed

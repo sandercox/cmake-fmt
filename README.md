@@ -108,9 +108,26 @@ Show formatting diff:
 cmake-fmt --diff CMakeLists.txt
 ```
 
+Format all CMake files in the current directory:
+```bash
+cmake-fmt -i .
+```
+
+Recursively format an entire project:
+```bash
+cmake-fmt -ri src/
+```
+
 Use in CI to enforce formatting:
 ```bash
-cmake-fmt --check $(find . -name 'CMakeLists.txt' -o -name '*.cmake')
+cmake-fmt --check -r .
+```
+
+Create a `.cmake-fmt-ignore` file (gitignore syntax) to exclude paths:
+```
+build/
+third_party/
+generated/*.cmake
 ```
 
 When going through your files for the first time, you can use `--interactive` to review changes hunk-by-hunk and choose which ones to apply or skip/disable.
@@ -480,6 +497,8 @@ cmake-fmt --help-grammar
 | `--grammar-file <FILE>` | Import additional grammar file(s) (can be specified multiple times) |
 | `--verbose` | Show verbose output during file scanning and analysis |
 | `--assume-filename <PATH>` | Treat stdin as if formatting this file (resolves config/grammar from its path) |
+| `-r`, `--recursive` | Recursively format files in directories |
+| `--ignore-file <FILE>` | Path to additional ignore file (gitignore syntax) |
 | `--line-ranges <RANGES>` | Format only specific line ranges (e.g., "1:5,10:15") |
 | `--help-style` | Show all available style settings |
 | `--help-grammar` | Show grammar file format and keyword types |
