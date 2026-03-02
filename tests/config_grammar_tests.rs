@@ -440,6 +440,139 @@ fn test_recursive_config_single_file_backward_compatible() {
     assert_eq!(config.use_tabs, false);
 }
 
+#[test]
+fn test_root_true_stops_parent_inheritance_toml() {
+    let tempdir = TempDir::new().unwrap();
+    let root_dir = tempdir.path();
+    let sub_dir = root_dir.join("sub");
+    fs::create_dir(&sub_dir).unwrap();
+
+    // Root config sets indent_width=2, max_line_length=100
+    let root_config = root_dir.join(".cmake-fmt.toml");
+    fs::write(&root_config, "indent_width = 2\nmax_line_length = 100\n").unwrap();
+
+    // Sub config declares root: true and sets its own indent_width
+    let sub_config = sub_dir.join(".cmake-fmt.toml");
+    fs::write(&sub_config, "root = true\nindent_width = 6\n").unwrap();
+
+    let cmake_file = sub_dir.join("CMakeLists.txt");
+    let config = config::resolve_config(Some(&cmake_file), None, &[]);
+
+    // indent_width from child
+    assert_eq!(config.indent_width, 6);
+    // max_line_length at default (80), not 100 from parent (parent was discarded)
+    assert_eq!(config.max_line_length, 80);
+    // use_tabs at default (true), proving fresh start from defaults
+    assert_eq!(config.use_tabs, true);
+}
+
+#[test]
+fn test_root_true_stops_parent_inheritance_yaml() {
+    let tempdir = TempDir::new().unwrap();
+    let root_dir = tempdir.path();
+    let sub_dir = root_dir.join("sub");
+    fs::create_dir(&sub_dir).unwrap();
+
+    // Root config uses extensionless YAML
+    let root_config = root_dir.join(".cmake-fmt");
+    fs::write(&root_config, "indent_width: 2\nmax_line_length: 100\n").unwrap();
+
+    // Sub config uses extensionless YAML with root: true
+    let sub_config = sub_dir.join(".cmake-fmt");
+    fs::write(&sub_config, "root: true\nindent_width: 6\n").unwrap();
+
+    let cmake_file = sub_dir.join("CMakeLists.txt");
+    let config = config::resolve_config(Some(&cmake_file), None, &[]);
+
+    // indent_width from child
+    assert_eq!(config.indent_width, 6);
+    // max_line_length at default (80), not 100 from parent
+    assert_eq!(config.max_line_length, 80);
+    // use_tabs at default (true)
+    assert_eq!(config.use_tabs, true);
+}
+
+#[test]
+fn test_root_false_does_not_stop_inheritance() {
+    let tempdir = TempDir::new().unwrap();
+    let root_dir = tempdir.path();
+    let sub_dir = root_dir.join("sub");
+    fs::create_dir(&sub_dir).unwrap();
+
+    // Root config sets indent_width=2, max_line_length=100
+    let root_config = root_dir.join(".cmake-fmt.toml");
+    fs::write(&root_config, "indent_width = 2\nmax_line_length = 100\n").unwrap();
+
+    // Sub config has root=false (should NOT stop inheritance) and overrides indent_width
+    let sub_config = sub_dir.join(".cmake-fmt.toml");
+    fs::write(&sub_config, "root = false\nindent_width = 6\n").unwrap();
+
+    let cmake_file = sub_dir.join("CMakeLists.txt");
+    let config = config::resolve_config(Some(&cmake_file), None, &[]);
+
+    // indent_width from child (overrides parent)
+    assert_eq!(config.indent_width, 6);
+    // max_line_length inherited from parent (root=false has no effect)
+    assert_eq!(config.max_line_length, 100);
+}
+
+#[test]
+fn test_root_true_middle_directory() {
+    let tempdir = TempDir::new().unwrap();
+    let root_dir = tempdir.path();
+    let mid_dir = root_dir.join("mid");
+    let deep_dir = mid_dir.join("deep");
+    fs::create_dir_all(&deep_dir).unwrap();
+
+    // Root config: indent_width=2
+    let root_config = root_dir.join(".cmake-fmt.toml");
+    fs::write(&root_config, "indent_width = 2\n").unwrap();
+
+    // Mid config: root=true, max_line_length=100
+    let mid_config = mid_dir.join(".cmake-fmt.toml");
+    fs::write(&mid_config, "root = true\nmax_line_length = 100\n").unwrap();
+
+    // Deep config: use_tabs=false (no root flag)
+    let deep_config = deep_dir.join(".cmake-fmt.toml");
+    fs::write(&deep_config, "use_tabs = false\n").unwrap();
+
+    let cmake_file = deep_dir.join("CMakeLists.txt");
+    let config = config::resolve_config(Some(&cmake_file), None, &[]);
+
+    // indent_width at default (4), not 2 (root_dir was discarded because mid has root=true)
+    assert_eq!(config.indent_width, 4);
+    // max_line_length from mid config
+    assert_eq!(config.max_line_length, 100);
+    // use_tabs from deep config
+    assert_eq!(config.use_tabs, false);
+}
+
+#[test]
+fn test_root_true_command_grammars_not_inherited() {
+    let tempdir = TempDir::new().unwrap();
+    let root_dir = tempdir.path();
+    let sub_dir = root_dir.join("sub");
+    fs::create_dir(&sub_dir).unwrap();
+
+    // Root config with custom command grammar
+    let root_config = root_dir.join(".cmake-fmt.toml");
+    fs::write(&root_config, "[command_grammars.parent_cmd]\noptions = [\"OPT_A\"]\n").unwrap();
+
+    // Sub config with root=true and different command grammar
+    let sub_config = sub_dir.join(".cmake-fmt.toml");
+    fs::write(&sub_config, "root = true\n[command_grammars.child_cmd]\noptions = [\"OPT_B\"]\n").unwrap();
+
+    let cmake_file = sub_dir.join("CMakeLists.txt");
+    let config = config::resolve_config(Some(&cmake_file), None, &[]);
+
+    // child_cmd grammar should be present
+    assert!(config.command_grammars.contains_key("child_cmd"),
+        "Expected child_cmd grammar to be present");
+    // parent_cmd grammar should NOT be present (discarded by root=true)
+    assert!(!config.command_grammars.contains_key("parent_cmd"),
+        "Expected parent_cmd grammar to be absent (discarded by root=true)");
+}
+
 // Module for accessing config loading functions
 mod config {
     use anyhow::{Context, Result};
@@ -526,6 +659,13 @@ mod config {
                         }
                     }
                 }
+
+                // Check for root flag - if true, discard all previously merged ancestor configs
+                if let Some(toml::Value::Boolean(true)) = file_table.get("root") {
+                    merged_table.clear();
+                }
+                // Remove root key before merging (meta-option, not a format setting)
+                file_table.remove("root");
 
                 merge_tables(&mut merged_table, &file_table);
             }
