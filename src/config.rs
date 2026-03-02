@@ -229,6 +229,13 @@ pub fn resolve_config(
                     }
                 }
 
+                // Check for root flag - if true, discard all previously merged ancestor configs
+                if let Some(toml::Value::Boolean(true)) = file_table.get("root") {
+                    merged_table.clear();
+                }
+                // Remove root key before merging (meta-option, not a format setting)
+                file_table.remove("root");
+
                 // Merge this config into the accumulated config
                 merge_tables(&mut merged_table, &file_table);
             }
