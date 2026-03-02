@@ -6,6 +6,22 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
 
+# Code signing secrets (required for signed releases):
+#
+# macOS (Apple Developer ID):
+#   APPLE_CERTIFICATE_P12_BASE64  - Base64-encoded .p12 Developer ID Application certificate
+#                                    Generate: base64 -i certificate.p12 | pbcopy
+#   APPLE_CERTIFICATE_PASSWORD    - Password protecting the .p12 file
+#   APPLE_SIGNING_IDENTITY        - Certificate identity (e.g., "Developer ID Application: Name (TEAMID)")
+#
+# Windows (Azure Trusted Signing):
+#   AZURE_TENANT_ID               - Azure AD tenant ID
+#   AZURE_CLIENT_ID               - App registration client ID
+#   AZURE_CLIENT_SECRET           - App registration client secret
+#   AZURE_SIGNING_ENDPOINT        - Trusted Signing endpoint (e.g., https://eus.codesigning.azure.net)
+#   AZURE_SIGNING_ACCOUNT         - Trusted Signing account name
+#   AZURE_CERTIFICATE_PROFILE     - Certificate profile name
+
 jobs:
   validate:
     name: Validate release
@@ -181,6 +197,69 @@ jobs:
           test -f "$BIN"
           ls -lh "$BIN"
           echo "Binary verified: $BIN"
+
+      - name: Sign macOS binary (Apple Developer ID)
+        if: runner.os == 'macOS'
+        env:
+          CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate
+          echo "$CERTIFICATE_P12" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -k "$KEYCHAIN_PATH" \
+            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain
+
+          # Sign binary with hardened runtime and secure timestamp
+          BIN="target/${{ matrix.rust_target }}/release/cmake-fmt"
+          codesign --force --options runtime --sign "$SIGNING_IDENTITY" --timestamp "$BIN"
+          codesign --verify --verbose=2 "$BIN"
+          echo "macOS binary signed and verified: $BIN"
+
+      - name: Clean up macOS keychain
+        if: runner.os == 'macOS' && always()
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          rm -f $RUNNER_TEMP/certificate.p12
+
+      - name: Sign Windows binary (Azure Trusted Signing)
+        if: runner.os == 'Windows'
+        uses: azure/trusted-signing-action@v0.5.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE }}
+          files-folder: target/${{ matrix.rust_target }}/release
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Windows binary signature
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature "target\${{ matrix.rust_target }}\release\cmake-fmt.exe"
+          Write-Host "Signature status: $($sig.Status)"
+          Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') {
+            Write-Error "Binary signature is not valid: $($sig.Status)"
+            exit 1
+          }
+          Write-Host "Windows binary signed and verified"
 
       - name: Package archive (Linux/macOS)
         if: runner.os != 'Windows'
