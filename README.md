@@ -158,7 +158,7 @@ cmake-fmt searches for config files upward from the formatted file's directory. 
 4. `.cmake-fmt.tml`
 5. `.cmake-fmt.toml`
 
-Multiple config files can coexist — root-level defaults are merged with directory-level overrides.
+Multiple config files can coexist — root-level defaults are merged with directory-level overrides. Add `root: true` to a config file to stop inheriting from parent directories.
 
 ### Example Config
 
@@ -173,6 +173,7 @@ max_line_length = 120
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
+| `root` | boolean | `false` | Stop searching parent directories for config files |
 | `disable_format` | boolean | `false` | Skip formatting entirely |
 | `indent_width` | integer | `4` | Number of spaces per indent level |
 | `max_line_length` | integer | `80` | Max line length (0 = unlimited) |
@@ -194,6 +195,26 @@ max_line_length = 120
 | `indent_closing_paren` | boolean | `false` | Indent closing `)` one level in multiline commands |
 
 ### Per-Setting Examples
+
+#### `root`
+
+Prevents inheriting settings from `.cmake-fmt` files in parent directories. When `root: true` is set, cmake-fmt starts with default values and only applies settings from this file and any closer (child) config files.
+
+This is useful for monorepos or subdirectories that need completely independent formatting rules.
+
+**Without `root: true`** (default behavior):
+```
+/project/.cmake-fmt          # indent_width: 2, max_line_length: 100
+/project/lib/.cmake-fmt      # use_tabs: false
+# Files in /project/lib/ get: indent_width=2 + max_line_length=100 + use_tabs=false (merged)
+```
+
+**With `root: true`:**
+```
+/project/.cmake-fmt          # indent_width: 2, max_line_length: 100
+/project/lib/.cmake-fmt      # root: true, use_tabs: false
+# Files in /project/lib/ get: use_tabs=false + all other settings at defaults (parent ignored)
+```
 
 #### `indent_width`
 
