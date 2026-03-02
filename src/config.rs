@@ -176,17 +176,22 @@ pub fn resolve_config(
     style_override: Option<&str>,
     grammar_files: &[PathBuf],
 ) -> FormatConfig {
-    // Determine search directory
+    // Determine search directory (must be absolute so ancestors() walks the real tree)
     let search_dir = if let Some(path) = file_path {
-        // For file arguments, search from the file's parent directory
-        path.parent().unwrap_or_else(|| Path::new("."))
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        if parent.is_absolute() {
+            parent.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(parent))
+                .unwrap_or_else(|_| parent.to_path_buf())
+        }
     } else {
-        // For stdin, search from current working directory
-        Path::new(".")
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     };
 
     // Find all config files (nearest-first)
-    let config_paths = find_config_files(search_dir);
+    let config_paths = find_config_files(&search_dir);
 
     // If no config files found, use defaults
     if config_paths.is_empty() {
