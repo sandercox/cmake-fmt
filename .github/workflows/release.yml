@@ -302,7 +302,7 @@ jobs:
           if [[ "$CARGO_VERSION" == *-* ]]; then
             # Pre-release: 0.9.0-beta.3 -> 0.9.3 (use pre-release number as patch)
             MAJOR_MINOR=$(echo "$CARGO_VERSION" | cut -d. -f1-2)
-            PRENUM=$(echo "$CARGO_VERSION" | grep -oP '\.\K[0-9]+$')
+            PRENUM=$(echo "$CARGO_VERSION" | rev | cut -d. -f1 | rev)
             MARKETPLACE_VERSION="${MAJOR_MINOR}.${PRENUM}"
           else
             MARKETPLACE_VERSION="$CARGO_VERSION"
