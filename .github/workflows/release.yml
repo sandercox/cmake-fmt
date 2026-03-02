@@ -66,11 +66,12 @@ jobs:
         run: |
           CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           PKG_VERSION=$(node -e "console.log(require('./editors/vscode/package.json').version)")
-          echo "Cargo version:   $CARGO_VERSION"
+          CARGO_BASE="${CARGO_VERSION%%-*}"
+          echo "Cargo version:   $CARGO_VERSION (base: $CARGO_BASE)"
           echo "package.json version: $PKG_VERSION"
-          if [[ "$CARGO_VERSION" != "$PKG_VERSION" ]]; then
-            echo "ERROR: Cargo.toml version ($CARGO_VERSION) does not match editors/vscode/package.json version ($PKG_VERSION)"
-            echo "Fix: Update editors/vscode/package.json version to \"$CARGO_VERSION\""
+          if [[ "$CARGO_BASE" != "$PKG_VERSION" && "$CARGO_VERSION" != "$PKG_VERSION" ]]; then
+            echo "ERROR: package.json version ($PKG_VERSION) does not match Cargo.toml version ($CARGO_VERSION) or its base ($CARGO_BASE)"
+            echo "Fix: Run scripts/bump-version.sh to sync versions"
             exit 1
           fi
           echo "VS Code extension version check passed: $PKG_VERSION"
@@ -297,9 +298,17 @@ jobs:
 
       - name: Sync package.json version from Cargo.toml
         run: |
-          VERSION=${{ steps.version.outputs.version }}
-          cd editors/vscode && node -e "const p=require('./package.json'); p.version='$VERSION'; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n')"
-          echo "Synced package.json version to $VERSION"
+          CARGO_VERSION=${{ steps.version.outputs.version }}
+          if [[ "$CARGO_VERSION" == *-* ]]; then
+            # Pre-release: 0.9.0-beta.3 -> 0.9.3 (use pre-release number as patch)
+            MAJOR_MINOR=$(echo "$CARGO_VERSION" | cut -d. -f1-2)
+            PRENUM=$(echo "$CARGO_VERSION" | grep -oP '\.\K[0-9]+$')
+            MARKETPLACE_VERSION="${MAJOR_MINOR}.${PRENUM}"
+          else
+            MARKETPLACE_VERSION="$CARGO_VERSION"
+          fi
+          cd editors/vscode && node -e "const p=require('./package.json'); p.version='$MARKETPLACE_VERSION'; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n')"
+          echo "Synced package.json version to $MARKETPLACE_VERSION (from Cargo.toml $CARGO_VERSION)"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
