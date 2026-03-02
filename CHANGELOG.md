@@ -4,12 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.9.0-beta.3]
+- Adopt odd/even minor version convention: odd minor versions (e.g. 0.9.x) are pre-releases, even minor versions (e.g. 0.10.x) are stable releases. This is required because the VS Code marketplace does not allow a version number previously used as pre-release to be republished as a stable release.
+- Code signing for release binaries (Apple Developer ID for macOS, Azure Trusted Signing for Windows) and VSIX packages
 
 ## [0.8.0-beta.2]
 - `root: true` config option to prevent inheriting parent directory `.cmake-fmt` files
 - Fix config file path traversal resolving from absolute path
-- Adopt odd/even minor version convention: odd minor versions (e.g. 0.9.x) are pre-releases, even minor versions (e.g. 0.10.x) are stable releases. This is required because the VS Code marketplace does not allow a version number previously used as pre-release to be republished as a stable release.
-- Code signing for release binaries (Apple Developer ID for macOS, Azure Trusted Signing for Windows) and VSIX packages
 
 ## [0.8.0-beta.1]
 - Update README with `collapse_empty_flags` example

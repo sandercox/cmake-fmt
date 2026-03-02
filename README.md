@@ -55,7 +55,7 @@ install(TARGETS myapp mylib RUNTIME DESTINATION bin LIBRARY DESTINATION lib ARCH
 
 ### VS Code Extension
 
-Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=cmake-fmt.cmake-fmt) (coming soon).
+Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=paralleldimension.cmake-fmt).
 
 Enable format-on-save by adding this to your `settings.json`:
 
