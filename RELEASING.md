@@ -12,6 +12,15 @@ The following GitHub repository secrets must be configured before the first rele
 | `OVSX_PAT` | [Open VSX access token](https://open-vsx.org/user-settings/tokens) | Publish to Open VSX Registry |
 | `DOCKERHUB_USERNAME` | [Docker Hub](https://hub.docker.com/settings/security) account username | Push images to Docker Hub |
 | `DOCKERHUB_TOKEN` | [Docker Hub](https://hub.docker.com/settings/security) access token | Push images to Docker Hub |
+| `APPLE_CERTIFICATE_P12_BASE64` | Base64-encoded `.p12` Developer ID Application certificate | Sign macOS binaries |
+| `APPLE_CERTIFICATE_PASSWORD` | Password for the `.p12` certificate | Sign macOS binaries |
+| `APPLE_SIGNING_IDENTITY` | Certificate common name (e.g. `Developer ID Application: Name (TEAMID)`) | Sign macOS binaries |
+| `AZURE_TENANT_ID` | Azure Active Directory tenant ID | Sign Windows binaries |
+| `AZURE_CLIENT_ID` | Azure app registration client ID | Sign Windows binaries |
+| `AZURE_CLIENT_SECRET` | Azure app registration client secret | Sign Windows binaries |
+| `AZURE_SIGNING_ENDPOINT` | Azure Trusted Signing endpoint URL | Sign Windows binaries |
+| `AZURE_SIGNING_ACCOUNT` | Azure Trusted Signing account name | Sign Windows binaries |
+| `AZURE_CERTIFICATE_PROFILE` | Azure Trusted Signing certificate profile name | Sign Windows binaries |
 
 Note: GHCR authentication uses the built-in `GITHUB_TOKEN` — no additional secret needed.
 
@@ -107,10 +116,12 @@ Compiles release binaries for all supported platforms:
 
 For each platform:
 - Builds the `cmake-fmt` binary
+- Signs the binary (macOS: Apple Developer ID with hardened runtime; Windows: Azure Trusted Signing)
 - Packages a standalone archive (`.tar.gz` on Linux/macOS, `.zip` on Windows)
-- Strips the pre-release suffix from `package.json` version (VS Code Marketplace only accepts `major.minor.patch`)
-- Packages a platform-specific VSIX with the bundled binary
-- For pre-release tags: adds `--pre-release` flag to VSIX packaging
+- Syncs `package.json` version from `Cargo.toml`
+- Packages a platform-specific VSIX with the signed binary
+- Signs the VSIX package via `dotnet/sign` with Azure Trusted Signing
+- For pre-release versions (odd minor): adds `--pre-release` flag to VSIX packaging
 
 ### 3. Collect
 
@@ -290,19 +301,26 @@ docker push ghcr.io/sandercox/cmake-fmt --all-tags
 
 ## Pre-Release Releases
 
-Pre-release tags use any semver pre-release suffix after a hyphen:
+Pre-releases use **odd minor versions**. The VS Code marketplace does not allow a version number previously used as pre-release to be republished as a stable release, so odd/even minor parity determines the release channel:
+
+- **Odd minor** (e.g. `0.9.x`) = pre-release
+- **Even minor** (e.g. `0.10.x`) = stable release
+
+Pre-release suffixes (`-beta.N`, `-rc.N`) are allowed on odd minor versions for crates.io but are optional:
 
 ```
-v1.0.0-beta.1
-v1.0.0-rc.1
-v2.0.0-alpha.3
+v0.9.0-beta.1    # odd minor → pre-release
+v0.9.1-rc.1      # odd minor → pre-release
+v0.10.0           # even minor → stable
 ```
+
+The `bump-version.sh` script enforces this: pre-release suffixes on even minor versions are rejected.
 
 ### What Changes for Pre-Releases
 
 | Channel | Behavior |
 |---------|----------|
-| crates.io | Publishes the pre-release version natively (semver supported) |
+| crates.io | Publishes the version natively (semver pre-release suffixes supported) |
 | GitHub Release | Marked as **pre-release** (not shown as "Latest") |
 | VS Code Marketplace | VSIX packaged and published with `--pre-release` flag |
 | Open VSX Registry | Published with `--pre-release` flag |
@@ -310,7 +328,7 @@ v2.0.0-alpha.3
 
 ### Version in Source Files
 
-Both `Cargo.toml` and `editors/vscode/package.json` must be set to the **full pre-release version** (e.g., `1.0.0-beta.1`). The build job automatically strips the pre-release suffix from `package.json` during VSIX packaging because the VS Code Marketplace rejects semver pre-release version strings.
+Both `Cargo.toml` and `editors/vscode/package.json` must have identical version strings.
 
 Pre-release extensions appear in VS Code only for users who opt into pre-release versions.
 
@@ -318,9 +336,11 @@ Pre-release extensions appear in VS Code only for users who opt into pre-release
 
 | Type | When to Use | Example |
 |------|-------------|---------|
-| **Patch** (x.y.**Z**) | Bug fixes, minor formatting improvements | `0.7.0` -> `0.7.1` |
-| **Minor** (x.**Y**.0) | New features, new config options, new CMake command support | `0.7.1` -> `0.8.0` |
-| **Major** (**X**.0.0) | Breaking changes to formatting output, config file format changes, CLI interface changes | `0.8.0` -> `1.0.0` |
+| **Patch** (x.y.**Z**) | Bug fixes, minor formatting improvements | `0.10.0` -> `0.10.1` |
+| **Minor** (x.**Y**.0) | New features, new config options, new CMake command support | `0.10.0` -> `0.12.0` |
+| **Major** (**X**.0.0) | Breaking changes to formatting output, config file format changes, CLI interface changes | `0.12.0` -> `1.0.0` |
+
+**Note:** Stable releases must use even minor versions. Odd minor versions are reserved for pre-releases (see [Pre-Release Releases](#pre-release-releases)).
 
 ## Manual Workflow Dispatch
 

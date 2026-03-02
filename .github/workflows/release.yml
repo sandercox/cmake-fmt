@@ -333,6 +333,23 @@ jobs:
             cd editors/vscode && npx @vscode/vsce package --target ${{ matrix.vscode_target }}
           fi
 
+      - name: Sign VSIX (Azure Trusted Signing)
+        shell: bash
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          dotnet tool install --global sign --version 0.9.1-beta.24325.5
+          VSIX=$(ls editors/vscode/*.vsix | head -1)
+          sign code trusted-signing \
+            --trusted-signing-endpoint "${{ secrets.AZURE_SIGNING_ENDPOINT }}" \
+            --trusted-signing-account "${{ secrets.AZURE_SIGNING_ACCOUNT }}" \
+            --trusted-signing-certificate-profile "${{ secrets.AZURE_CERTIFICATE_PROFILE }}" \
+            --timestamp-url "http://timestamp.acs.microsoft.com" \
+            "$VSIX"
+          echo "Signed VSIX: $VSIX"
+
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
         with:
