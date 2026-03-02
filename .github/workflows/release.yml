@@ -19,16 +19,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Detect pre-release tag
+      - name: Detect pre-release from minor version parity
         id: check_prerelease
         run: |
-          TAG="${{ github.ref_name }}"
-          if [[ "$TAG" == *-* ]]; then
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          if (( MINOR % 2 != 0 )); then
             echo "is_prerelease=true" >> $GITHUB_OUTPUT
-            echo "Pre-release tag detected: $TAG"
+            echo "Pre-release detected: minor version $MINOR is odd (version $VERSION)"
           else
             echo "is_prerelease=false" >> $GITHUB_OUTPUT
-            echo "Stable tag detected: $TAG"
+            echo "Stable release detected: minor version $MINOR is even (version $VERSION)"
           fi
 
       - name: Validate tag version matches Cargo.toml
@@ -217,10 +218,9 @@ jobs:
 
       - name: Sync package.json version from Cargo.toml
         run: |
-          CARGO_VERSION=${{ steps.version.outputs.version }}
-          MARKETPLACE_VERSION="${CARGO_VERSION%%-*}"
-          cd editors/vscode && node -e "const p=require('./package.json'); p.version='$MARKETPLACE_VERSION'; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n')"
-          echo "Synced package.json version to $MARKETPLACE_VERSION (from Cargo.toml $CARGO_VERSION)"
+          VERSION=${{ steps.version.outputs.version }}
+          cd editors/vscode && node -e "const p=require('./package.json'); p.version='$VERSION'; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n')"
+          echo "Synced package.json version to $VERSION"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -247,7 +247,7 @@ jobs:
       - name: Package VSIX
         shell: bash
         run: |
-          IS_PRERELEASE=${{ contains(github.ref_name, '-') }}
+          IS_PRERELEASE=${{ needs.validate.outputs.is_prerelease }}
           if [[ "$IS_PRERELEASE" == "true" ]]; then
             cd editors/vscode && npx @vscode/vsce package --target ${{ matrix.vscode_target }} --pre-release
           else
@@ -321,7 +321,7 @@ jobs:
 
   publish-github-release:
     name: Create GitHub Release
-    needs: publish-crates
+    needs: [publish-crates, validate]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
@@ -364,7 +364,7 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.version }}
           body_path: release-notes.md
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
           files: |
             archives/*.tar.gz
             archives/*.zip
@@ -383,7 +383,7 @@ jobs:
 
   publish-vscode-marketplace:
     name: Publish to VS Code Marketplace
-    needs: publish-github-release
+    needs: [publish-github-release, validate]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -403,10 +403,15 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
+          IS_PRERELEASE=${{ needs.validate.outputs.is_prerelease }}
           count=0
           for vsix in vsix/*.vsix; do
             echo "Publishing $vsix..."
-            npx @vscode/vsce publish --packagePath "$vsix"
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              npx @vscode/vsce publish --packagePath "$vsix" --pre-release
+            else
+              npx @vscode/vsce publish --packagePath "$vsix"
+            fi
             count=$((count + 1))
           done
           echo "Published $count VSIXs to VS Code Marketplace"
@@ -423,7 +428,7 @@ jobs:
 
   publish-openvsx:
     name: Publish to Open VSX Registry
-    needs: publish-vscode-marketplace
+    needs: [publish-vscode-marketplace, validate]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -444,7 +449,7 @@ jobs:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         shell: bash
         run: |
-          IS_PRERELEASE=${{ contains(github.ref_name, '-') }}
+          IS_PRERELEASE=${{ needs.validate.outputs.is_prerelease }}
           count=0
           for vsix in vsix/*.vsix; do
             echo "Publishing $vsix..."

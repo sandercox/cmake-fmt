@@ -213,7 +213,18 @@ echo "New version     : ${NEW_VERSION}"
 echo ""
 
 # Validate the new version format (parse_semver exits on error)
-parse_semver "$NEW_VERSION" > /dev/null
+NEW_PARSED="$(parse_semver "$NEW_VERSION")"
+
+# Validate minor version parity convention:
+#   Odd minor  = pre-release (may have -alpha/-beta/-rc suffix)
+#   Even minor = stable release (no pre-release suffix allowed)
+read -r _ new_minor _ new_pre_tag _ <<< "$NEW_PARSED"
+if (( new_minor % 2 == 0 )) && [[ "$new_pre_tag" != "stable" ]]; then
+  echo "ERROR: Pre-release suffixes are only allowed on odd minor versions." >&2
+  echo "  ${NEW_VERSION} has even minor ($new_minor) but uses a pre-release suffix." >&2
+  echo "  Use an odd minor version instead (e.g. 0.$((new_minor + 1)).0-${new_pre_tag}.N)" >&2
+  exit 1
+fi
 
 # Validate ordering
 validate_version_order "$CURRENT_VERSION" "$NEW_VERSION"
