@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0-beta.2]
+- `root: true` config option to prevent inheriting parent directory `.cmake-fmt` files
+- Fix config file path traversal resolving from absolute path
+
 ## [0.8.0-beta.1]
 - Update README with `collapse_empty_flags` example
 - `final_newline` now is `force`, `remove` or `preserve` (default)
