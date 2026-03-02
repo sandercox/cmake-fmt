@@ -333,28 +333,51 @@ jobs:
             cd editors/vscode && npx @vscode/vsce package --target ${{ matrix.vscode_target }}
           fi
 
-      - name: Sign VSIX (Azure Trusted Signing)
-        shell: bash
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-unsigned-${{ matrix.vscode_target }}
+          path: editors/vscode/*.vsix
+
+  sign-vsix:
+    name: Sign VSIX packages
+    needs: build
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: windows-latest
+    steps:
+      - name: Download all unsigned VSIX artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vsix-unsigned-*
+          merge-multiple: true
+          path: vsix/
+
+      - name: Sign all VSIXs (Azure Trusted Signing)
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        shell: pwsh
         run: |
           dotnet tool install --global sign --version 0.9.1-beta.24325.5
-          VSIX=$(ls editors/vscode/*.vsix | head -1)
-          sign code trusted-signing \
-            --trusted-signing-endpoint "${{ secrets.AZURE_SIGNING_ENDPOINT }}" \
-            --trusted-signing-account "${{ secrets.AZURE_SIGNING_ACCOUNT }}" \
-            --trusted-signing-certificate-profile "${{ secrets.AZURE_CERTIFICATE_PROFILE }}" \
-            --timestamp-url "http://timestamp.acs.microsoft.com" \
-            "$VSIX"
-          echo "Signed VSIX: $VSIX"
+          $vsixFiles = Get-ChildItem vsix/*.vsix
+          foreach ($vsix in $vsixFiles) {
+            Write-Host "Signing $($vsix.Name)..."
+            sign code trusted-signing `
+              --trusted-signing-endpoint "${{ secrets.AZURE_SIGNING_ENDPOINT }}" `
+              --trusted-signing-account "${{ secrets.AZURE_SIGNING_ACCOUNT }}" `
+              --trusted-signing-certificate-profile "${{ secrets.AZURE_CERTIFICATE_PROFILE }}" `
+              --timestamp-url "http://timestamp.acs.microsoft.com" `
+              "$($vsix.FullName)"
+            Write-Host "Signed: $($vsix.Name)"
+          }
+          Write-Host "All $($vsixFiles.Count) VSIXs signed"
 
-      - name: Upload VSIX artifact
+      - name: Upload signed VSIX artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: vsix-${{ matrix.vscode_target }}
-          path: editors/vscode/*.vsix
+          name: vsix-signed
+          path: vsix/*.vsix
 
   collect:
     name: Collect and checksum archives
@@ -486,8 +509,7 @@ jobs:
       - name: Download VSIX artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: vsix-*
-          merge-multiple: true
+          name: vsix-signed
           path: vsix/
 
       - name: Setup Node.js
@@ -531,8 +553,7 @@ jobs:
       - name: Download VSIX artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: vsix-*
-          merge-multiple: true
+          name: vsix-signed
           path: vsix/
 
       - name: Setup Node.js

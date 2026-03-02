@@ -120,18 +120,21 @@ For each platform:
 - Packages a standalone archive (`.tar.gz` on Linux/macOS, `.zip` on Windows)
 - Syncs `package.json` version from `Cargo.toml`
 - Packages a platform-specific VSIX with the signed binary
-- Signs the VSIX package via `dotnet/sign` with Azure Trusted Signing
 - For pre-release versions (odd minor): adds `--pre-release` flag to VSIX packaging
 
-### 3. Collect
+### 3. Sign VSIX Packages
+
+Runs on a Windows runner after all builds complete. Downloads all 6 unsigned VSIX artifacts, signs each one using `dotnet/sign` with Azure Trusted Signing, and uploads the signed VSIXs for downstream publish jobs.
+
+### 4. Collect
 
 Downloads all archive artifacts and generates a `SHA256SUMS` checksum file.
 
-### 4. Publish to crates.io
+### 5. Publish to crates.io
 
 Publishes the Rust crate using OIDC trusted publishing (no long-lived token). Pre-release versions (e.g., `1.0.0-beta.1`) are published natively — crates.io supports semver pre-release identifiers.
 
-### 5. Create GitHub Release
+### 6. Create GitHub Release
 
 Creates a GitHub Release with:
 - All platform archives (`.tar.gz` and `.zip`)
@@ -139,15 +142,15 @@ Creates a GitHub Release with:
 - Release notes extracted from `CHANGELOG.md`
 - Pre-release flag set for pre-release tags
 
-### 6. Publish to VS Code Marketplace
+### 7. Publish to VS Code Marketplace
 
 Publishes all 6 platform-specific VSIXs to the VS Code Marketplace.
 
-### 7. Publish to Open VSX Registry
+### 8. Publish to Open VSX Registry
 
 Publishes all 6 platform-specific VSIXs to the Open VSX Registry. For pre-release tags, the `--pre-release` flag is passed.
 
-### 8. Publish Docker Images
+### 9. Publish Docker Images
 
 A separate `docker.yml` workflow runs in parallel with the release pipeline (triggered by the same `v*.*.*` tag). It builds and pushes Docker images to both Docker Hub (`paralleldimension/cmake-fmt`) and GHCR (`ghcr.io/sandercox/cmake-fmt`).
 
