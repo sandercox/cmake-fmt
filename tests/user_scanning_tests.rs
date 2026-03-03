@@ -104,7 +104,7 @@ fn test_config_file_determines_project_root() {
 
     // Find project root starting from sub directory
     let sub_dir = temp_dir.path().join("project/sub");
-    let project_root = user_scanner::find_project_root(&sub_dir);
+    let project_root = user_scanner::find_project_root(&sub_dir, false);
 
     // Should find the project/ directory (where config file is)
     let expected_root = temp_dir.path().join("project");
@@ -146,7 +146,7 @@ fn test_no_config_file_fallback() {
     );
 
     // Find project root starting from temp dir
-    let project_root = user_scanner::find_project_root(temp_dir.path());
+    let project_root = user_scanner::find_project_root(temp_dir.path(), false);
 
     // Should either:
     // 1. Find a config file in a parent directory (if one exists)
@@ -407,7 +407,7 @@ fn test_find_project_root_stops_at_root_true() {
     // Call find_project_root from /top/sub/deep/
     let deep_dir = temp_dir.path().join("sub/deep");
     std::fs::create_dir_all(&deep_dir).unwrap();
-    let project_root = user_scanner::find_project_root(&deep_dir);
+    let project_root = user_scanner::find_project_root(&deep_dir, false);
 
     // Should stop at /top/ (the root:true boundary), not at /top/sub/
     let expected_root = temp_dir.path().to_path_buf();
@@ -431,7 +431,7 @@ fn test_find_project_root_walks_to_highest_config() {
     // Call find_project_root from /top/mid/deep/
     let deep_dir = temp_dir.path().join("mid/deep");
     std::fs::create_dir_all(&deep_dir).unwrap();
-    let project_root = user_scanner::find_project_root(&deep_dir);
+    let project_root = user_scanner::find_project_root(&deep_dir, false);
 
     // Should return /top/ (the highest config), not /top/mid/ (the nearest)
     let expected_root = temp_dir.path().to_path_buf();
@@ -456,7 +456,7 @@ fn test_find_project_root_walks_past_non_root_to_root_true() {
     // Call find_project_root from /top/mid/sub/deep/
     let deep_dir = temp_dir.path().join("mid/sub/deep");
     std::fs::create_dir_all(&deep_dir).unwrap();
-    let project_root = user_scanner::find_project_root(&deep_dir);
+    let project_root = user_scanner::find_project_root(&deep_dir, false);
 
     // Should walk past mid/ and sub/ (non-root configs), then stop at top/ (root:true)
     let expected_root = temp_dir.path().to_path_buf();
@@ -481,7 +481,7 @@ fn test_find_project_root_with_relative_path() {
     std::env::set_current_dir(temp_dir.path()).unwrap();
 
     // Call find_project_root with a relative path "."
-    let project_root = user_scanner::find_project_root(std::path::Path::new("."));
+    let project_root = user_scanner::find_project_root(std::path::Path::new("."), false);
 
     // Restore original directory before asserting (cleanup first)
     std::env::set_current_dir(&original_dir).unwrap();

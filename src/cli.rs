@@ -682,7 +682,7 @@ fn process_files(
                     .map(|cwd| cwd.join(parent))
                     .unwrap_or_else(|_| parent.to_path_buf())
             };
-            let project_root = cmake_fmt::formatter::grammar::user_scanner::find_project_root(&abs_parent);
+            let project_root = cmake_fmt::formatter::grammar::user_scanner::find_project_root(&abs_parent, verbose);
             project_roots.insert(project_root);
         }
     }

@@ -25,13 +25,24 @@ const CONFIG_FILENAMES: &[&str] = &[
 /// Walks ALL ancestors tracking the highest (furthest from start) config dir found.
 /// Stops early if a config with `root = true` is found — that is a hard boundary.
 /// Returns the directory containing the highest config file, or the start_path if none found.
-pub fn find_project_root(start_path: &Path) -> PathBuf {
+pub fn find_project_root(start_path: &Path, verbose: bool) -> PathBuf {
+    if verbose {
+        eprintln!("verbose: find_project_root starting from {}", start_path.display());
+    }
+
     let mut highest_config_dir: Option<PathBuf> = None;
 
     for ancestor in start_path.ancestors() {
         // Skip the empty path that can appear at the end of relative path ancestor chains
         if ancestor.as_os_str().is_empty() {
+            if verbose {
+                eprintln!("verbose: find_project_root skipping empty ancestor path");
+            }
             continue;
+        }
+
+        if verbose {
+            eprintln!("verbose: find_project_root checking {}", ancestor.display());
         }
 
         // Check if this directory has any config file
@@ -41,18 +52,34 @@ pub fn find_project_root(start_path: &Path) -> PathBuf {
         });
 
         if has_config {
-            // Track this as the highest config dir seen so far
-            highest_config_dir = Some(ancestor.to_path_buf());
-
             // If this config has root:true, stop — hard boundary
             if has_root_config(ancestor) {
+                if verbose {
+                    eprintln!("verbose: find_project_root found root:true config in {} — stopping", ancestor.display());
+                    eprintln!("verbose: find_project_root result: {} (highest config dir)", ancestor.display());
+                }
                 return ancestor.to_path_buf();
             }
+
+            if verbose {
+                eprintln!("verbose: find_project_root found config in {} (no root:true)", ancestor.display());
+            }
+
+            // Track this as the highest config dir seen so far
+            highest_config_dir = Some(ancestor.to_path_buf());
         }
     }
 
     // Return the highest config dir found, or fall back to start_path
-    highest_config_dir.unwrap_or_else(|| start_path.to_path_buf())
+    let result = highest_config_dir.unwrap_or_else(|| start_path.to_path_buf());
+    if verbose {
+        if result == start_path {
+            eprintln!("verbose: find_project_root result: {} (no config found, using start_path)", start_path.display());
+        } else {
+            eprintln!("verbose: find_project_root result: {} (highest config dir)", result.display());
+        }
+    }
+    result
 }
 
 /// Check if a directory contains a config file with root:true (or root = true)

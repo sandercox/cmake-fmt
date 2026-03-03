@@ -40,7 +40,7 @@ static PROJECT_SCAN_CACHE: OnceLock<Mutex<HashMap<PathBuf, user_scanner::Project
 fn get_project_scan(file_path: &Path, verbose: bool) -> user_scanner::ProjectScanResult {
     // Determine project root from the file's parent directory
     let start_dir = file_path.parent().unwrap_or(file_path);
-    let project_root = user_scanner::find_project_root(start_dir);
+    let project_root = user_scanner::find_project_root(start_dir, verbose);
 
     // Get or init cache
     let cache = PROJECT_SCAN_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
