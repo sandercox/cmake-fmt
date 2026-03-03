@@ -689,7 +689,7 @@ fn process_files(
 
     // Populate grammar cache for each unique project root
     for project_root in &project_roots {
-        let _ = cmake_fmt::formatter::grammar::get_project_user_grammars(project_root, verbose);
+        let _ = cmake_fmt::formatter::grammar::get_project_user_grammars(&project_root.join("CMakeLists.txt"), verbose);
     }
 
     // Step 3: Determine if we should use parallel processing
