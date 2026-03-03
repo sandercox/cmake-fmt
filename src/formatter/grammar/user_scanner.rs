@@ -313,7 +313,7 @@ pub fn scan_project_grammars(project_root: &Path, verbose: bool) -> HashMap<Stri
 /// Extract command grammars from a single CMake file
 ///
 /// Finds function()/macro() definitions and extracts grammars from their bodies
-fn extract_grammars_from_file(root: &crate::SyntaxNode) -> HashMap<String, super::CommandGrammar> {
+pub fn extract_grammars_from_file(root: &crate::SyntaxNode) -> HashMap<String, super::CommandGrammar> {
     use crate::cst::CommandInvocation;
 
     let mut grammars = HashMap::new();

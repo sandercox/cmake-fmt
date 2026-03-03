@@ -94,11 +94,18 @@ pub fn format_text_with_diagnostics_and_path(
         single_file_defs
     };
 
+    // Get single-file grammars from cmake_parse_arguments in current file
+    let single_file_grammars = grammar::user_scanner::extract_grammars_from_file(&cst.root);
+
     // Get project-wide user grammars if file_path is provided
     let user_grammars = if let Some(path) = file_path {
-        grammar::get_project_user_grammars(path, verbose)
+        let mut merged = grammar::get_project_user_grammars(path, verbose);
+        // Single-file grammars override project-wide (local wins, matching user_defs behavior)
+        merged.extend(single_file_grammars);
+        merged
     } else {
-        std::collections::HashMap::new()
+        // Stdin case: use only single-file grammars
+        single_file_grammars
     };
 
     // Convert config grammars and merge (config overrides auto-detected)
