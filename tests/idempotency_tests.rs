@@ -16,11 +16,15 @@ my_install(
 
     // Define custom grammar via config
     let mut command_grammars = HashMap::new();
-    let mut grammar = cmake_fmt::formatter::CommandGrammarConfig::default();
-    grammar.options = vec!["OPTIONAL".to_string(), "REQUIRED".to_string()];
-    grammar.one_value_keywords = vec!["DESTINATION".to_string(), "COMPONENT".to_string()];
-    grammar.multi_value_keywords = vec!["FILES".to_string(), "TARGETS".to_string()];
-    command_grammars.insert("my_install".to_string(), grammar);
+    command_grammars.insert(
+        "my_install".to_string(),
+        cmake_fmt::formatter::CommandGrammarConfig {
+            options: vec!["OPTIONAL".to_string(), "REQUIRED".to_string()],
+            one_value_keywords: vec!["DESTINATION".to_string(), "COMPONENT".to_string()],
+            multi_value_keywords: vec!["FILES".to_string(), "TARGETS".to_string()],
+            ..Default::default()
+        },
+    );
 
     let config = FormatConfig {
         command_grammars,
@@ -161,11 +165,15 @@ my_custom_command(
 
     // Config grammar for my_custom_command
     let mut command_grammars = HashMap::new();
-    let mut grammar = cmake_fmt::formatter::CommandGrammarConfig::default();
-    grammar.options = vec!["FLAG1".to_string(), "FLAG2".to_string()];
-    grammar.one_value_keywords = vec!["OPTION".to_string()];
-    grammar.multi_value_keywords = vec!["FILES".to_string()];
-    command_grammars.insert("my_custom_command".to_string(), grammar);
+    command_grammars.insert(
+        "my_custom_command".to_string(),
+        cmake_fmt::formatter::CommandGrammarConfig {
+            options: vec!["FLAG1".to_string(), "FLAG2".to_string()],
+            one_value_keywords: vec!["OPTION".to_string()],
+            multi_value_keywords: vec!["FILES".to_string()],
+            ..Default::default()
+        },
+    );
 
     let config = FormatConfig {
         command_grammars,

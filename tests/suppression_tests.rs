@@ -374,9 +374,11 @@ fn test_suppression_idempotent_mixed() {
 
 #[test]
 fn test_inline_style_override_indent_width() {
-    let mut config = FormatConfig::default();
-    config.use_tabs = false; // Use spaces so we can test indent_width
-    config.indent_width = 4; // Default
+    let config = FormatConfig {
+        use_tabs: false, // Use spaces so we can test indent_width
+        indent_width: 4, // Default
+        ..Default::default()
+    };
 
     let input = r#"# cmake-fmt: indent_width=2
 if(CONDITION)
@@ -401,8 +403,10 @@ endif()
 
 #[test]
 fn test_inline_style_override_max_line_length() {
-    let mut config = FormatConfig::default();
-    config.max_line_length = 80; // Default
+    let config = FormatConfig {
+        max_line_length: 80, // Default
+        ..Default::default()
+    };
 
     let input = r#"# cmake-fmt: max_line_length=40
 target_link_libraries(mylib PUBLIC foo bar baz qux)
@@ -419,9 +423,11 @@ target_link_libraries(mylib PUBLIC foo bar baz qux)
 
 #[test]
 fn test_inline_style_override_midfile() {
-    let mut config = FormatConfig::default();
-    config.use_tabs = false;
-    config.indent_width = 4;
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..Default::default()
+    };
 
     let input = r#"if(FIRST)
     set(VAR1 value)
@@ -449,9 +455,11 @@ endif()
 
 #[test]
 fn test_inline_style_override_multiple() {
-    let mut config = FormatConfig::default();
-    config.use_tabs = true;
-    config.indent_width = 4;
+    let config = FormatConfig {
+        use_tabs: true,
+        indent_width: 4,
+        ..Default::default()
+    };
 
     let input = r#"# cmake-fmt: indent_width=2
 # cmake-fmt: use_tabs=false
@@ -474,9 +482,11 @@ endif()
 
 #[test]
 fn test_inline_style_override_idempotent() {
-    let mut config = FormatConfig::default();
-    config.use_tabs = false;
-    config.indent_width = 4;
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..Default::default()
+    };
 
     let input = r#"# cmake-fmt: indent_width=2
 if(CONDITION)
@@ -494,9 +504,11 @@ endif()
 
 #[test]
 fn test_inline_style_override_with_suppression() {
-    let mut config = FormatConfig::default();
-    config.use_tabs = false;
-    config.indent_width = 4;
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 4,
+        ..Default::default()
+    };
 
     let input = r#"# cmake-fmt: indent_width=2
 if(CONDITION)
@@ -552,8 +564,10 @@ set(MY_VAR value)
 
 #[test]
 fn test_inline_style_override_preserved_in_output() {
-    let mut config = FormatConfig::default();
-    config.use_tabs = false;
+    let config = FormatConfig {
+        use_tabs: false,
+        ..Default::default()
+    };
 
     let input = r#"# cmake-fmt: indent_width=2
 if(CONDITION)
@@ -575,8 +589,10 @@ endif()
 
 #[test]
 fn test_suppression_off_prevents_comment_normalization() {
-    let mut config = FormatConfig::default();
-    config.comment_style = CommentStyle::HashSpace;
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashSpace,
+        ..Default::default()
+    };
 
     let input = r#"# cmake-fmt: off
 #if (WIN32 OR APPLE)
@@ -604,8 +620,10 @@ fn test_suppression_off_prevents_comment_normalization() {
 
 #[test]
 fn test_suppression_off_at_end_of_file() {
-    let mut config = FormatConfig::default();
-    config.comment_style = CommentStyle::HashSpace;
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashSpace,
+        ..Default::default()
+    };
 
     let input = r#"some_command()
 # cmake-fmt: off
@@ -639,8 +657,10 @@ fn test_suppression_off_at_end_of_file() {
 
 #[test]
 fn test_suppression_off_leading_comments_raw() {
-    let mut config = FormatConfig::default();
-    config.comment_style = CommentStyle::HashSpace;
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashSpace,
+        ..Default::default()
+    };
 
     let input = r#"# cmake-fmt: off
 #  indented comment

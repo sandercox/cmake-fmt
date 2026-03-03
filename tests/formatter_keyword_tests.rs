@@ -1513,11 +1513,14 @@ fn test_command_binpack_with_leading_comment() {
 fn test_single_value_keyword_limits_consumption() {
     // SingleValue keyword should consume exactly one value.
     // Overflow args become positional (not nested under the keyword).
-    let mut grammar = CommandGrammarConfig::default();
-    grammar.one_value_keywords = vec!["OUTPUT".to_string(), "PLATFORM".to_string()];
-
     let mut command_grammars = HashMap::new();
-    command_grammars.insert("my_command".to_string(), grammar);
+    command_grammars.insert(
+        "my_command".to_string(),
+        CommandGrammarConfig {
+            one_value_keywords: vec!["OUTPUT".to_string(), "PLATFORM".to_string()],
+            ..Default::default()
+        },
+    );
 
     let config = FormatConfig {
         command_grammars,
@@ -1540,15 +1543,18 @@ fn test_single_value_keyword_limits_consumption() {
 #[test]
 fn test_single_value_overflow_multiline() {
     // When the line is long enough to break, overflow args should appear at keyword indent level
-    let mut grammar = CommandGrammarConfig::default();
-    grammar.one_value_keywords = vec![
-        "OUTPUT".to_string(),
-        "PLATFORM".to_string(),
-        "ARCHITECTURE".to_string(),
-    ];
-
     let mut command_grammars = HashMap::new();
-    command_grammars.insert("generate_ci".to_string(), grammar);
+    command_grammars.insert(
+        "generate_ci".to_string(),
+        CommandGrammarConfig {
+            one_value_keywords: vec![
+                "OUTPUT".to_string(),
+                "PLATFORM".to_string(),
+                "ARCHITECTURE".to_string(),
+            ],
+            ..Default::default()
+        },
+    );
 
     let config = FormatConfig {
         command_grammars,

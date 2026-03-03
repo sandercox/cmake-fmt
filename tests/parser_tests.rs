@@ -5,23 +5,6 @@ use rstest::rstest;
 use std::fs;
 use std::path::PathBuf;
 
-/// Helper to get all .cmake fixtures
-fn fixture_files() -> Vec<PathBuf> {
-    let fixtures_dir = PathBuf::from("tests/fixtures");
-    fs::read_dir(&fixtures_dir)
-        .expect("fixtures directory exists")
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
-            if path.extension()? == "cmake" {
-                Some(path)
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
 // ============================================================================
 // Round-trip tests
 // ============================================================================
@@ -230,10 +213,7 @@ fn test_error_recovery_continues() {
 
     // First and last commands should be valid
     assert_eq!(commands[0].name_text(), Some("message".to_string()));
-    let last_valid = commands
-        .iter()
-        .filter(|cmd| cmd.name_text().is_some())
-        .next_back();
+    let last_valid = commands.iter().rfind(|cmd| cmd.name_text().is_some());
     assert_eq!(last_valid.unwrap().name_text(), Some("project".to_string()));
 }
 

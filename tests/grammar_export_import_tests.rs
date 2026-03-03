@@ -169,8 +169,10 @@ FILES = "MultiValue"
     fs::write(&grammar_path, grammar_content).expect("Failed to write grammar file");
 
     // Create a config with the grammar file
-    let mut config = FormatConfig::default();
-    config.grammar_files = vec![grammar_path];
+    let config = FormatConfig {
+        grammar_files: vec![grammar_path],
+        ..Default::default()
+    };
 
     // Format a CMake file that uses the custom grammar
     let cmake_content = "my_special_command(REQUIRED FILES file1.txt file2.txt)\n";
@@ -188,10 +190,14 @@ fn test_bin_pack_keywords_in_config() {
     use cmake_fmt::formatter::CommandGrammarConfig;
 
     let mut config_grammars = HashMap::new();
-    let mut grammar_config = CommandGrammarConfig::default();
-    grammar_config.options = vec!["VERBATIM".to_string()];
-    grammar_config.bin_pack_keywords = vec!["COMMAND".to_string()];
-    config_grammars.insert("my_command".to_string(), grammar_config);
+    config_grammars.insert(
+        "my_command".to_string(),
+        CommandGrammarConfig {
+            options: vec!["VERBATIM".to_string()],
+            bin_pack_keywords: vec!["COMMAND".to_string()],
+            ..Default::default()
+        },
+    );
 
     let grammar_map = config_grammars_to_map(&config_grammars);
 
@@ -294,14 +300,19 @@ CUSTOM_KEYWORD = "Flag"
     fs::write(&grammar_path, grammar_content).expect("Failed to write grammar file");
 
     // Create a config that also defines find_package
-    let mut config = FormatConfig::default();
-    config.grammar_files = vec![grammar_path];
-
-    let mut grammar_config = cmake_fmt::formatter::CommandGrammarConfig::default();
-    grammar_config.options = vec!["CONFIG_KEYWORD".to_string()];
-    config
-        .command_grammars
-        .insert("find_package".to_string(), grammar_config);
+    let mut command_grammars = std::collections::HashMap::new();
+    command_grammars.insert(
+        "find_package".to_string(),
+        cmake_fmt::formatter::CommandGrammarConfig {
+            options: vec!["CONFIG_KEYWORD".to_string()],
+            ..Default::default()
+        },
+    );
+    let config = FormatConfig {
+        grammar_files: vec![grammar_path],
+        command_grammars,
+        ..Default::default()
+    };
 
     // Format with this config - the config grammar should take precedence
     let cmake_content = "find_package(CONFIG_KEYWORD CUSTOM_KEYWORD)\n";

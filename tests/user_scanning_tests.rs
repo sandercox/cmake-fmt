@@ -69,7 +69,7 @@ fn test_unreferenced_files_not_scanned() {
     create_file(&temp_dir, "src/CMakeLists.txt", "build_only_func(arg1)\n");
 
     // Test that scanner doesn't include unreferenced build/ directory files
-    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
+    let user_commands = user_scanner::scan_project(temp_dir.path(), false).commands;
 
     // Verify build_only_func is NOT found (build/ not referenced)
     assert!(
@@ -116,7 +116,7 @@ fn test_config_file_determines_project_root() {
     );
 
     // Scan for user commands from that root
-    let user_commands = user_scanner::scan_project_commands(&project_root, false);
+    let user_commands = user_scanner::scan_project(&project_root, false).commands;
 
     // Verify project_func is found
     assert!(
@@ -184,7 +184,7 @@ fn test_malformed_file_skipped() {
     create_file(&temp_dir, "bad.cmake", "function(incomplete\n");
 
     // Scan should not crash and should find the good function
-    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
+    let user_commands = user_scanner::scan_project(temp_dir.path(), false).commands;
 
     assert!(
         user_commands.contains_key("good_func"),
@@ -256,7 +256,7 @@ fn test_add_subdirectory_chain() {
         "function(libb_func)\nendfunction()\n",
     );
 
-    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
+    let user_commands = user_scanner::scan_project(temp_dir.path(), false).commands;
 
     // Verify both functions are found
     assert!(
@@ -287,7 +287,7 @@ fn test_include_chain() {
         "include(${CMAKE_CURRENT_LIST_DIR}/b.cmake)\nfunction(func_a)\nendfunction()\n",
     );
 
-    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
+    let user_commands = user_scanner::scan_project(temp_dir.path(), false).commands;
 
     // Verify func_a is found
     assert!(
@@ -315,7 +315,7 @@ fn test_stray_cmake_file_not_found() {
         "function(stray_func)\nendfunction()\n",
     );
 
-    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
+    let user_commands = user_scanner::scan_project(temp_dir.path(), false).commands;
 
     // Verify stray_func is NOT found (file not referenced)
     assert!(
@@ -344,7 +344,7 @@ fn test_root_true_isolates_subdirectory_definitions() {
     create_file(&temp_dir, "sub/.cmake-fmt.toml", "root = true\n");
 
     // Scan from root — sub_only_func should NOT be visible
-    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
+    let user_commands = user_scanner::scan_project(temp_dir.path(), false).commands;
 
     assert!(
         !user_commands.contains_key("sub_only_func"),
@@ -372,7 +372,7 @@ fn test_without_root_true_subdirectory_definitions_visible() {
     create_file(&temp_dir, "sub/.cmake-fmt.toml", "indent_width = 4\n");
 
     // Scan from root — sub_only_func SHOULD be visible (no isolation)
-    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
+    let user_commands = user_scanner::scan_project(temp_dir.path(), false).commands;
 
     assert!(
         user_commands.contains_key("sub_only_func"),

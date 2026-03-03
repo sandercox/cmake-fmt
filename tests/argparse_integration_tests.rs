@@ -53,8 +53,10 @@ my_install(TARGETS mylib mylib2 DESTINATION lib COMPONENT runtime CONFIGURATIONS
         ),
     ];
 
-    let mut config = FormatConfig::default();
-    config.max_line_length = 40; // Force breaking
+    let config = FormatConfig {
+        max_line_length: 40, // Force breaking
+        ..Default::default()
+    };
 
     let result = setup_and_format(&files, "CMakeLists.txt", &config);
 
@@ -171,8 +173,10 @@ my_install(TARGETS mylib mylib2 DESTINATION lib COMPONENT runtime CONFIGURATIONS
         ),
     ];
 
-    let mut config = FormatConfig::default();
-    config.max_line_length = 40; // Force breaking
+    let config = FormatConfig {
+        max_line_length: 40, // Force breaking
+        ..Default::default()
+    };
 
     let result1 = setup_and_format(&files, "CMakeLists.txt", &config);
 
@@ -215,8 +219,10 @@ my_build(VERBOSE SOURCES main.cpp util.cpp HEADERS main.h OUTPUT_DIR build)
         ),
     ];
 
-    let mut config = FormatConfig::default();
-    config.max_line_length = 40; // Force breaking
+    let config = FormatConfig {
+        max_line_length: 40, // Force breaking
+        ..Default::default()
+    };
 
     let result = setup_and_format(&files, "CMakeLists.txt", &config);
 
@@ -249,8 +255,10 @@ mevi_ConfigureExample(
 "#,
     )];
 
-    let mut config = FormatConfig::default();
-    config.max_line_length = 40; // Force breaking
+    let config = FormatConfig {
+        max_line_length: 40, // Force breaking
+        ..Default::default()
+    };
 
     let result = setup_and_format(&files, "CMakeLists.txt", &config);
 
@@ -277,8 +285,10 @@ endfunction()
 my_cmd(OUTPUT build SOURCES main.cpp util.cpp)
 "#;
 
-    let mut config = FormatConfig::default();
-    config.max_line_length = 30; // Force breaking
+    let config = FormatConfig {
+        max_line_length: 30, // Force breaking
+        ..Default::default()
+    };
 
     let (result, _warnings) = format_text_with_diagnostics(input, &config);
 

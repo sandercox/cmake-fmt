@@ -15,8 +15,10 @@ fn test_sort_sources_disabled_by_default() {
 #[test]
 fn test_sort_sources_alphabetical_basic() {
     let input = "target_sources(mylib\n\tPUBLIC\n\t\tz.cpp\n\t\ta.cpp\n\t\tm.cpp\n)\n";
-    let mut config = FormatConfig::default();
-    config.sort_sources = SortSources::Alphabetical;
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        ..Default::default()
+    };
     let result = format_text(input, &config);
 
     // Files should be sorted: a, m, z
@@ -30,8 +32,10 @@ fn test_sort_sources_alphabetical_basic() {
 #[test]
 fn test_sort_sources_case_insensitive() {
     let input = "target_sources(mylib\n\tPUBLIC\n\t\tZoo.cpp\n\t\tapple.cpp\n\t\tBanana.cpp\n)\n";
-    let mut config = FormatConfig::default();
-    config.sort_sources = SortSources::Alphabetical;
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        ..Default::default()
+    };
     let result = format_text(input, &config);
 
     // Files should be sorted case-insensitively: apple, Banana, Zoo
@@ -51,8 +55,10 @@ fn test_sort_sources_case_insensitive() {
 #[test]
 fn test_sort_sources_blank_line_sections() {
     let input = "set(SOURCES\n\tz.cpp\n\ta.cpp\n\n\tc.cpp\n\tb.cpp\n)\n";
-    let mut config = FormatConfig::default();
-    config.sort_sources = SortSources::Alphabetical;
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        ..Default::default()
+    };
     let result = format_text(input, &config);
 
     // First section: a.cpp, z.cpp
@@ -76,8 +82,10 @@ fn test_sort_sources_blank_line_sections() {
 #[test]
 fn test_sort_sources_preserves_non_filenames() {
     let input = "set(MY_VAR ${SOME_VAR} z.cpp a.cpp)\n";
-    let mut config = FormatConfig::default();
-    config.sort_sources = SortSources::Alphabetical;
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        ..Default::default()
+    };
     let result = format_text(input, &config);
 
     // MY_VAR and ${SOME_VAR} should stay first (pre-keyword section not all filenames)
@@ -90,8 +98,10 @@ fn test_sort_sources_preserves_non_filenames() {
 #[test]
 fn test_sort_sources_with_keyword_sections() {
     let input = "target_sources(mylib\n\tPUBLIC\n\t\tz.cpp\n\t\ta.cpp\n\tPRIVATE\n\t\ty.cpp\n\t\tb.cpp\n)\n";
-    let mut config = FormatConfig::default();
-    config.sort_sources = SortSources::Alphabetical;
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        ..Default::default()
+    };
     let result = format_text(input, &config);
 
     // PUBLIC section: a.cpp, z.cpp
@@ -117,8 +127,10 @@ fn test_sort_sources_with_keyword_sections() {
 #[test]
 fn test_sort_sources_with_comments() {
     let input = "target_sources(mylib\n\tPUBLIC\n\t\t# Widget implementation\n\t\tz_widget.cpp\n\t\ta_main.cpp\n)\n";
-    let mut config = FormatConfig::default();
-    config.sort_sources = SortSources::Alphabetical;
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        ..Default::default()
+    };
     let result = format_text(input, &config);
 
     // a_main.cpp should come first (no comment)
@@ -137,9 +149,11 @@ fn test_sort_sources_with_comments() {
 #[test]
 fn test_sort_sources_with_source_grouping() {
     let input = "target_sources(mylib\n\tPUBLIC\n\t\tz.cpp\n\t\tz.h\n\t\ta.cpp\n\t\ta.h\n)\n";
-    let mut config = FormatConfig::default();
-    config.sort_sources = SortSources::Alphabetical;
-    config.source_grouping = SourceGrouping::HeadersFirst;
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        source_grouping: SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
     let result = format_text(input, &config);
 
     // After sorting: a.cpp, a.h, z.cpp, z.h
@@ -161,8 +175,10 @@ fn test_sort_sources_with_source_grouping() {
 #[test]
 fn test_sort_sources_no_sort_directive() {
     let input = "# cmake-fmt: no-sort\ntarget_sources(mylib\n\tPUBLIC\n\t\tz.cpp\n\t\ta.cpp\n)\ntarget_sources(other\n\tPUBLIC\n\t\tz.cpp\n\t\ta.cpp\n)\n";
-    let mut config = FormatConfig::default();
-    config.sort_sources = SortSources::Alphabetical;
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        ..Default::default()
+    };
     let result = format_text(input, &config);
 
     // First target_sources should keep z, a order (no-sort directive)
@@ -217,8 +233,10 @@ fn test_sort_sources_no_sort_directive() {
 #[test]
 fn test_sort_sources_add_executable() {
     let input = "add_executable(myapp\n\tz.cpp\n\ta.cpp\n\tm.cpp\n)\n";
-    let mut config = FormatConfig::default();
-    config.sort_sources = SortSources::Alphabetical;
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        ..Default::default()
+    };
     let result = format_text(input, &config);
 
     // Target name myapp stays first, files are sorted: a, m, z
@@ -236,8 +254,10 @@ fn test_sort_sources_add_executable() {
 #[test]
 fn test_sort_sources_add_library() {
     let input = "add_library(mylib\n\tz.cpp\n\ta.cpp\n)\n";
-    let mut config = FormatConfig::default();
-    config.sort_sources = SortSources::Alphabetical;
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        ..Default::default()
+    };
     let result = format_text(input, &config);
 
     // Library name mylib stays first, files are sorted: a, z
@@ -253,8 +273,10 @@ fn test_sort_sources_add_library() {
 #[test]
 fn test_sort_sources_idempotent() {
     let input = "target_sources(mylib\n\tPUBLIC\n\t\tz.cpp\n\t\ta.cpp\n\t\tm.cpp\n)\n";
-    let mut config = FormatConfig::default();
-    config.sort_sources = SortSources::Alphabetical;
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        ..Default::default()
+    };
 
     let result1 = format_text(input, &config);
     let result2 = format_text(&result1, &config);
@@ -277,8 +299,10 @@ sort_sources = "alphabetical"
 fn test_sort_sources_with_paths() {
     let input =
         "target_sources(mylib\n\tPUBLIC\n\t\tsrc/z.cpp\n\t\tinclude/a.h\n\t\tsrc/b.cpp\n)\n";
-    let mut config = FormatConfig::default();
-    config.sort_sources = SortSources::Alphabetical;
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        ..Default::default()
+    };
     let result = format_text(input, &config);
 
     // Files with directory prefixes should sort by full path
@@ -295,9 +319,11 @@ fn test_sort_sources_paired_lines_sort_as_unit() {
     // When source_grouping is already applied (re-format of paired output),
     // the "foo.h foo.cpp" paired lines should sort as units
     let input = "target_sources(mylib\n\tPUBLIC\n\t\tz.h z.cpp\n\t\ta.h a.cpp\n)\n";
-    let mut config = FormatConfig::default();
-    config.sort_sources = SortSources::Alphabetical;
-    config.source_grouping = SourceGrouping::HeadersFirst;
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        source_grouping: SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
     let result = format_text(input, &config);
 
     // Paired lines should be sorted as units by their first component
