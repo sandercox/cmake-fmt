@@ -395,6 +395,79 @@ fn test_without_root_true_subdirectory_definitions_visible() {
 }
 
 #[test]
+fn test_find_project_root_stops_at_root_true() {
+    clear_project_scan_cache();
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create: /top/.cmake-fmt.toml with root = true, /top/sub/.cmake-fmt.toml (empty)
+    create_file(&temp_dir, ".cmake-fmt.toml", "root = true\n");
+    create_file(&temp_dir, "sub/.cmake-fmt.toml", "");
+
+    // Call find_project_root from /top/sub/deep/
+    let deep_dir = temp_dir.path().join("sub/deep");
+    std::fs::create_dir_all(&deep_dir).unwrap();
+    let project_root = user_scanner::find_project_root(&deep_dir);
+
+    // Should stop at /top/ (the root:true boundary), not at /top/sub/
+    let expected_root = temp_dir.path().to_path_buf();
+    assert_eq!(
+        project_root, expected_root,
+        "Expected find_project_root to stop at root:true boundary (top dir), not at the nearest config (sub dir). Got {:?}",
+        project_root
+    );
+}
+
+#[test]
+fn test_find_project_root_walks_to_highest_config() {
+    clear_project_scan_cache();
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create: /top/.cmake-fmt.toml (empty, no root:true), /top/mid/.cmake-fmt.toml (empty)
+    create_file(&temp_dir, ".cmake-fmt.toml", "");
+    create_file(&temp_dir, "mid/.cmake-fmt.toml", "");
+
+    // Call find_project_root from /top/mid/deep/
+    let deep_dir = temp_dir.path().join("mid/deep");
+    std::fs::create_dir_all(&deep_dir).unwrap();
+    let project_root = user_scanner::find_project_root(&deep_dir);
+
+    // Should return /top/ (the highest config), not /top/mid/ (the nearest)
+    let expected_root = temp_dir.path().to_path_buf();
+    assert_eq!(
+        project_root, expected_root,
+        "Expected find_project_root to walk to the highest config (top dir), not stop at nearest (mid dir). Got {:?}",
+        project_root
+    );
+}
+
+#[test]
+fn test_find_project_root_walks_past_non_root_to_root_true() {
+    clear_project_scan_cache();
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create: /top/.cmake-fmt.toml with root = true, /top/mid/.cmake-fmt.toml (empty), /top/mid/sub/.cmake-fmt.toml (empty)
+    create_file(&temp_dir, ".cmake-fmt.toml", "root = true\n");
+    create_file(&temp_dir, "mid/.cmake-fmt.toml", "");
+    create_file(&temp_dir, "mid/sub/.cmake-fmt.toml", "");
+
+    // Call find_project_root from /top/mid/sub/deep/
+    let deep_dir = temp_dir.path().join("mid/sub/deep");
+    std::fs::create_dir_all(&deep_dir).unwrap();
+    let project_root = user_scanner::find_project_root(&deep_dir);
+
+    // Should walk past mid/ and sub/ (non-root configs), then stop at top/ (root:true)
+    let expected_root = temp_dir.path().to_path_buf();
+    assert_eq!(
+        project_root, expected_root,
+        "Expected find_project_root to walk past non-root configs (mid and sub) and stop at root:true boundary (top dir). Got {:?}",
+        project_root
+    );
+}
+
+#[test]
 fn test_find_project_root_with_relative_path() {
     clear_project_scan_cache();
 

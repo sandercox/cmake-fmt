@@ -22,20 +22,37 @@ const CONFIG_FILENAMES: &[&str] = &[
 /// 4. `.cmake-fmt.yml` (YAML shorthand)
 /// 5. `.cmake-fmt` (extensionless, parsed as YAML)
 ///
-/// Returns the directory containing the config file, or the start_path if none found
+/// Walks ALL ancestors tracking the highest (furthest from start) config dir found.
+/// Stops early if a config with `root = true` is found — that is a hard boundary.
+/// Returns the directory containing the highest config file, or the start_path if none found.
 pub fn find_project_root(start_path: &Path) -> PathBuf {
-    // Walk up the directory tree
+    let mut highest_config_dir: Option<PathBuf> = None;
+
     for ancestor in start_path.ancestors() {
-        for filename in CONFIG_FILENAMES {
+        // Skip the empty path that can appear at the end of relative path ancestor chains
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+
+        // Check if this directory has any config file
+        let has_config = CONFIG_FILENAMES.iter().any(|filename| {
             let config_path = ancestor.join(filename);
-            if config_path.exists() && config_path.is_file() {
+            config_path.exists() && config_path.is_file()
+        });
+
+        if has_config {
+            // Track this as the highest config dir seen so far
+            highest_config_dir = Some(ancestor.to_path_buf());
+
+            // If this config has root:true, stop — hard boundary
+            if has_root_config(ancestor) {
                 return ancestor.to_path_buf();
             }
         }
     }
 
-    // No config file found, use start_path as project root
-    start_path.to_path_buf()
+    // Return the highest config dir found, or fall back to start_path
+    highest_config_dir.unwrap_or_else(|| start_path.to_path_buf())
 }
 
 /// Check if a directory contains a config file with root:true (or root = true)
