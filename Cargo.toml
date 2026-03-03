@@ -1,6 +1,6 @@
 [package]
 name = "cmake-fmt"
-version = "0.9.0-beta.4"
+version = "0.10.0"
 edition = "2024"
 description = "Fast CMake formatter with grammar-aware line wrapping"
 license = "MIT"
