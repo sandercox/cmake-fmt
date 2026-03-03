@@ -53,7 +53,7 @@ fn load_config_as_table(path: &Path) -> Result<toml::Table> {
     match extension {
         "toml" | "tml" => toml::from_str::<toml::Table>(&content)
             .with_context(|| format!("Failed to parse TOML config: {}", path.display())),
-        "yaml" | "yml" | _ => {
+        _ => {
             // YAML or extensionless - parse and convert to TOML table
             let yaml_value: serde_yml::Value = serde_yml::from_str(&content)
                 .with_context(|| format!("Failed to parse YAML config: {}", path.display()))?;
@@ -88,10 +88,10 @@ fn yml_value_to_toml_value(v: serde_yml::Value) -> Option<toml::Value> {
         serde_yml::Value::Mapping(map) => {
             let mut table = toml::Table::new();
             for (k, v) in map {
-                if let serde_yml::Value::String(key) = k {
-                    if let Some(value) = yml_value_to_toml_value(v) {
-                        table.insert(key, value);
-                    }
+                if let serde_yml::Value::String(key) = k
+                    && let Some(value) = yml_value_to_toml_value(v)
+                {
+                    table.insert(key, value);
                 }
             }
             Some(toml::Value::Table(table))

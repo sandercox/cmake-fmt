@@ -93,6 +93,7 @@ fn print_warnings(warnings: &[SuppressionWarning], file_label: &str) {
 }
 
 /// Print all available style settings
+#[allow(clippy::print_literal)]
 fn print_style_help() {
     println!(
         "Available style settings for --style and config files (.cmake-fmt.toml / .cmake-fmt.yaml / .cmake-fmt):"
@@ -177,6 +178,7 @@ fn print_style_help() {
 }
 
 /// Print grammar file format documentation
+#[allow(clippy::print_literal)]
 fn print_grammar_help() {
     println!("Grammar files teach cmake-fmt about custom CMake commands");
     println!();
@@ -396,7 +398,7 @@ pub fn run() -> Result<ExitCode> {
     if cli.interactive {
         // Determine if stdin input is specified
         let is_stdin =
-            cli.files.is_empty() || (cli.files.len() == 1 && cli.files[0] == PathBuf::from("-"));
+            cli.files.is_empty() || (cli.files.len() == 1 && cli.files[0] == Path::new("-"));
 
         // Validate exactly one file is provided (no stdin, no multi-file)
         // Do this BEFORE TTY check so error messages are more specific
@@ -442,7 +444,7 @@ pub fn run() -> Result<ExitCode> {
     // stdin is active when:
     //   - files list is empty AND stdin is NOT a terminal (piped input), OR
     //   - the single argument is "-"
-    let explicit_stdin = cli.files.len() == 1 && cli.files[0] == PathBuf::from("-");
+    let explicit_stdin = cli.files.len() == 1 && cli.files[0] == Path::new("-");
     let stdin_is_terminal = std::io::stdin().is_terminal();
     let is_stdin = explicit_stdin || (cli.files.is_empty() && !stdin_is_terminal);
 
@@ -655,10 +657,10 @@ fn is_cmake_file(path: &Path) -> bool {
         if name_str == "CMakeLists.txt" {
             return true;
         }
-        if let Some(ext) = path.extension() {
-            if ext.to_string_lossy().eq_ignore_ascii_case("cmake") {
-                return true;
-            }
+        if let Some(ext) = path.extension()
+            && ext.to_string_lossy().eq_ignore_ascii_case("cmake")
+        {
+            return true;
         }
     }
     false
@@ -709,6 +711,7 @@ fn process_stdin(
 }
 
 /// Process files
+#[allow(clippy::too_many_arguments)]
 fn process_files(
     files: &[PathBuf],
     style_override: Option<&str>,

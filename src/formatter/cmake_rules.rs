@@ -234,6 +234,7 @@ pub fn group_source_pairs(
 /// Apply source grouping while preserving blank line boundaries.
 /// Groups files within segments (between blank lines) independently,
 /// then adjusts blank line positions and comment positions for the shorter grouped segments.
+#[allow(clippy::type_complexity)]
 fn group_source_pairs_preserving_blanks(
     args: &[String],
     blank_lines: &[usize],
@@ -892,6 +893,7 @@ pub fn group_sub_keyword_args(args: &[String], sub_keywords: &HashSet<String>) -
 /// `sub_keywords`: optional set of keywords that should be grouped within collection keywords
 /// like FILES_MATCHING. When present, MultiValue sections that contain sub_keywords will
 /// render logical groups (each sub_keyword + its values) per line.
+#[allow(clippy::too_many_arguments)]
 pub fn format_keyword_aware_args(
     arg_list: &ArgumentList,
     sections: Vec<KeywordSection>,

@@ -232,11 +232,10 @@ pub fn import_grammar_file(content: &str) -> Result<HashMap<String, CommandGramm
 
     for entry in grammar_file.grammars {
         // Skip multi-mode entries for now (only simple commands supported in import)
-        if entry.mode.is_some() {
+        if let Some(mode) = &entry.mode {
             eprintln!(
                 "Warning: Skipping multi-mode grammar entry for command '{}' (mode: {})",
-                entry.command,
-                entry.mode.as_ref().unwrap()
+                entry.command, mode
             );
             continue;
         }
