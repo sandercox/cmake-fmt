@@ -1,4 +1,6 @@
-use cmake_fmt::formatter::{format_text, format_text_with_diagnostics, FormatConfig, SuppressionWarning, CommentStyle};
+use cmake_fmt::formatter::{
+    CommentStyle, FormatConfig, SuppressionWarning, format_text, format_text_with_diagnostics,
+};
 
 // ============================================================================
 // BLOCK SUPPRESSION TESTS (SUP-01, SUP-03)
@@ -19,14 +21,24 @@ set(BACK_TO_NORMAL value)
     let output = format_text(input, &config);
 
     // Commands outside the suppressed region should be formatted
-    assert!(output.contains("set(FORMATTED value)"), "Command before block should be formatted");
-    assert!(output.contains("set(BACK_TO_NORMAL value)"), "Command after block should be formatted");
+    assert!(
+        output.contains("set(FORMATTED value)"),
+        "Command before block should be formatted"
+    );
+    assert!(
+        output.contains("set(BACK_TO_NORMAL value)"),
+        "Command after block should be formatted"
+    );
 
     // Commands inside the suppressed region should preserve exact whitespace
-    assert!(output.contains("set(  UGLY_VAR    value1   value2  )"),
-        "Suppressed command should preserve original formatting");
-    assert!(output.contains("message(   \"unformatted\"   )"),
-        "Suppressed command should preserve original formatting");
+    assert!(
+        output.contains("set(  UGLY_VAR    value1   value2  )"),
+        "Suppressed command should preserve original formatting"
+    );
+    assert!(
+        output.contains("message(   \"unformatted\"   )"),
+        "Suppressed command should preserve original formatting"
+    );
 
     // Directive comments should be preserved
     assert!(output.contains("# cmake-fmt: off"));
@@ -78,8 +90,10 @@ endif()
     let output = format_text(input, &config);
 
     // Suppressed command should keep its original indentation and spacing
-    assert!(output.contains("set(  UGLY_INDENTED    value1   value2  )"),
-        "Indented suppressed command should preserve original formatting");
+    assert!(
+        output.contains("set(  UGLY_INDENTED    value1   value2  )"),
+        "Indented suppressed command should preserve original formatting"
+    );
 }
 
 // ============================================================================
@@ -103,8 +117,10 @@ set(AFTER value)
     assert!(output.contains("set(AFTER value)"));
 
     // Skipped command should preserve exact formatting
-    assert!(output.contains("set(  SKIPPED_VAR    value1   value2  )"),
-        "Skipped command should preserve original formatting");
+    assert!(
+        output.contains("set(  SKIPPED_VAR    value1   value2  )"),
+        "Skipped command should preserve original formatting"
+    );
 
     // Skip directive should be preserved
     assert!(output.contains("# cmake-fmt: skip"));
@@ -120,12 +136,16 @@ set(  NOT_SKIPPED    c   d  )
     let output = format_text(input, &config);
 
     // First command should be skipped
-    assert!(output.contains("set(  SKIPPED    a   b  )"),
-        "First command should be skipped");
+    assert!(
+        output.contains("set(  SKIPPED    a   b  )"),
+        "First command should be skipped"
+    );
 
     // Second command should be formatted normally
-    assert!(output.contains("set(NOT_SKIPPED c d)"),
-        "Second command should be formatted normally");
+    assert!(
+        output.contains("set(NOT_SKIPPED c d)"),
+        "Second command should be formatted normally"
+    );
 }
 
 #[test]
@@ -139,14 +159,20 @@ target_link_libraries(  formatted    PUBLIC   baz  )
     let output = format_text(input, &config);
 
     // Skipped keyword command should preserve ugly formatting
-    assert!(output.contains("target_link_libraries(  mylib    PUBLIC   foo   bar  )"),
-        "Skipped keyword command should preserve original formatting");
+    assert!(
+        output.contains("target_link_libraries(  mylib    PUBLIC   foo   bar  )"),
+        "Skipped keyword command should preserve original formatting"
+    );
 
     // Next keyword command should be formatted (short command fits on one line)
-    assert!(!output.contains("target_link_libraries(  formatted    PUBLIC   baz  )"),
-        "Non-skipped keyword command should not preserve ugly formatting");
-    assert!(output.contains("target_link_libraries(formatted PUBLIC baz)"),
-        "Non-skipped keyword command should be formatted normally");
+    assert!(
+        !output.contains("target_link_libraries(  formatted    PUBLIC   baz  )"),
+        "Non-skipped keyword command should not preserve ugly formatting"
+    );
+    assert!(
+        output.contains("target_link_libraries(formatted PUBLIC baz)"),
+        "Non-skipped keyword command should be formatted normally"
+    );
 }
 
 // ============================================================================
@@ -170,9 +196,18 @@ set(D value)
     let output = format_text(input, &config);
 
     // All three directive types should be preserved
-    assert!(output.contains("# cmake-fmt: off"), "off directive should be preserved");
-    assert!(output.contains("# cmake-fmt: on"), "on directive should be preserved");
-    assert!(output.contains("# cmake-fmt: skip"), "skip directive should be preserved");
+    assert!(
+        output.contains("# cmake-fmt: off"),
+        "off directive should be preserved"
+    );
+    assert!(
+        output.contains("# cmake-fmt: on"),
+        "on directive should be preserved"
+    );
+    assert!(
+        output.contains("# cmake-fmt: skip"),
+        "skip directive should be preserved"
+    );
 }
 
 #[test]
@@ -185,10 +220,16 @@ set(  UGLY   value  )
     let output = format_text(input, &config);
 
     // Each directive should appear exactly once
-    assert_eq!(output.matches("# cmake-fmt: off").count(), 1,
-        "off directive should appear exactly once");
-    assert_eq!(output.matches("# cmake-fmt: on").count(), 1,
-        "on directive should appear exactly once");
+    assert_eq!(
+        output.matches("# cmake-fmt: off").count(),
+        1,
+        "off directive should appear exactly once"
+    );
+    assert_eq!(
+        output.matches("# cmake-fmt: on").count(),
+        1,
+        "on directive should appear exactly once"
+    );
 }
 
 // ============================================================================
@@ -208,7 +249,11 @@ set(ALSO_UGLY value)
     let (_output, warnings) = format_text_with_diagnostics(input, &config);
 
     // Unclosed regions no longer produce warnings - it's valid to leave cmake-fmt: off open at EOF
-    assert_eq!(warnings.len(), 0, "Should have no warnings for unclosed region at EOF");
+    assert_eq!(
+        warnings.len(),
+        0,
+        "Should have no warnings for unclosed region at EOF"
+    );
 }
 
 #[test]
@@ -226,7 +271,10 @@ set(AFTER value)
 
     match &warnings[0] {
         SuppressionWarning::UnmatchedOn { line } => {
-            assert_eq!(*line, 3, "Warning should point to line 3 where 'on' appears");
+            assert_eq!(
+                *line, 3,
+                "Warning should point to line 3 where 'on' appears"
+            );
         }
         _ => panic!("Expected UnmatchedOn warning, got {:?}", warnings[0]),
     }
@@ -247,7 +295,9 @@ set(  UGLY2   value  )
     assert_eq!(warnings.len(), 1, "Should have one warning");
 
     // Check for NestedOff warning
-    let has_nested_off = warnings.iter().any(|w| matches!(w, SuppressionWarning::NestedOff { line: 4 }));
+    let has_nested_off = warnings
+        .iter()
+        .any(|w| matches!(w, SuppressionWarning::NestedOff { line: 4 }));
     assert!(has_nested_off, "Should have NestedOff warning on line 4");
 }
 
@@ -268,7 +318,10 @@ set(BACK_TO_NORMAL value)
     let (_output, warnings) = format_text_with_diagnostics(input, &config);
 
     // Should have no warnings
-    assert!(warnings.is_empty(), "Valid suppression usage should produce no warnings");
+    assert!(
+        warnings.is_empty(),
+        "Valid suppression usage should produce no warnings"
+    );
 }
 
 // ============================================================================
@@ -333,10 +386,14 @@ endif()
     let output = format_text(input, &config);
 
     // Should use 2-space indentation (not 4)
-    assert!(output.contains("  set(MY_VAR value)"),
-        "Should use 2-space indentation after override");
-    assert!(!output.contains("    set(MY_VAR value)"),
-        "Should not use 4-space indentation");
+    assert!(
+        output.contains("  set(MY_VAR value)"),
+        "Should use 2-space indentation after override"
+    );
+    assert!(
+        !output.contains("    set(MY_VAR value)"),
+        "Should not use 4-space indentation"
+    );
 
     // Directive should be preserved
     assert!(output.contains("# cmake-fmt: indent_width=2"));
@@ -353,9 +410,11 @@ target_link_libraries(mylib PUBLIC foo bar baz qux)
     let output = format_text(input, &config);
 
     // Should break to multiline due to 40-char limit
-    assert!(output.contains("target_link_libraries(mylib\n") ||
-            output.contains("target_link_libraries(mylib\t"),
-        "Should break to multiline with 40-char limit");
+    assert!(
+        output.contains("target_link_libraries(mylib\n")
+            || output.contains("target_link_libraries(mylib\t"),
+        "Should break to multiline with 40-char limit"
+    );
 }
 
 #[test]
@@ -376,12 +435,16 @@ endif()
     let output = format_text(input, &config);
 
     // First block should use 4 spaces (original config)
-    assert!(output.contains("    set(VAR1 value)"),
-        "First block should use 4-space indentation");
+    assert!(
+        output.contains("    set(VAR1 value)"),
+        "First block should use 4-space indentation"
+    );
 
     // Second block should use 2 spaces (after override)
-    assert!(output.contains("  set(VAR2 value)"),
-        "Second block should use 2-space indentation after override");
+    assert!(
+        output.contains("  set(VAR2 value)"),
+        "Second block should use 2-space indentation after override"
+    );
 }
 
 #[test]
@@ -399,10 +462,14 @@ endif()
     let output = format_text(input, &config);
 
     // Should use 2 spaces (not tabs, not 4 spaces)
-    assert!(output.contains("  set(MY_VAR value)"),
-        "Should use 2-space indentation after both overrides");
-    assert!(!output.contains("\tset(MY_VAR value)"),
-        "Should not use tabs after use_tabs=false override");
+    assert!(
+        output.contains("  set(MY_VAR value)"),
+        "Should use 2-space indentation after both overrides"
+    );
+    assert!(
+        !output.contains("\tset(MY_VAR value)"),
+        "Should not use tabs after use_tabs=false override"
+    );
 }
 
 #[test]
@@ -419,7 +486,10 @@ endif()
     let once = format_text(input, &config);
     let twice = format_text(&once, &config);
 
-    assert_eq!(once, twice, "Style override formatting should be idempotent");
+    assert_eq!(
+        once, twice,
+        "Style override formatting should be idempotent"
+    );
 }
 
 #[test]
@@ -446,16 +516,22 @@ endif()
     let output = format_text(input, &config);
 
     // First block should use 2-space indentation (style override)
-    assert!(output.contains("  set(FORMATTED value)"),
-        "First block should use overridden indent_width");
+    assert!(
+        output.contains("  set(FORMATTED value)"),
+        "First block should use overridden indent_width"
+    );
 
     // Suppressed block should preserve ugly formatting
-    assert!(output.contains("set(  UGLY_VAR    value  )"),
-        "Suppressed block should preserve original formatting");
+    assert!(
+        output.contains("set(  UGLY_VAR    value  )"),
+        "Suppressed block should preserve original formatting"
+    );
 
     // Last block should also use 2-space indentation (style override persists)
-    assert!(output.contains("  set(ALSO_FORMATTED value)"),
-        "Last block should still use overridden indent_width");
+    assert!(
+        output.contains("  set(ALSO_FORMATTED value)"),
+        "Last block should still use overridden indent_width"
+    );
 }
 
 #[test]
@@ -487,8 +563,10 @@ endif()
     let output = format_text(input, &config);
 
     // The style override comment itself should appear in output
-    assert!(output.contains("# cmake-fmt: indent_width=2"),
-        "Style override comment should be preserved in output");
+    assert!(
+        output.contains("# cmake-fmt: indent_width=2"),
+        "Style override comment should be preserved in output"
+    );
 }
 
 // ============================================================================
@@ -510,12 +588,18 @@ fn test_suppression_off_prevents_comment_normalization() {
 
     // With comment_style=HashSpace, comments would normally be normalized to have space after #
     // But inside cmake-fmt:off region, they should be preserved exactly as-is
-    assert!(output.contains("#if (WIN32 OR APPLE)"),
-        "Suppressed comment should preserve no space after # in #if");
-    assert!(output.contains("#    target_link_libraries(Alley PUBLIC Sparkle BugSplat)"),
-        "Suppressed comment should preserve exact whitespace (4 spaces after #)");
-    assert!(output.contains("#endif()"),
-        "Suppressed comment should preserve no space after # in #endif");
+    assert!(
+        output.contains("#if (WIN32 OR APPLE)"),
+        "Suppressed comment should preserve no space after # in #if"
+    );
+    assert!(
+        output.contains("#    target_link_libraries(Alley PUBLIC Sparkle BugSplat)"),
+        "Suppressed comment should preserve exact whitespace (4 spaces after #)"
+    );
+    assert!(
+        output.contains("#endif()"),
+        "Suppressed comment should preserve no space after # in #endif"
+    );
 }
 
 #[test]
@@ -532,15 +616,25 @@ fn test_suppression_off_at_end_of_file() {
     let (output, warnings) = format_text_with_diagnostics(input, &config);
 
     // Verify: no formatting of the comment lines, no warnings about unclosed region
-    assert!(output.contains("#if(FOO)"),
-        "Suppressed comment should preserve no space after # in #if");
-    assert!(output.contains("#    bar()"),
-        "Suppressed comment should preserve exact whitespace");
-    assert!(output.contains("#endif()"),
-        "Suppressed comment should preserve no space after # in #endif");
+    assert!(
+        output.contains("#if(FOO)"),
+        "Suppressed comment should preserve no space after # in #if"
+    );
+    assert!(
+        output.contains("#    bar()"),
+        "Suppressed comment should preserve exact whitespace"
+    );
+    assert!(
+        output.contains("#endif()"),
+        "Suppressed comment should preserve no space after # in #endif"
+    );
 
     // No warning about unclosed cmake-fmt:off at EOF
-    assert_eq!(warnings.len(), 0, "Should have no warnings for unclosed cmake-fmt:off at EOF");
+    assert_eq!(
+        warnings.len(),
+        0,
+        "Should have no warnings for unclosed cmake-fmt:off at EOF"
+    );
 }
 
 #[test]
@@ -556,6 +650,8 @@ some_command(ARG1 ARG2)
     let output = format_text(input, &config);
 
     // Verify the leading comment preserves its double space after #
-    assert!(output.contains("#  indented comment"),
-        "Suppressed leading comment should preserve double space after #");
+    assert!(
+        output.contains("#  indented comment"),
+        "Suppressed leading comment should preserve double space after #"
+    );
 }

@@ -2,20 +2,15 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 /// Final newline handling mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FinalNewline {
     /// Preserve original file's trailing newline state (default)
+    #[default]
     Preserve,
     /// Strip trailing newline from output
     Remove,
     /// Ensure output ends with trailing newline
     Force,
-}
-
-impl Default for FinalNewline {
-    fn default() -> Self {
-        Self::Preserve
-    }
 }
 
 impl<'de> Deserialize<'de> for FinalNewline {
@@ -51,7 +46,10 @@ impl<'de> Deserialize<'de> for FinalNewline {
                     "preserve" | "leave" => Ok(FinalNewline::Preserve),
                     "remove" => Ok(FinalNewline::Remove),
                     "force" => Ok(FinalNewline::Force),
-                    other => Err(serde::de::Error::unknown_variant(other, &["preserve", "leave", "remove", "force"])),
+                    other => Err(serde::de::Error::unknown_variant(
+                        other,
+                        &["preserve", "leave", "remove", "force"],
+                    )),
                 }
             }
         }
@@ -195,20 +193,16 @@ pub enum UserCommandCase {
 /// Block closer argument handling options
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ClosingStyle {
     /// Preserve arguments as written in input
     #[serde(rename = "preserve", alias = "leave")]
     Preserve,
     /// Remove arguments from closers (default, modernize)
+    #[default]
     Remove,
     /// Add arguments to match openers (enforce explicit)
     Force,
-}
-
-impl Default for ClosingStyle {
-    fn default() -> Self {
-        Self::Remove
-    }
 }
 
 impl FormatConfig {
@@ -216,265 +210,236 @@ impl FormatConfig {
     /// Returns Ok(()) on success, Err(warning_message) for invalid key/value.
     pub fn apply_override(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
-            "indent_width" => {
-                match value.parse::<usize>() {
-                    Ok(v) => {
-                        self.indent_width = v;
-                        Ok(())
-                    }
-                    Err(_) => Err(format!("Invalid value for indent_width: {}", value)),
+            "indent_width" => match value.parse::<usize>() {
+                Ok(v) => {
+                    self.indent_width = v;
+                    Ok(())
                 }
-            }
-            "max_line_length" => {
-                match value.parse::<usize>() {
-                    Ok(v) => {
-                        self.max_line_length = v;
-                        Ok(())
-                    }
-                    Err(_) => Err(format!("Invalid value for max_line_length: {}", value)),
+                Err(_) => Err(format!("Invalid value for indent_width: {}", value)),
+            },
+            "max_line_length" => match value.parse::<usize>() {
+                Ok(v) => {
+                    self.max_line_length = v;
+                    Ok(())
                 }
-            }
-            "use_tabs" => {
-                match value.parse::<bool>() {
-                    Ok(v) => {
-                        self.use_tabs = v;
-                        Ok(())
-                    }
-                    Err(_) => Err(format!("Invalid value for use_tabs: {}", value)),
+                Err(_) => Err(format!("Invalid value for max_line_length: {}", value)),
+            },
+            "use_tabs" => match value.parse::<bool>() {
+                Ok(v) => {
+                    self.use_tabs = v;
+                    Ok(())
                 }
-            }
-            "command_case" => {
-                match value {
-                    "lowercase" => {
-                        self.command_case = CommandCase::Lowercase;
-                        Ok(())
-                    }
-                    "uppercase" => {
-                        self.command_case = CommandCase::Uppercase;
-                        Ok(())
-                    }
-                    "preserve" | "leave" => {
-                        self.command_case = CommandCase::Preserve;
-                        Ok(())
-                    }
-                    _ => Err(format!(
-                        "Invalid value for command_case (expected lowercase, uppercase, or preserve): {}",
-                        value
-                    )),
+                Err(_) => Err(format!("Invalid value for use_tabs: {}", value)),
+            },
+            "command_case" => match value {
+                "lowercase" => {
+                    self.command_case = CommandCase::Lowercase;
+                    Ok(())
                 }
-            }
-            "max_blank_lines" => {
-                match value.parse::<usize>() {
-                    Ok(v) => {
-                        self.max_blank_lines = v;
-                        Ok(())
-                    }
-                    Err(_) => Err(format!("Invalid value for max_blank_lines: {}", value)),
+                "uppercase" => {
+                    self.command_case = CommandCase::Uppercase;
+                    Ok(())
                 }
-            }
-            "line_ending" => {
-                match value {
-                    "auto" => {
-                        self.line_ending = LineEnding::Auto;
-                        Ok(())
-                    }
-                    "lf" => {
-                        self.line_ending = LineEnding::Lf;
-                        Ok(())
-                    }
-                    "crlf" => {
-                        self.line_ending = LineEnding::CrLf;
-                        Ok(())
-                    }
-                    _ => Err(format!(
-                        "Invalid value for line_ending (expected auto, lf, or crlf): {}",
-                        value
-                    )),
+                "preserve" | "leave" => {
+                    self.command_case = CommandCase::Preserve;
+                    Ok(())
                 }
-            }
-            "user_command_case" => {
-                match value {
-                    "lowercase" => {
-                        self.user_command_case = UserCommandCase::Lowercase;
-                        Ok(())
-                    }
-                    "uppercase" => {
-                        self.user_command_case = UserCommandCase::Uppercase;
-                        Ok(())
-                    }
-                    "preserve" | "leave" => {
-                        self.user_command_case = UserCommandCase::Preserve;
-                        Ok(())
-                    }
-                    "infer" => {
-                        self.user_command_case = UserCommandCase::Infer;
-                        Ok(())
-                    }
-                    _ => Err(format!(
-                        "Invalid value for user_command_case (expected lowercase, uppercase, preserve, or infer): {}",
-                        value
-                    )),
+                _ => Err(format!(
+                    "Invalid value for command_case (expected lowercase, uppercase, or preserve): {}",
+                    value
+                )),
+            },
+            "max_blank_lines" => match value.parse::<usize>() {
+                Ok(v) => {
+                    self.max_blank_lines = v;
+                    Ok(())
                 }
-            }
-            "closing_style" => {
-                match value {
-                    "preserve" | "leave" => {
-                        self.closing_style = ClosingStyle::Preserve;
-                        Ok(())
-                    }
-                    "remove" => {
-                        self.closing_style = ClosingStyle::Remove;
-                        Ok(())
-                    }
-                    "force" => {
-                        self.closing_style = ClosingStyle::Force;
-                        Ok(())
-                    }
-                    _ => Err(format!(
-                        "Invalid value for closing_style (expected preserve, remove, or force): {}",
-                        value
-                    )),
+                Err(_) => Err(format!("Invalid value for max_blank_lines: {}", value)),
+            },
+            "line_ending" => match value {
+                "auto" => {
+                    self.line_ending = LineEnding::Auto;
+                    Ok(())
                 }
-            }
-            "source_grouping" => {
-                match value {
-                    "none" => {
-                        self.source_grouping = SourceGrouping::None;
-                        Ok(())
-                    }
-                    "headers_first" => {
-                        self.source_grouping = SourceGrouping::HeadersFirst;
-                        Ok(())
-                    }
-                    "sources_first" => {
-                        self.source_grouping = SourceGrouping::SourcesFirst;
-                        Ok(())
-                    }
-                    _ => Err(format!(
-                        "Invalid value for source_grouping (expected none, headers_first, or sources_first): {}",
-                        value
-                    )),
+                "lf" => {
+                    self.line_ending = LineEnding::Lf;
+                    Ok(())
                 }
-            }
-            "sort_sources" => {
-                match value {
-                    "none" => {
-                        self.sort_sources = SortSources::None;
-                        Ok(())
-                    }
-                    "alphabetical" => {
-                        self.sort_sources = SortSources::Alphabetical;
-                        Ok(())
-                    }
-                    _ => Err(format!(
-                        "Invalid value for sort_sources (expected none or alphabetical): {}",
-                        value
-                    )),
+                "crlf" => {
+                    self.line_ending = LineEnding::CrLf;
+                    Ok(())
                 }
-            }
-            "disable_format" => {
-                match value.parse::<bool>() {
-                    Ok(v) => {
-                        self.disable_format = v;
-                        Ok(())
-                    }
-                    Err(_) => Err(format!("Invalid value for disable_format: {}", value)),
+                _ => Err(format!(
+                    "Invalid value for line_ending (expected auto, lf, or crlf): {}",
+                    value
+                )),
+            },
+            "user_command_case" => match value {
+                "lowercase" => {
+                    self.user_command_case = UserCommandCase::Lowercase;
+                    Ok(())
                 }
-            }
-            "force_break_keywords" => {
-                match value.parse::<bool>() {
-                    Ok(v) => {
-                        self.force_break_keywords = v;
-                        Ok(())
-                    }
-                    Err(_) => Err(format!("Invalid value for force_break_keywords: {}", value)),
+                "uppercase" => {
+                    self.user_command_case = UserCommandCase::Uppercase;
+                    Ok(())
                 }
-            }
-            "final_newline" => {
-                match value {
-                    "preserve" | "leave" => {
-                        self.final_newline = FinalNewline::Preserve;
-                        Ok(())
-                    }
-                    "remove" | "false" => {
-                        self.final_newline = FinalNewline::Remove;
-                        Ok(())
-                    }
-                    "force" | "true" => {
-                        self.final_newline = FinalNewline::Force;
-                        Ok(())
-                    }
-                    _ => Err(format!(
-                        "Invalid value for final_newline (expected preserve, remove, or force): {}",
-                        value
-                    )),
+                "preserve" | "leave" => {
+                    self.user_command_case = UserCommandCase::Preserve;
+                    Ok(())
                 }
-            }
-            "comment_style" => {
-                match value {
-                    "preserve" | "leave" => {
-                        self.comment_style = CommentStyle::Preserve;
-                        Ok(())
-                    }
-                    "hash_space" => {
-                        self.comment_style = CommentStyle::HashSpace;
-                        Ok(())
-                    }
-                    "hash_no_space" => {
-                        self.comment_style = CommentStyle::HashNoSpace;
-                        Ok(())
-                    }
-                    _ => Err(format!(
-                        "Invalid value for comment_style (expected preserve, hash_space, or hash_no_space): {}",
-                        value
-                    )),
+                "infer" => {
+                    self.user_command_case = UserCommandCase::Infer;
+                    Ok(())
                 }
-            }
-            "collapse_empty_flags" => {
-                match value.parse::<bool>() {
-                    Ok(v) => {
-                        self.collapse_empty_flags = v;
-                        Ok(())
-                    }
-                    Err(_) => Err(format!("Invalid value for collapse_empty_flags: {}", value)),
+                _ => Err(format!(
+                    "Invalid value for user_command_case (expected lowercase, uppercase, preserve, or infer): {}",
+                    value
+                )),
+            },
+            "closing_style" => match value {
+                "preserve" | "leave" => {
+                    self.closing_style = ClosingStyle::Preserve;
+                    Ok(())
                 }
-            }
-            "inline_single_keyword" => {
-                match value.parse::<bool>() {
-                    Ok(v) => {
-                        self.inline_single_keyword = v;
-                        Ok(())
-                    }
-                    Err(_) => Err(format!("Invalid value for inline_single_keyword: {}", value)),
+                "remove" => {
+                    self.closing_style = ClosingStyle::Remove;
+                    Ok(())
                 }
-            }
-            "control_flow_space_before_paren" => {
-                match value.parse::<bool>() {
-                    Ok(v) => {
-                        self.control_flow_space_before_paren = v;
-                        Ok(())
-                    }
-                    Err(_) => Err(format!("Invalid value for control_flow_space_before_paren: {}", value)),
+                "force" => {
+                    self.closing_style = ClosingStyle::Force;
+                    Ok(())
                 }
-            }
-            "space_between_command_parens" => {
-                match value.parse::<bool>() {
-                    Ok(v) => {
-                        self.space_between_command_parens = v;
-                        Ok(())
-                    }
-                    Err(_) => Err(format!("Invalid value for space_between_command_parens: {}", value)),
+                _ => Err(format!(
+                    "Invalid value for closing_style (expected preserve, remove, or force): {}",
+                    value
+                )),
+            },
+            "source_grouping" => match value {
+                "none" => {
+                    self.source_grouping = SourceGrouping::None;
+                    Ok(())
                 }
-            }
-            "indent_closing_paren" => {
-                match value.parse::<bool>() {
-                    Ok(v) => {
-                        self.indent_closing_paren = v;
-                        Ok(())
-                    }
-                    Err(_) => Err(format!("Invalid value for indent_closing_paren: {}", value)),
+                "headers_first" => {
+                    self.source_grouping = SourceGrouping::HeadersFirst;
+                    Ok(())
                 }
-            }
+                "sources_first" => {
+                    self.source_grouping = SourceGrouping::SourcesFirst;
+                    Ok(())
+                }
+                _ => Err(format!(
+                    "Invalid value for source_grouping (expected none, headers_first, or sources_first): {}",
+                    value
+                )),
+            },
+            "sort_sources" => match value {
+                "none" => {
+                    self.sort_sources = SortSources::None;
+                    Ok(())
+                }
+                "alphabetical" => {
+                    self.sort_sources = SortSources::Alphabetical;
+                    Ok(())
+                }
+                _ => Err(format!(
+                    "Invalid value for sort_sources (expected none or alphabetical): {}",
+                    value
+                )),
+            },
+            "disable_format" => match value.parse::<bool>() {
+                Ok(v) => {
+                    self.disable_format = v;
+                    Ok(())
+                }
+                Err(_) => Err(format!("Invalid value for disable_format: {}", value)),
+            },
+            "force_break_keywords" => match value.parse::<bool>() {
+                Ok(v) => {
+                    self.force_break_keywords = v;
+                    Ok(())
+                }
+                Err(_) => Err(format!("Invalid value for force_break_keywords: {}", value)),
+            },
+            "final_newline" => match value {
+                "preserve" | "leave" => {
+                    self.final_newline = FinalNewline::Preserve;
+                    Ok(())
+                }
+                "remove" | "false" => {
+                    self.final_newline = FinalNewline::Remove;
+                    Ok(())
+                }
+                "force" | "true" => {
+                    self.final_newline = FinalNewline::Force;
+                    Ok(())
+                }
+                _ => Err(format!(
+                    "Invalid value for final_newline (expected preserve, remove, or force): {}",
+                    value
+                )),
+            },
+            "comment_style" => match value {
+                "preserve" | "leave" => {
+                    self.comment_style = CommentStyle::Preserve;
+                    Ok(())
+                }
+                "hash_space" => {
+                    self.comment_style = CommentStyle::HashSpace;
+                    Ok(())
+                }
+                "hash_no_space" => {
+                    self.comment_style = CommentStyle::HashNoSpace;
+                    Ok(())
+                }
+                _ => Err(format!(
+                    "Invalid value for comment_style (expected preserve, hash_space, or hash_no_space): {}",
+                    value
+                )),
+            },
+            "collapse_empty_flags" => match value.parse::<bool>() {
+                Ok(v) => {
+                    self.collapse_empty_flags = v;
+                    Ok(())
+                }
+                Err(_) => Err(format!("Invalid value for collapse_empty_flags: {}", value)),
+            },
+            "inline_single_keyword" => match value.parse::<bool>() {
+                Ok(v) => {
+                    self.inline_single_keyword = v;
+                    Ok(())
+                }
+                Err(_) => Err(format!(
+                    "Invalid value for inline_single_keyword: {}",
+                    value
+                )),
+            },
+            "control_flow_space_before_paren" => match value.parse::<bool>() {
+                Ok(v) => {
+                    self.control_flow_space_before_paren = v;
+                    Ok(())
+                }
+                Err(_) => Err(format!(
+                    "Invalid value for control_flow_space_before_paren: {}",
+                    value
+                )),
+            },
+            "space_between_command_parens" => match value.parse::<bool>() {
+                Ok(v) => {
+                    self.space_between_command_parens = v;
+                    Ok(())
+                }
+                Err(_) => Err(format!(
+                    "Invalid value for space_between_command_parens: {}",
+                    value
+                )),
+            },
+            "indent_closing_paren" => match value.parse::<bool>() {
+                Ok(v) => {
+                    self.indent_closing_paren = v;
+                    Ok(())
+                }
+                Err(_) => Err(format!("Invalid value for indent_closing_paren: {}", value)),
+            },
             _ => Err(format!("Unknown config key: {}", key)),
         }
     }
@@ -483,8 +448,10 @@ impl FormatConfig {
 /// Source file grouping mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SourceGrouping {
     /// No grouping (default) - each file on its own line
+    #[default]
     None,
     /// Group header/source pairs on same line, headers listed first
     HeadersFirst,
@@ -492,45 +459,31 @@ pub enum SourceGrouping {
     SourcesFirst,
 }
 
-impl Default for SourceGrouping {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
 /// Source file sorting mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SortSources {
     /// No sorting (default) - preserve original order
+    #[default]
     None,
     /// Sort filenames alphabetically (case-insensitive)
     Alphabetical,
 }
 
-impl Default for SortSources {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
 /// Comment whitespace normalization style
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum CommentStyle {
     /// Preserve original whitespace after # unchanged
     #[serde(rename = "preserve", alias = "leave")]
     Preserve,
     /// Normalize to "# text" - single space after hash (default, backward compat)
+    #[default]
     HashSpace,
     /// Normalize to "#text" - no space after hash
     HashNoSpace,
-}
-
-impl Default for CommentStyle {
-    fn default() -> Self {
-        Self::HashSpace
-    }
 }
 
 /// Grammar configuration for a custom command, as specified in config file

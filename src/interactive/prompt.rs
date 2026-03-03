@@ -36,7 +36,11 @@ fn format_inline_side(del_text: &str, ins_text: &str, is_delete: bool) -> Vec<St
 
     for change in inline_diff.iter_all_changes() {
         let tag = change.tag();
-        let dominated = if is_delete { ChangeTag::Insert } else { ChangeTag::Delete };
+        let dominated = if is_delete {
+            ChangeTag::Insert
+        } else {
+            ChangeTag::Delete
+        };
         if tag == dominated {
             continue;
         }
@@ -84,14 +88,26 @@ fn flush_inline_buf_to_string(out: &mut String, buf: &str, emphasized: bool, is_
     }
     if emphasized {
         if is_delete {
-            out.push_str(&buf.if_supports_color(Stream::Stderr, |t| t.bright_white().on_red()).to_string());
+            out.push_str(
+                &buf.if_supports_color(Stream::Stderr, |t| t.bright_white().on_red())
+                    .to_string(),
+            );
         } else {
-            out.push_str(&buf.if_supports_color(Stream::Stderr, |t| t.bright_white().on_green()).to_string());
+            out.push_str(
+                &buf.if_supports_color(Stream::Stderr, |t| t.bright_white().on_green())
+                    .to_string(),
+            );
         }
     } else if is_delete {
-        out.push_str(&buf.if_supports_color(Stream::Stderr, |t| t.red()).to_string());
+        out.push_str(
+            &buf.if_supports_color(Stream::Stderr, |t| t.red())
+                .to_string(),
+        );
     } else {
-        out.push_str(&buf.if_supports_color(Stream::Stderr, |t| t.green()).to_string());
+        out.push_str(
+            &buf.if_supports_color(Stream::Stderr, |t| t.green())
+                .to_string(),
+        );
     }
 }
 
@@ -105,7 +121,11 @@ fn flush_inline_buf_to_string(out: &mut String, buf: &str, emphasized: bool, is_
 pub fn display_hunk(term: &Term, hunk: &DiffHunk, hunk_num: usize, total: usize) -> Result<()> {
     // Print header
     let header = format!("@@ Hunk {}/{} @@", hunk_num, total);
-    term.write_line(&header.if_supports_color(Stream::Stderr, |text| text.cyan()).to_string())?;
+    term.write_line(
+        &header
+            .if_supports_color(Stream::Stderr, |text| text.cyan())
+            .to_string(),
+    )?;
 
     // Process changes, collecting delete/insert runs for proper positional pairing
     let mut i = 0;
@@ -133,16 +153,32 @@ pub fn display_hunk(term: &Term, hunk: &DiffHunk, hunk_num: usize, total: usize)
                     for j in del_start..del_end {
                         if let Change::Delete(line) = &hunk.changes[j] {
                             let text = format!("-{}", expand_tabs_interactive(line, 1));
-                            term.write_line(&text.if_supports_color(Stream::Stderr, |t| t.red()).to_string())?;
+                            term.write_line(
+                                &text
+                                    .if_supports_color(Stream::Stderr, |t| t.red())
+                                    .to_string(),
+                            )?;
                         }
                     }
                 } else {
                     // Join all deletes and inserts, char-level diff on joined text
                     let del_text: String = (del_start..del_end)
-                        .filter_map(|j| if let Change::Delete(l) = &hunk.changes[j] { Some(format!("{}\n", l)) } else { None })
+                        .filter_map(|j| {
+                            if let Change::Delete(l) = &hunk.changes[j] {
+                                Some(format!("{}\n", l))
+                            } else {
+                                None
+                            }
+                        })
                         .collect();
                     let ins_text: String = (ins_start..ins_end)
-                        .filter_map(|j| if let Change::Insert(l) = &hunk.changes[j] { Some(format!("{}\n", l)) } else { None })
+                        .filter_map(|j| {
+                            if let Change::Insert(l) = &hunk.changes[j] {
+                                Some(format!("{}\n", l))
+                            } else {
+                                None
+                            }
+                        })
                         .collect();
 
                     for line in format_inline_side(&del_text, &ins_text, true) {
@@ -155,7 +191,11 @@ pub fn display_hunk(term: &Term, hunk: &DiffHunk, hunk_num: usize, total: usize)
             }
             Change::Insert(new_line) => {
                 let text = format!("+{}", expand_tabs_interactive(new_line, 1));
-                term.write_line(&text.if_supports_color(Stream::Stderr, |t| t.green()).to_string())?;
+                term.write_line(
+                    &text
+                        .if_supports_color(Stream::Stderr, |t| t.green())
+                        .to_string(),
+                )?;
                 i += 1;
             }
             Change::Equal(line) => {

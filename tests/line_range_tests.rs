@@ -26,7 +26,9 @@ fn test_line_ranges_single_range_stdin() {
         .write_all(input.as_bytes())
         .expect("Failed to write to stdin");
 
-    let output = child.wait_with_output().expect("Failed to wait for command");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
     assert!(output.status.success(), "Command should succeed");
     let result = String::from_utf8_lossy(&output.stdout);
@@ -58,7 +60,9 @@ fn test_line_ranges_multiple_ranges_stdin() {
         .write_all(input.as_bytes())
         .expect("Failed to write to stdin");
 
-    let output = child.wait_with_output().expect("Failed to wait for command");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
     assert!(output.status.success(), "Command should succeed");
     let result = String::from_utf8_lossy(&output.stdout);
@@ -94,7 +98,9 @@ fn test_line_ranges_preserves_unselected_lines() {
         .write_all(input.as_bytes())
         .expect("Failed to write to stdin");
 
-    let output = child.wait_with_output().expect("Failed to wait for command");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
     assert!(output.status.success(), "Command should succeed");
     let result = String::from_utf8_lossy(&output.stdout);
@@ -183,7 +189,9 @@ fn test_line_ranges_with_diff_mode() {
         .write_all(input.as_bytes())
         .expect("Failed to write to stdin");
 
-    let output = child.wait_with_output().expect("Failed to wait for command");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
     assert_eq!(
         output.status.code(),
@@ -228,7 +236,9 @@ fn test_line_ranges_with_assume_filename() {
         .write_all(input.as_bytes())
         .expect("Failed to write to stdin");
 
-    let output = child.wait_with_output().expect("Failed to wait for command");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
     assert!(output.status.success(), "Command should succeed");
     let result = String::from_utf8_lossy(&output.stdout);
@@ -250,10 +260,7 @@ fn test_line_ranges_invalid_format_error() {
         .output()
         .expect("Failed to run cmake-fmt");
 
-    assert!(
-        !output.status.success(),
-        "Should exit with non-zero code"
-    );
+    assert!(!output.status.success(), "Should exit with non-zero code");
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("Invalid range format"),
         "Should show format error"
@@ -268,10 +275,7 @@ fn test_line_ranges_inverted_range_error() {
         .output()
         .expect("Failed to run cmake-fmt");
 
-    assert!(
-        !output.status.success(),
-        "Should exit with non-zero code"
-    );
+    assert!(!output.status.success(), "Should exit with non-zero code");
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("start > end"),
         "Should show inverted range error"
@@ -297,9 +301,14 @@ fn test_line_ranges_out_of_bounds_clamp() {
         .write_all(input.as_bytes())
         .expect("Failed to write to stdin");
 
-    let output = child.wait_with_output().expect("Failed to wait for command");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
-    assert!(output.status.success(), "Should not crash on out-of-bounds range");
+    assert!(
+        output.status.success(),
+        "Should not crash on out-of-bounds range"
+    );
     let result = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<&str> = result.lines().collect();
 
@@ -325,10 +334,7 @@ fn test_line_ranges_multiple_files_error() {
         .output()
         .expect("Failed to run cmake-fmt");
 
-    assert!(
-        !output.status.success(),
-        "Should exit with non-zero code"
-    );
+    assert!(!output.status.success(), "Should exit with non-zero code");
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("single file"),
         "Should error about single file only"
@@ -354,7 +360,9 @@ fn test_line_ranges_single_line_range() {
         .write_all(input.as_bytes())
         .expect("Failed to write to stdin");
 
-    let output = child.wait_with_output().expect("Failed to wait for command");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
     assert!(output.status.success(), "Command should succeed");
     let result = String::from_utf8_lossy(&output.stdout);

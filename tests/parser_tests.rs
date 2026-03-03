@@ -1,4 +1,4 @@
-use cmake_fmt::cst::{parse_text, CommandInvocation, ArgumentList};
+use cmake_fmt::cst::parse_text;
 use cmake_fmt::syntax_kind::SyntaxKind;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
@@ -27,18 +27,21 @@ fn fixture_files() -> Vec<PathBuf> {
 // ============================================================================
 
 #[rstest]
-fn test_roundtrip_all_fixtures(#[values(
-    "simple_set.cmake",
-    "bracket_arguments.cmake",
-    "generator_expressions.cmake",
-    "comments.cmake",
-    "variable_references.cmake",
-    "error_recovery.cmake",
-    "nested_commands.cmake"
-)] fixture: &str) {
+fn test_roundtrip_all_fixtures(
+    #[values(
+        "simple_set.cmake",
+        "bracket_arguments.cmake",
+        "generator_expressions.cmake",
+        "comments.cmake",
+        "variable_references.cmake",
+        "error_recovery.cmake",
+        "nested_commands.cmake"
+    )]
+    fixture: &str,
+) {
     let path = PathBuf::from("tests/fixtures").join(fixture);
-    let input = fs::read_to_string(&path)
-        .unwrap_or_else(|_| panic!("Failed to read fixture: {:?}", path));
+    let input =
+        fs::read_to_string(&path).unwrap_or_else(|_| panic!("Failed to read fixture: {:?}", path));
 
     let cst = parse_text(&input);
     let output = cst.text();
@@ -176,7 +179,10 @@ fn test_error_missing_rparen() {
     // so subsequent text is treated as arguments until a ) is found.
     // This is expected error recovery behavior.
     let commands: Vec<_> = cst.commands().collect();
-    assert!(commands.len() >= 1, "should parse at least the first command");
+    assert!(
+        !commands.is_empty(),
+        "should parse at least the first command"
+    );
 
     // Round-trip should still preserve all text
     assert_eq!(cst.text(), input);
@@ -217,13 +223,17 @@ fn test_error_recovery_continues() {
 
     // But should parse valid commands
     let commands: Vec<_> = cst.commands().collect();
-    assert!(commands.len() >= 2, "should parse valid commands around error");
+    assert!(
+        commands.len() >= 2,
+        "should parse valid commands around error"
+    );
 
     // First and last commands should be valid
     assert_eq!(commands[0].name_text(), Some("message".to_string()));
-    let last_valid = commands.iter()
+    let last_valid = commands
+        .iter()
         .filter(|cmd| cmd.name_text().is_some())
-        .last();
+        .next_back();
     assert_eq!(last_valid.unwrap().name_text(), Some("project".to_string()));
 }
 
@@ -238,12 +248,16 @@ fn test_error_count() {
     // - "!!!invalid" becomes UNQUOTED_ARGUMENT due to depth > 0
     // - "add_executable" becomes UNQUOTED_ARGUMENT due to depth > 0
     // So we expect at least 1 error (missing closing paren)
-    assert!(cst.errors.len() >= 1, "expected at least 1 error, got {}", cst.errors.len());
+    assert!(
+        !cst.errors.is_empty(),
+        "expected at least 1 error, got {}",
+        cst.errors.len()
+    );
 }
 
 #[test]
 fn test_error_has_offset() {
-    let input = "set(VAR value\n";  // missing )
+    let input = "set(VAR value\n"; // missing )
     let cst = parse_text(input);
 
     assert!(!cst.errors.is_empty());
@@ -304,8 +318,7 @@ fn test_parse_text_whitespace_only() {
 
 #[test]
 fn test_snapshot_simple_set() {
-    let input = fs::read_to_string("tests/fixtures/simple_set.cmake")
-        .expect("fixture exists");
+    let input = fs::read_to_string("tests/fixtures/simple_set.cmake").expect("fixture exists");
     let cst = parse_text(&input);
 
     insta::assert_debug_snapshot!("simple_set_cst", cst.root);
@@ -313,8 +326,8 @@ fn test_snapshot_simple_set() {
 
 #[test]
 fn test_snapshot_bracket_arguments() {
-    let input = fs::read_to_string("tests/fixtures/bracket_arguments.cmake")
-        .expect("fixture exists");
+    let input =
+        fs::read_to_string("tests/fixtures/bracket_arguments.cmake").expect("fixture exists");
     let cst = parse_text(&input);
 
     insta::assert_debug_snapshot!("bracket_arguments_cst", cst.root);
@@ -322,8 +335,7 @@ fn test_snapshot_bracket_arguments() {
 
 #[test]
 fn test_snapshot_error_recovery() {
-    let input = fs::read_to_string("tests/fixtures/error_recovery.cmake")
-        .expect("fixture exists");
+    let input = fs::read_to_string("tests/fixtures/error_recovery.cmake").expect("fixture exists");
     let cst = parse_text(&input);
 
     insta::assert_debug_snapshot!("error_recovery_cst", cst.root);

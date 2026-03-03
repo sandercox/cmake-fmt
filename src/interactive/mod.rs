@@ -1,19 +1,19 @@
+mod apply;
 mod diff;
 mod prompt;
-mod apply;
 
+pub use apply::apply_decisions;
 pub use diff::{DiffHunk, generate_hunks};
 pub use prompt::{UserChoice, display_hunk, prompt_user_choice};
-pub use apply::apply_decisions;
 
 use anyhow::{Context, Result};
 use console::Term;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 use tempfile::NamedTempFile;
-use std::io::Write;
 
-use crate::formatter::{format_text_with_diagnostics_and_path, FormatConfig};
+use crate::formatter::{FormatConfig, format_text_with_diagnostics_and_path};
 
 /// Result of interactive formatting session
 #[derive(Debug, Clone)]
@@ -40,7 +40,8 @@ pub fn run_interactive(file_path: &Path, config: &FormatConfig) -> Result<Intera
         .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
 
     // Format the text
-    let (formatted, _warnings) = format_text_with_diagnostics_and_path(&original, config, Some(file_path), false);
+    let (formatted, _warnings) =
+        format_text_with_diagnostics_and_path(&original, config, Some(file_path), false);
 
     // Check if already formatted
     if original == formatted {
@@ -110,7 +111,7 @@ pub fn run_interactive(file_path: &Path, config: &FormatConfig) -> Result<Intera
             UserChoice::Accept => accepted += 1,
             UserChoice::Reject | UserChoice::Quit => rejected += 1,
             UserChoice::Suppress => suppressed += 1,
-            UserChoice::Help => {}, // Should not happen
+            UserChoice::Help => {} // Should not happen
         }
     }
 
@@ -129,8 +130,14 @@ pub fn run_interactive(file_path: &Path, config: &FormatConfig) -> Result<Intera
                 suppressed_lines.push(hunk.old_start + 1); // Convert to 1-indexed
             }
         }
-        term.write_line(&format!("  Suppression markers added near line(s): {}",
-            suppressed_lines.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")))?;
+        term.write_line(&format!(
+            "  Suppression markers added near line(s): {}",
+            suppressed_lines
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))?;
     }
 
     Ok(InteractiveResult {

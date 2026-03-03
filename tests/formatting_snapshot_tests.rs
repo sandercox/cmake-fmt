@@ -1,5 +1,5 @@
 use cmake_fmt::cst::parse_text;
-use cmake_fmt::formatter::{format_text, ClosingStyle, CommandCase, FormatConfig};
+use cmake_fmt::formatter::{ClosingStyle, CommandCase, FormatConfig, format_text};
 
 // ============================================================================
 // SNAPSHOT TESTS
@@ -27,7 +27,8 @@ fn test_idempotency_all_fixtures() {
         let once = format_text(&input, &config);
         let twice = format_text(&once, &config);
         assert_eq!(
-            once, twice,
+            once,
+            twice,
             "Idempotency failed for {}: formatting twice produced different output",
             path.display()
         );
@@ -42,7 +43,8 @@ fn test_idempotency_phase1_fixtures() {
         let once = format_text(&input, &config);
         let twice = format_text(&once, &config);
         assert_eq!(
-            once, twice,
+            once,
+            twice,
             "Idempotency failed for Phase 1 fixture {}: formatting twice produced different output",
             path.display()
         );
@@ -64,7 +66,8 @@ fn test_semantic_preservation_all_fixtures() {
         let output_commands = extract_semantic_commands(&output);
 
         assert_eq!(
-            input_commands, output_commands,
+            input_commands,
+            output_commands,
             "Semantic preservation failed for {}: commands differ after formatting",
             path.display()
         );
@@ -82,7 +85,8 @@ fn test_semantic_preservation_phase1_fixtures() {
         let output_commands = extract_semantic_commands(&output);
 
         assert_eq!(
-            input_commands, output_commands,
+            input_commands,
+            output_commands,
             "Semantic preservation failed for Phase 1 fixture {}",
             path.display()
         );
@@ -131,7 +135,10 @@ fn test_crlf_handling() {
     let output = format_text(input, &config);
 
     // Auto mode: CRLF input → CRLF output (preserves detected line ending)
-    assert!(output.contains("\r\n"), "Auto mode should preserve CRLF from input");
+    assert!(
+        output.contains("\r\n"),
+        "Auto mode should preserve CRLF from input"
+    );
     assert!(output.contains("set(FOO bar)"));
     assert!(output.contains("message(\"hello\")"));
 
@@ -141,7 +148,10 @@ fn test_crlf_handling() {
         ..FormatConfig::default()
     };
     let lf_output = format_text(input, &lf_config);
-    assert!(!lf_output.contains("\r\n"), "LF mode should not contain CRLF");
+    assert!(
+        !lf_output.contains("\r\n"),
+        "LF mode should not contain CRLF"
+    );
 }
 
 #[test]
@@ -172,8 +182,10 @@ endif()
     let output = format_text(input, &config);
 
     // Verify 4 levels of indentation (1 tab per level = 4 tabs)
-    assert!(output.contains("\t\t\t\tset(DEEPLY_NESTED true)"),
-        "Expected 4 tabs for 4-level nesting");
+    assert!(
+        output.contains("\t\t\t\tset(DEEPLY_NESTED true)"),
+        "Expected 4 tabs for 4-level nesting"
+    );
 }
 
 #[test]
@@ -202,8 +214,10 @@ fn test_config_indent_width_4() {
     let output = format_text(input, &config);
 
     // Should have 4-space indentation
-    assert!(output.contains("    set(BAR baz)"),
-        "Expected 4-space indentation");
+    assert!(
+        output.contains("    set(BAR baz)"),
+        "Expected 4-space indentation"
+    );
 }
 
 #[test]
@@ -216,8 +230,10 @@ fn test_config_tabs() {
     let output = format_text(input, &config);
 
     // Should have tab indentation
-    assert!(output.contains("\tset(BAR baz)"),
-        "Expected tab indentation");
+    assert!(
+        output.contains("\tset(BAR baz)"),
+        "Expected tab indentation"
+    );
 }
 
 #[test]
@@ -274,8 +290,7 @@ fn test_block_closer_remove_mode() {
         closing_style: ClosingStyle::Remove,
         ..FormatConfig::default()
     };
-    let input =
-        std::fs::read_to_string("tests/format_fixtures/block_closer_remove.cmake").unwrap();
+    let input = std::fs::read_to_string("tests/format_fixtures/block_closer_remove.cmake").unwrap();
     let output = format_text(&input, &config);
     insta::assert_snapshot!("block_closer_remove", output);
 }
@@ -286,8 +301,7 @@ fn test_block_closer_force_mode() {
         closing_style: ClosingStyle::Force,
         ..FormatConfig::default()
     };
-    let input =
-        std::fs::read_to_string("tests/format_fixtures/block_closer_force.cmake").unwrap();
+    let input = std::fs::read_to_string("tests/format_fixtures/block_closer_force.cmake").unwrap();
     let output = format_text(&input, &config);
     insta::assert_snapshot!("block_closer_force", output);
 }
@@ -373,14 +387,21 @@ fn test_generator_expr_adjacent_no_space() {
     let output = format_text(input, &config);
 
     // Find both generator expressions in output
-    let first_start = output.find("$<CONFIG:Debug>").expect("First genexpr should exist");
-    let second_start = output.find("$<CONFIG:Release>").expect("Second genexpr should exist");
+    let first_start = output
+        .find("$<CONFIG:Debug>")
+        .expect("First genexpr should exist");
+    let second_start = output
+        .find("$<CONFIG:Release>")
+        .expect("Second genexpr should exist");
 
     // Extract the substring between them
     let between = &output[first_start + "$<CONFIG:Debug>".len()..second_start];
 
     // They should be separated by exactly one space (not collapsed, not multiple)
-    assert_eq!(between, " ", "Generator expressions should be separated by exactly one space");
+    assert_eq!(
+        between, " ",
+        "Generator expressions should be separated by exactly one space"
+    );
 
     insta::assert_snapshot!("generator_expr_adjacent", output);
 }
@@ -454,8 +475,14 @@ fn test_bracket_arg_byte_identical() {
     // Test each bracket argument variant
     let test_cases = vec![
         ("message([[simple bracket arg]])", "[[simple bracket arg]]"),
-        ("message([=[contains ]] inside]=])", "[=[contains ]] inside]=]"),
-        ("message([==[contains ]=] inside]==])", "[==[contains ]=] inside]==]"),
+        (
+            "message([=[contains ]] inside]=])",
+            "[=[contains ]] inside]=]",
+        ),
+        (
+            "message([==[contains ]=] inside]==])",
+            "[==[contains ]=] inside]==]",
+        ),
     ];
 
     for (input, expected_bracket) in test_cases {
@@ -488,8 +515,10 @@ fn test_bracket_arg_byte_identical() {
         );
     }
 
-    insta::assert_snapshot!("bracket_arg_byte_identical",
-        format_text("message([[simple bracket arg]])", &config));
+    insta::assert_snapshot!(
+        "bracket_arg_byte_identical",
+        format_text("message([[simple bracket arg]])", &config)
+    );
 }
 
 #[test]
@@ -548,8 +577,14 @@ fn test_comment_after_closing_paren() {
     let output = format_text(input, &config);
 
     // Both command and comment should be preserved
-    assert!(output.contains("message(hello)"), "Command was not preserved");
-    assert!(output.contains("# attached comment"), "Attached comment was not preserved");
+    assert!(
+        output.contains("message(hello)"),
+        "Command was not preserved"
+    );
+    assert!(
+        output.contains("# attached comment"),
+        "Attached comment was not preserved"
+    );
 
     insta::assert_snapshot!("comment_after_closing_paren", output);
 }

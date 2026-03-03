@@ -1,5 +1,5 @@
 use cmake_fmt::cst::parse_text;
-use cmake_fmt::formatter::{format_text, FormatConfig};
+use cmake_fmt::formatter::{FormatConfig, format_text};
 use std::panic;
 use std::path::PathBuf;
 use walkdir::WalkDir;
@@ -13,13 +13,10 @@ fn corpus_files() -> Vec<PathBuf> {
     let corpus_dir = "tests/corpus";
     let mut files = Vec::new();
 
-    for entry in WalkDir::new(corpus_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in WalkDir::new(corpus_dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_file() {
-            let is_cmake = path.extension().map_or(false, |ext| ext == "cmake");
+            let is_cmake = path.extension().is_some_and(|ext| ext == "cmake");
             let is_cmakelists = path.file_name().and_then(|n| n.to_str()) == Some("CMakeLists.txt");
             if is_cmake || is_cmakelists {
                 files.push(path.to_path_buf());
@@ -64,10 +61,7 @@ fn test_corpus_no_panics() {
     let config = FormatConfig::default();
     let files = corpus_files();
 
-    assert!(
-        !files.is_empty(),
-        "No corpus files found in tests/corpus/"
-    );
+    assert!(!files.is_empty(), "No corpus files found in tests/corpus/");
 
     let mut failed_files = Vec::new();
 
@@ -101,10 +95,7 @@ fn test_corpus_semantic_preservation() {
     let config = FormatConfig::default();
     let files = corpus_files();
 
-    assert!(
-        !files.is_empty(),
-        "No corpus files found in tests/corpus/"
-    );
+    assert!(!files.is_empty(), "No corpus files found in tests/corpus/");
 
     for path in &files {
         let input = std::fs::read_to_string(path)
@@ -116,7 +107,8 @@ fn test_corpus_semantic_preservation() {
         let output_commands = extract_semantic_commands(&output);
 
         assert_eq!(
-            input_commands, output_commands,
+            input_commands,
+            output_commands,
             "Semantic preservation failed for {}: commands differ after formatting",
             path.display()
         );
@@ -128,10 +120,7 @@ fn test_corpus_idempotency() {
     let config = FormatConfig::default();
     let files = corpus_files();
 
-    assert!(
-        !files.is_empty(),
-        "No corpus files found in tests/corpus/"
-    );
+    assert!(!files.is_empty(), "No corpus files found in tests/corpus/");
 
     for path in &files {
         let input = std::fs::read_to_string(path)
@@ -141,7 +130,8 @@ fn test_corpus_idempotency() {
         let twice = format_text(&once, &config);
 
         assert_eq!(
-            once, twice,
+            once,
+            twice,
             "Idempotency failed for {}: formatting twice produced different output",
             path.display()
         );
@@ -153,10 +143,7 @@ fn test_corpus_output_not_empty() {
     let config = FormatConfig::default();
     let files = corpus_files();
 
-    assert!(
-        !files.is_empty(),
-        "No corpus files found in tests/corpus/"
-    );
+    assert!(!files.is_empty(), "No corpus files found in tests/corpus/");
 
     for path in &files {
         let input = std::fs::read_to_string(path)
@@ -182,10 +169,7 @@ fn test_corpus_no_trailing_whitespace() {
     let config = FormatConfig::default();
     let files = corpus_files();
 
-    assert!(
-        !files.is_empty(),
-        "No corpus files found in tests/corpus/"
-    );
+    assert!(!files.is_empty(), "No corpus files found in tests/corpus/");
 
     for path in &files {
         let input = std::fs::read_to_string(path)
@@ -194,8 +178,7 @@ fn test_corpus_no_trailing_whitespace() {
         let output = format_text(&input, &config);
 
         for (line_num, line) in output.lines().enumerate() {
-            let has_trailing_whitespace =
-                line.ends_with(' ') || line.ends_with('\t');
+            let has_trailing_whitespace = line.ends_with(' ') || line.ends_with('\t');
 
             assert!(
                 !has_trailing_whitespace,
@@ -213,10 +196,7 @@ fn test_corpus_ends_with_newline() {
     let config = FormatConfig::default();
     let files = corpus_files();
 
-    assert!(
-        !files.is_empty(),
-        "No corpus files found in tests/corpus/"
-    );
+    assert!(!files.is_empty(), "No corpus files found in tests/corpus/");
 
     for path in &files {
         let input = std::fs::read_to_string(path)
@@ -249,9 +229,18 @@ fn test_corpus_files_exist() {
     let files = corpus_files();
 
     // Verify we have files from all 3 project categories
-    let llvm_count = files.iter().filter(|p| p.to_string_lossy().contains("llvm")).count();
-    let kde_count = files.iter().filter(|p| p.to_string_lossy().contains("kde")).count();
-    let opencv_count = files.iter().filter(|p| p.to_string_lossy().contains("opencv")).count();
+    let llvm_count = files
+        .iter()
+        .filter(|p| p.to_string_lossy().contains("llvm"))
+        .count();
+    let kde_count = files
+        .iter()
+        .filter(|p| p.to_string_lossy().contains("kde"))
+        .count();
+    let opencv_count = files
+        .iter()
+        .filter(|p| p.to_string_lossy().contains("opencv"))
+        .count();
 
     assert!(
         llvm_count >= 3,

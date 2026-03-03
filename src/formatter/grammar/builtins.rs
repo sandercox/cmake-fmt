@@ -168,36 +168,50 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
                 ("TYPE", SingleValue),
                 ("INCLUDES", BinPack),
             ]);
-            g.sub_keywords = ["DESTINATION", "PERMISSIONS", "CONFIGURATIONS", "COMPONENT", "NAMELINK_COMPONENT"]
-                .iter().map(|s| s.to_string()).collect();
+            g.sub_keywords = [
+                "DESTINATION",
+                "PERMISSIONS",
+                "CONFIGURATIONS",
+                "COMPONENT",
+                "NAMELINK_COMPONENT",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
             g
         });
 
         // FILES mode
-        modes.insert("FILES".to_string(), CommandGrammar::from_keywords(&[
-            ("FILES", MultiValue),
-            ("DESTINATION", SingleValue),
-            ("PERMISSIONS", MultiValue),
-            ("CONFIGURATIONS", MultiValue),
-            ("COMPONENT", SingleValue),
-            ("RENAME", SingleValue),
-            ("OPTIONAL", Flag),
-            ("EXCLUDE_FROM_ALL", Flag),
-            ("TYPE", SingleValue),
-        ]));
+        modes.insert(
+            "FILES".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("FILES", MultiValue),
+                ("DESTINATION", SingleValue),
+                ("PERMISSIONS", MultiValue),
+                ("CONFIGURATIONS", MultiValue),
+                ("COMPONENT", SingleValue),
+                ("RENAME", SingleValue),
+                ("OPTIONAL", Flag),
+                ("EXCLUDE_FROM_ALL", Flag),
+                ("TYPE", SingleValue),
+            ]),
+        );
 
         // PROGRAMS mode
-        modes.insert("PROGRAMS".to_string(), CommandGrammar::from_keywords(&[
-            ("PROGRAMS", MultiValue),
-            ("DESTINATION", SingleValue),
-            ("PERMISSIONS", MultiValue),
-            ("CONFIGURATIONS", MultiValue),
-            ("COMPONENT", SingleValue),
-            ("RENAME", SingleValue),
-            ("OPTIONAL", Flag),
-            ("EXCLUDE_FROM_ALL", Flag),
-            ("TYPE", SingleValue),
-        ]));
+        modes.insert(
+            "PROGRAMS".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("PROGRAMS", MultiValue),
+                ("DESTINATION", SingleValue),
+                ("PERMISSIONS", MultiValue),
+                ("CONFIGURATIONS", MultiValue),
+                ("COMPONENT", SingleValue),
+                ("RENAME", SingleValue),
+                ("OPTIONAL", Flag),
+                ("EXCLUDE_FROM_ALL", Flag),
+                ("TYPE", SingleValue),
+            ]),
+        );
 
         // DIRECTORY mode
         modes.insert("DIRECTORY".to_string(), {
@@ -220,42 +234,52 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
                 ("TYPE", SingleValue),
             ]);
             g.sub_keywords = ["PATTERN", "REGEX", "EXCLUDE", "PERMISSIONS"]
-                .iter().map(|s| s.to_string()).collect();
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
             g.collection_keywords = ["FILES_MATCHING"].iter().map(|s| s.to_string()).collect();
             g
         });
 
         // SCRIPT mode
-        modes.insert("SCRIPT".to_string(), CommandGrammar::from_keywords(&[
-            ("SCRIPT", SingleValue),
-        ]));
+        modes.insert(
+            "SCRIPT".to_string(),
+            CommandGrammar::from_keywords(&[("SCRIPT", SingleValue)]),
+        );
 
         // CODE mode
-        modes.insert("CODE".to_string(), CommandGrammar::from_keywords(&[
-            ("CODE", SingleValue),
-        ]));
+        modes.insert(
+            "CODE".to_string(),
+            CommandGrammar::from_keywords(&[("CODE", SingleValue)]),
+        );
 
         // EXPORT mode
-        modes.insert("EXPORT".to_string(), CommandGrammar::from_keywords(&[
-            ("EXPORT", SingleValue),
-            ("DESTINATION", SingleValue),
-            ("NAMESPACE", SingleValue),
-            ("FILE", SingleValue),
-            ("PERMISSIONS", MultiValue),
-            ("CONFIGURATIONS", MultiValue),
-            ("COMPONENT", SingleValue),
-            ("EXPORT_LINK_INTERFACE_LIBRARIES", Flag),
-        ]));
+        modes.insert(
+            "EXPORT".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("EXPORT", SingleValue),
+                ("DESTINATION", SingleValue),
+                ("NAMESPACE", SingleValue),
+                ("FILE", SingleValue),
+                ("PERMISSIONS", MultiValue),
+                ("CONFIGURATIONS", MultiValue),
+                ("COMPONENT", SingleValue),
+                ("EXPORT_LINK_INTERFACE_LIBRARIES", Flag),
+            ]),
+        );
 
         // RUNTIME_DEPENDENCY_SET mode (CMake 3.21+)
-        modes.insert("RUNTIME_DEPENDENCY_SET".to_string(), CommandGrammar::from_keywords(&[
-            ("RUNTIME_DEPENDENCY_SET", SingleValue),
-            ("DESTINATION", SingleValue),
-            ("COMPONENT", SingleValue),
-            ("NAMELINK_COMPONENT", SingleValue),
-            ("OPTIONAL", Flag),
-            ("EXCLUDE_FROM_ALL", Flag),
-        ]));
+        modes.insert(
+            "RUNTIME_DEPENDENCY_SET".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("RUNTIME_DEPENDENCY_SET", SingleValue),
+                ("DESTINATION", SingleValue),
+                ("COMPONENT", SingleValue),
+                ("NAMELINK_COMPONENT", SingleValue),
+                ("OPTIONAL", Flag),
+                ("EXCLUDE_FROM_ALL", Flag),
+            ]),
+        );
 
         grammars.insert("install".to_string(), Grammar::Modes { modes });
     }
@@ -411,64 +435,85 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         let empty = CommandGrammar::new();
 
         // Reading modes
-        modes.insert("READ".to_string(), CommandGrammar::from_keywords(&[
-            ("READ", SingleValue),
-            ("OFFSET", SingleValue),
-            ("LIMIT", SingleValue),
-            ("HEX", Flag),
-        ]));
+        modes.insert(
+            "READ".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("READ", SingleValue),
+                ("OFFSET", SingleValue),
+                ("LIMIT", SingleValue),
+                ("HEX", Flag),
+            ]),
+        );
 
-        modes.insert("STRINGS".to_string(), CommandGrammar::from_keywords(&[
-            ("STRINGS", SingleValue),
-            ("LENGTH_MAXIMUM", SingleValue),
-            ("LENGTH_MINIMUM", SingleValue),
-            ("LIMIT_COUNT", SingleValue),
-            ("LIMIT_INPUT", SingleValue),
-            ("LIMIT_OUTPUT", SingleValue),
-            ("NEWLINE_CONSUME", Flag),
-            ("NO_HEX_CONVERSION", Flag),
-            ("REGEX", SingleValue),
-            ("ENCODING", SingleValue),
-        ]));
+        modes.insert(
+            "STRINGS".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("STRINGS", SingleValue),
+                ("LENGTH_MAXIMUM", SingleValue),
+                ("LENGTH_MINIMUM", SingleValue),
+                ("LIMIT_COUNT", SingleValue),
+                ("LIMIT_INPUT", SingleValue),
+                ("LIMIT_OUTPUT", SingleValue),
+                ("NEWLINE_CONSUME", Flag),
+                ("NO_HEX_CONVERSION", Flag),
+                ("REGEX", SingleValue),
+                ("ENCODING", SingleValue),
+            ]),
+        );
 
         // Hash modes (empty grammar - mode keyword + positional args only)
-        for hash in &["MD5", "SHA1", "SHA224", "SHA256", "SHA384", "SHA512", "SHA3_224", "SHA3_256", "SHA3_384", "SHA3_512"] {
+        for hash in &[
+            "MD5", "SHA1", "SHA224", "SHA256", "SHA384", "SHA512", "SHA3_224", "SHA3_256",
+            "SHA3_384", "SHA3_512",
+        ] {
             modes.insert(hash.to_string(), empty.clone());
         }
 
         // Writing modes
-        modes.insert("WRITE".to_string(), CommandGrammar::from_keywords(&[
-            ("WRITE", SingleValue),
-            ("NEWLINE_STYLE", SingleValue),
-            ("NO_SOURCE_PERMISSIONS", Flag),
-            ("FILE_PERMISSIONS", MultiValue),
-        ]));
+        modes.insert(
+            "WRITE".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("WRITE", SingleValue),
+                ("NEWLINE_STYLE", SingleValue),
+                ("NO_SOURCE_PERMISSIONS", Flag),
+                ("FILE_PERMISSIONS", MultiValue),
+            ]),
+        );
 
-        modes.insert("APPEND".to_string(), CommandGrammar::from_keywords(&[
-            ("APPEND", SingleValue),
-            ("NEWLINE_STYLE", SingleValue),
-            ("NO_SOURCE_PERMISSIONS", Flag),
-            ("FILE_PERMISSIONS", MultiValue),
-        ]));
+        modes.insert(
+            "APPEND".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("APPEND", SingleValue),
+                ("NEWLINE_STYLE", SingleValue),
+                ("NO_SOURCE_PERMISSIONS", Flag),
+                ("FILE_PERMISSIONS", MultiValue),
+            ]),
+        );
 
         modes.insert("TOUCH".to_string(), empty.clone());
         modes.insert("TOUCH_NOCREATE".to_string(), empty.clone());
 
         // Filesystem modes
-        modes.insert("GLOB".to_string(), CommandGrammar::from_keywords(&[
-            ("GLOB", SingleValue),
-            ("LIST_DIRECTORIES", SingleValue),
-            ("RELATIVE", SingleValue),
-            ("CONFIGURE_DEPENDS", Flag),
-        ]));
+        modes.insert(
+            "GLOB".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("GLOB", SingleValue),
+                ("LIST_DIRECTORIES", SingleValue),
+                ("RELATIVE", SingleValue),
+                ("CONFIGURE_DEPENDS", Flag),
+            ]),
+        );
 
-        modes.insert("GLOB_RECURSE".to_string(), CommandGrammar::from_keywords(&[
-            ("GLOB_RECURSE", SingleValue),
-            ("LIST_DIRECTORIES", SingleValue),
-            ("RELATIVE", SingleValue),
-            ("FOLLOW_SYMLINKS", Flag),
-            ("CONFIGURE_DEPENDS", Flag),
-        ]));
+        modes.insert(
+            "GLOB_RECURSE".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("GLOB_RECURSE", SingleValue),
+                ("LIST_DIRECTORIES", SingleValue),
+                ("RELATIVE", SingleValue),
+                ("FOLLOW_SYMLINKS", Flag),
+                ("CONFIGURE_DEPENDS", Flag),
+            ]),
+        );
 
         modes.insert("RENAME".to_string(), empty.clone());
         modes.insert("REMOVE".to_string(), empty.clone());
@@ -478,56 +523,68 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         modes.insert("TO_CMAKE_PATH".to_string(), empty.clone());
         modes.insert("TO_NATIVE_PATH".to_string(), empty.clone());
 
-        modes.insert("REAL_PATH".to_string(), CommandGrammar::from_keywords(&[
-            ("REAL_PATH", SingleValue),
-            ("BASE_DIRECTORY", SingleValue),
-            ("EXPAND_TILDE", Flag),
-        ]));
+        modes.insert(
+            "REAL_PATH".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("REAL_PATH", SingleValue),
+                ("BASE_DIRECTORY", SingleValue),
+                ("EXPAND_TILDE", Flag),
+            ]),
+        );
 
         // Transfer modes
-        modes.insert("DOWNLOAD".to_string(), CommandGrammar::from_keywords(&[
-            ("DOWNLOAD", SingleValue),
-            ("INACTIVITY_TIMEOUT", SingleValue),
-            ("LOG", SingleValue),
-            ("STATUS", SingleValue),
-            ("TIMEOUT", SingleValue),
-            ("USERPWD", SingleValue),
-            ("HTTPHEADER", SingleValue),
-            ("NETRC", SingleValue),
-            ("NETRC_FILE", SingleValue),
-            ("EXPECTED_HASH", SingleValue),
-            ("EXPECTED_MD5", SingleValue),
-            ("TLS_VERIFY", SingleValue),
-            ("TLS_CAINFO", SingleValue),
-            ("SHOW_PROGRESS", Flag),
-            ("RANGE_START", SingleValue),
-            ("RANGE_END", SingleValue),
-        ]));
+        modes.insert(
+            "DOWNLOAD".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("DOWNLOAD", SingleValue),
+                ("INACTIVITY_TIMEOUT", SingleValue),
+                ("LOG", SingleValue),
+                ("STATUS", SingleValue),
+                ("TIMEOUT", SingleValue),
+                ("USERPWD", SingleValue),
+                ("HTTPHEADER", SingleValue),
+                ("NETRC", SingleValue),
+                ("NETRC_FILE", SingleValue),
+                ("EXPECTED_HASH", SingleValue),
+                ("EXPECTED_MD5", SingleValue),
+                ("TLS_VERIFY", SingleValue),
+                ("TLS_CAINFO", SingleValue),
+                ("SHOW_PROGRESS", Flag),
+                ("RANGE_START", SingleValue),
+                ("RANGE_END", SingleValue),
+            ]),
+        );
 
-        modes.insert("UPLOAD".to_string(), CommandGrammar::from_keywords(&[
-            ("UPLOAD", SingleValue),
-            ("INACTIVITY_TIMEOUT", SingleValue),
-            ("LOG", SingleValue),
-            ("STATUS", SingleValue),
-            ("TIMEOUT", SingleValue),
-            ("USERPWD", SingleValue),
-            ("HTTPHEADER", SingleValue),
-            ("NETRC", SingleValue),
-            ("NETRC_FILE", SingleValue),
-            ("TLS_VERIFY", SingleValue),
-            ("TLS_CAINFO", SingleValue),
-            ("SHOW_PROGRESS", Flag),
-        ]));
+        modes.insert(
+            "UPLOAD".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("UPLOAD", SingleValue),
+                ("INACTIVITY_TIMEOUT", SingleValue),
+                ("LOG", SingleValue),
+                ("STATUS", SingleValue),
+                ("TIMEOUT", SingleValue),
+                ("USERPWD", SingleValue),
+                ("HTTPHEADER", SingleValue),
+                ("NETRC", SingleValue),
+                ("NETRC_FILE", SingleValue),
+                ("TLS_VERIFY", SingleValue),
+                ("TLS_CAINFO", SingleValue),
+                ("SHOW_PROGRESS", Flag),
+            ]),
+        );
 
         // Locking mode
-        modes.insert("LOCK".to_string(), CommandGrammar::from_keywords(&[
-            ("LOCK", SingleValue),
-            ("DIRECTORY", Flag),
-            ("RELEASE", Flag),
-            ("GUARD", SingleValue),
-            ("RESULT_VARIABLE", SingleValue),
-            ("TIMEOUT", SingleValue),
-        ]));
+        modes.insert(
+            "LOCK".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("LOCK", SingleValue),
+                ("DIRECTORY", Flag),
+                ("RELEASE", Flag),
+                ("GUARD", SingleValue),
+                ("RESULT_VARIABLE", SingleValue),
+                ("TIMEOUT", SingleValue),
+            ]),
+        );
 
         // Path modes
         modes.insert("COPY".to_string(), {
@@ -546,7 +603,9 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
                 ("FOLLOW_SYMLINK_CHAIN", Flag),
             ]);
             g.sub_keywords = ["PATTERN", "REGEX", "EXCLUDE", "PERMISSIONS"]
-                .iter().map(|s| s.to_string()).collect();
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
             g.collection_keywords = ["FILES_MATCHING"].iter().map(|s| s.to_string()).collect();
             g
         });
@@ -567,100 +626,127 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
                 ("FOLLOW_SYMLINK_CHAIN", Flag),
             ]);
             g.sub_keywords = ["PATTERN", "REGEX", "EXCLUDE", "PERMISSIONS"]
-                .iter().map(|s| s.to_string()).collect();
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
             g.collection_keywords = ["FILES_MATCHING"].iter().map(|s| s.to_string()).collect();
             g
         });
 
         // Archive modes
-        modes.insert("ARCHIVE_CREATE".to_string(), CommandGrammar::from_keywords(&[
-            ("ARCHIVE_CREATE", Flag),
-            ("DESTINATION", SingleValue),
-            ("PATHS", MultiValue),
-            ("FORMAT", SingleValue),
-            ("COMPRESSION", SingleValue),
-            ("COMPRESSION_LEVEL", SingleValue),
-            ("MTIME", SingleValue),
-            ("VERBOSE", Flag),
-        ]));
+        modes.insert(
+            "ARCHIVE_CREATE".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("ARCHIVE_CREATE", Flag),
+                ("DESTINATION", SingleValue),
+                ("PATHS", MultiValue),
+                ("FORMAT", SingleValue),
+                ("COMPRESSION", SingleValue),
+                ("COMPRESSION_LEVEL", SingleValue),
+                ("MTIME", SingleValue),
+                ("VERBOSE", Flag),
+            ]),
+        );
 
-        modes.insert("ARCHIVE_EXTRACT".to_string(), CommandGrammar::from_keywords(&[
-            ("ARCHIVE_EXTRACT", Flag),
-            ("INPUT", SingleValue),
-            ("DESTINATION", SingleValue),
-            ("PATTERNS", MultiValue),
-            ("LIST_ONLY", Flag),
-            ("VERBOSE", Flag),
-            ("TOUCH", Flag),
-        ]));
+        modes.insert(
+            "ARCHIVE_EXTRACT".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("ARCHIVE_EXTRACT", Flag),
+                ("INPUT", SingleValue),
+                ("DESTINATION", SingleValue),
+                ("PATTERNS", MultiValue),
+                ("LIST_ONLY", Flag),
+                ("VERBOSE", Flag),
+                ("TOUCH", Flag),
+            ]),
+        );
 
         // Misc modes
-        modes.insert("SIZE".to_string(), CommandGrammar::from_keywords(&[
-            ("SIZE", SingleValue),
-        ]));
+        modes.insert(
+            "SIZE".to_string(),
+            CommandGrammar::from_keywords(&[("SIZE", SingleValue)]),
+        );
 
         modes.insert("READ_SYMLINK".to_string(), empty.clone());
 
-        modes.insert("CREATE_LINK".to_string(), CommandGrammar::from_keywords(&[
-            ("CREATE_LINK", SingleValue),
-            ("RESULT", SingleValue),
-            ("COPY_ON_ERROR", Flag),
-            ("SYMBOLIC", Flag),
-        ]));
+        modes.insert(
+            "CREATE_LINK".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("CREATE_LINK", SingleValue),
+                ("RESULT", SingleValue),
+                ("COPY_ON_ERROR", Flag),
+                ("SYMBOLIC", Flag),
+            ]),
+        );
 
-        modes.insert("CHMOD".to_string(), CommandGrammar::from_keywords(&[
-            ("CHMOD", MultiValue),
-            ("PERMISSIONS", MultiValue),
-            ("FILE_PERMISSIONS", MultiValue),
-            ("DIRECTORY_PERMISSIONS", MultiValue),
-        ]));
+        modes.insert(
+            "CHMOD".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("CHMOD", MultiValue),
+                ("PERMISSIONS", MultiValue),
+                ("FILE_PERMISSIONS", MultiValue),
+                ("DIRECTORY_PERMISSIONS", MultiValue),
+            ]),
+        );
 
-        modes.insert("CHMOD_RECURSE".to_string(), CommandGrammar::from_keywords(&[
-            ("CHMOD_RECURSE", MultiValue),
-            ("PERMISSIONS", MultiValue),
-            ("FILE_PERMISSIONS", MultiValue),
-            ("DIRECTORY_PERMISSIONS", MultiValue),
-        ]));
+        modes.insert(
+            "CHMOD_RECURSE".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("CHMOD_RECURSE", MultiValue),
+                ("PERMISSIONS", MultiValue),
+                ("FILE_PERMISSIONS", MultiValue),
+                ("DIRECTORY_PERMISSIONS", MultiValue),
+            ]),
+        );
 
-        modes.insert("GET_RUNTIME_DEPENDENCIES".to_string(), CommandGrammar::from_keywords(&[
-            ("GET_RUNTIME_DEPENDENCIES", Flag),
-            ("RESOLVED_DEPENDENCIES_VAR", SingleValue),
-            ("UNRESOLVED_DEPENDENCIES_VAR", SingleValue),
-            ("CONFLICTING_DEPENDENCIES_PREFIX", SingleValue),
-            ("EXECUTABLES", MultiValue),
-            ("LIBRARIES", MultiValue),
-            ("DIRECTORIES", MultiValue),
-            ("BUNDLE_EXECUTABLE", SingleValue),
-            ("MODULES", MultiValue),
-            ("PRE_INCLUDE_REGEXES", MultiValue),
-            ("PRE_EXCLUDE_REGEXES", MultiValue),
-            ("POST_INCLUDE_REGEXES", MultiValue),
-            ("POST_EXCLUDE_REGEXES", MultiValue),
-            ("POST_INCLUDE_FILES", MultiValue),
-            ("POST_EXCLUDE_FILES", MultiValue),
-        ]));
+        modes.insert(
+            "GET_RUNTIME_DEPENDENCIES".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("GET_RUNTIME_DEPENDENCIES", Flag),
+                ("RESOLVED_DEPENDENCIES_VAR", SingleValue),
+                ("UNRESOLVED_DEPENDENCIES_VAR", SingleValue),
+                ("CONFLICTING_DEPENDENCIES_PREFIX", SingleValue),
+                ("EXECUTABLES", MultiValue),
+                ("LIBRARIES", MultiValue),
+                ("DIRECTORIES", MultiValue),
+                ("BUNDLE_EXECUTABLE", SingleValue),
+                ("MODULES", MultiValue),
+                ("PRE_INCLUDE_REGEXES", MultiValue),
+                ("PRE_EXCLUDE_REGEXES", MultiValue),
+                ("POST_INCLUDE_REGEXES", MultiValue),
+                ("POST_EXCLUDE_REGEXES", MultiValue),
+                ("POST_INCLUDE_FILES", MultiValue),
+                ("POST_EXCLUDE_FILES", MultiValue),
+            ]),
+        );
 
-        modes.insert("CONFIGURE".to_string(), CommandGrammar::from_keywords(&[
-            ("CONFIGURE", Flag),
-            ("OUTPUT", SingleValue),
-            ("CONTENT", SingleValue),
-            ("NEWLINE_STYLE", SingleValue),
-            ("NO_SOURCE_PERMISSIONS", Flag),
-            ("FILE_PERMISSIONS", MultiValue),
-            ("ESCAPE_QUOTES", Flag),
-        ]));
+        modes.insert(
+            "CONFIGURE".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("CONFIGURE", Flag),
+                ("OUTPUT", SingleValue),
+                ("CONTENT", SingleValue),
+                ("NEWLINE_STYLE", SingleValue),
+                ("NO_SOURCE_PERMISSIONS", Flag),
+                ("FILE_PERMISSIONS", MultiValue),
+                ("ESCAPE_QUOTES", Flag),
+            ]),
+        );
 
-        modes.insert("GENERATE".to_string(), CommandGrammar::from_keywords(&[
-            ("GENERATE", Flag),
-            ("OUTPUT", SingleValue),
-            ("INPUT", SingleValue),
-            ("CONTENT", SingleValue),
-            ("CONDITION", SingleValue),
-            ("TARGET", SingleValue),
-            ("NEWLINE_STYLE", SingleValue),
-            ("NO_SOURCE_PERMISSIONS", Flag),
-            ("FILE_PERMISSIONS", MultiValue),
-        ]));
+        modes.insert(
+            "GENERATE".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("GENERATE", Flag),
+                ("OUTPUT", SingleValue),
+                ("INPUT", SingleValue),
+                ("CONTENT", SingleValue),
+                ("CONDITION", SingleValue),
+                ("TARGET", SingleValue),
+                ("NEWLINE_STYLE", SingleValue),
+                ("NO_SOURCE_PERMISSIONS", Flag),
+                ("FILE_PERMISSIONS", MultiValue),
+            ]),
+        );
 
         grammars.insert("file".to_string(), Grammar::Modes { modes });
     }
@@ -671,10 +757,10 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         let empty = CommandGrammar::new();
 
         // Most string modes have no section keywords (purely positional)
-        modes.insert("FIND".to_string(), CommandGrammar::from_keywords(&[
-            ("FIND", Flag),
-            ("REVERSE", Flag),
-        ]));
+        modes.insert(
+            "FIND".to_string(),
+            CommandGrammar::from_keywords(&[("FIND", Flag), ("REVERSE", Flag)]),
+        );
 
         modes.insert("REPLACE".to_string(), empty.clone());
         modes.insert("REGEX".to_string(), empty.clone());
@@ -694,43 +780,55 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         modes.insert("HEX".to_string(), empty.clone());
         modes.insert("MAKE_C_IDENTIFIER".to_string(), empty.clone());
 
-        modes.insert("CONFIGURE".to_string(), CommandGrammar::from_keywords(&[
-            ("CONFIGURE", Flag),
-            ("ESCAPE_QUOTES", Flag),
-            ("@ONLY", Flag),
-        ]));
+        modes.insert(
+            "CONFIGURE".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("CONFIGURE", Flag),
+                ("ESCAPE_QUOTES", Flag),
+                ("@ONLY", Flag),
+            ]),
+        );
 
-        modes.insert("RANDOM".to_string(), CommandGrammar::from_keywords(&[
-            ("RANDOM", Flag),
-            ("LENGTH", SingleValue),
-            ("ALPHABET", SingleValue),
-            ("RANDOM_SEED", SingleValue),
-        ]));
+        modes.insert(
+            "RANDOM".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("RANDOM", Flag),
+                ("LENGTH", SingleValue),
+                ("ALPHABET", SingleValue),
+                ("RANDOM_SEED", SingleValue),
+            ]),
+        );
 
-        modes.insert("TIMESTAMP".to_string(), CommandGrammar::from_keywords(&[
-            ("TIMESTAMP", Flag),
-            ("UTC", Flag),
-        ]));
+        modes.insert(
+            "TIMESTAMP".to_string(),
+            CommandGrammar::from_keywords(&[("TIMESTAMP", Flag), ("UTC", Flag)]),
+        );
 
-        modes.insert("UUID".to_string(), CommandGrammar::from_keywords(&[
-            ("UUID", Flag),
-            ("NAMESPACE", SingleValue),
-            ("NAME", SingleValue),
-            ("TYPE", SingleValue),
-            ("UPPER", Flag),
-        ]));
+        modes.insert(
+            "UUID".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("UUID", Flag),
+                ("NAMESPACE", SingleValue),
+                ("NAME", SingleValue),
+                ("TYPE", SingleValue),
+                ("UPPER", Flag),
+            ]),
+        );
 
-        modes.insert("JSON".to_string(), CommandGrammar::from_keywords(&[
-            ("JSON", Flag),
-            ("ERROR_VARIABLE", SingleValue),
-            ("MEMBER", SingleValue),
-            ("GET", Flag),
-            ("TYPE", Flag),
-            ("LENGTH", Flag),
-            ("REMOVE", Flag),
-            ("SET", Flag),
-            ("EQUAL", Flag),
-        ]));
+        modes.insert(
+            "JSON".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("JSON", Flag),
+                ("ERROR_VARIABLE", SingleValue),
+                ("MEMBER", SingleValue),
+                ("GET", Flag),
+                ("TYPE", Flag),
+                ("LENGTH", Flag),
+                ("REMOVE", Flag),
+                ("SET", Flag),
+                ("EQUAL", Flag),
+            ]),
+        );
 
         grammars.insert("string".to_string(), Grammar::Modes { modes });
     }
@@ -742,9 +840,7 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         let mut modes = HashMap::new();
 
         // Helper: mode keyword as SingleValue (consumes the list variable name)
-        let mode_only = |name: &str| CommandGrammar::from_keywords(&[
-            (name, SingleValue),
-        ]);
+        let mode_only = |name: &str| CommandGrammar::from_keywords(&[(name, SingleValue)]);
 
         modes.insert("LENGTH".to_string(), mode_only("LENGTH"));
         modes.insert("GET".to_string(), mode_only("GET"));
@@ -753,34 +849,46 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         modes.insert("INSERT".to_string(), mode_only("INSERT"));
         modes.insert("REMOVE_ITEM".to_string(), mode_only("REMOVE_ITEM"));
         modes.insert("REMOVE_AT".to_string(), mode_only("REMOVE_AT"));
-        modes.insert("REMOVE_DUPLICATES".to_string(), mode_only("REMOVE_DUPLICATES"));
+        modes.insert(
+            "REMOVE_DUPLICATES".to_string(),
+            mode_only("REMOVE_DUPLICATES"),
+        );
         modes.insert("REVERSE".to_string(), mode_only("REVERSE"));
         modes.insert("POP_BACK".to_string(), mode_only("POP_BACK"));
         modes.insert("POP_FRONT".to_string(), mode_only("POP_FRONT"));
         modes.insert("JOIN".to_string(), mode_only("JOIN"));
         modes.insert("SUBLIST".to_string(), mode_only("SUBLIST"));
 
-        modes.insert("SORT".to_string(), CommandGrammar::from_keywords(&[
-            ("SORT", SingleValue),
-            ("COMPARE", SingleValue),
-            ("CASE", SingleValue),
-            ("ORDER", SingleValue),
-        ]));
+        modes.insert(
+            "SORT".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("SORT", SingleValue),
+                ("COMPARE", SingleValue),
+                ("CASE", SingleValue),
+                ("ORDER", SingleValue),
+            ]),
+        );
 
-        modes.insert("FILTER".to_string(), CommandGrammar::from_keywords(&[
-            ("FILTER", SingleValue),
-            ("INCLUDE", Flag),
-            ("EXCLUDE", Flag),
-            ("REGEX", SingleValue),
-        ]));
+        modes.insert(
+            "FILTER".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("FILTER", SingleValue),
+                ("INCLUDE", Flag),
+                ("EXCLUDE", Flag),
+                ("REGEX", SingleValue),
+            ]),
+        );
 
-        modes.insert("TRANSFORM".to_string(), CommandGrammar::from_keywords(&[
-            ("TRANSFORM", SingleValue),
-            ("OUTPUT_VARIABLE", SingleValue),
-            ("FOR", SingleValue),
-            ("REGEX", SingleValue),
-            ("AT", MultiValue),
-        ]));
+        modes.insert(
+            "TRANSFORM".to_string(),
+            CommandGrammar::from_keywords(&[
+                ("TRANSFORM", SingleValue),
+                ("OUTPUT_VARIABLE", SingleValue),
+                ("FOR", SingleValue),
+                ("REGEX", SingleValue),
+                ("AT", MultiValue),
+            ]),
+        );
 
         grammars.insert("list".to_string(), Grammar::Modes { modes });
     }
@@ -791,24 +899,47 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
     {
         let mut modes = HashMap::new();
 
-        for scope in &["GLOBAL", "DIRECTORY", "TARGET", "SOURCE", "TEST", "VARIABLE", "CACHED_VARIABLE"] {
-            modes.insert(scope.to_string(), CommandGrammar::from_keywords(&[
-                (scope, Flag),
-                ("PROPERTY", SingleValue),
-                ("INHERITED", Flag),
-                ("BRIEF_DOCS", MultiValue),
-                ("FULL_DOCS", MultiValue),
-            ]));
+        for scope in &[
+            "GLOBAL",
+            "DIRECTORY",
+            "TARGET",
+            "SOURCE",
+            "TEST",
+            "VARIABLE",
+            "CACHED_VARIABLE",
+        ] {
+            modes.insert(
+                scope.to_string(),
+                CommandGrammar::from_keywords(&[
+                    (scope, Flag),
+                    ("PROPERTY", SingleValue),
+                    ("INHERITED", Flag),
+                    ("BRIEF_DOCS", MultiValue),
+                    ("FULL_DOCS", MultiValue),
+                ]),
+            );
         }
 
         grammars.insert("define_property".to_string(), Grammar::Modes { modes });
     }
 
     // Commands with positional-only arguments (empty grammar, but recognized)
-    grammars.insert("add_dependencies".to_string(), Grammar::Simple(CommandGrammar::new()));
-    grammars.insert("add_compile_definitions".to_string(), Grammar::Simple(CommandGrammar::new()));
-    grammars.insert("add_compile_options".to_string(), Grammar::Simple(CommandGrammar::new()));
-    grammars.insert("add_link_options".to_string(), Grammar::Simple(CommandGrammar::new()));
+    grammars.insert(
+        "add_dependencies".to_string(),
+        Grammar::Simple(CommandGrammar::new()),
+    );
+    grammars.insert(
+        "add_compile_definitions".to_string(),
+        Grammar::Simple(CommandGrammar::new()),
+    );
+    grammars.insert(
+        "add_compile_options".to_string(),
+        Grammar::Simple(CommandGrammar::new()),
+    );
+    grammars.insert(
+        "add_link_options".to_string(),
+        Grammar::Simple(CommandGrammar::new()),
+    );
 
     // Commands where ALL args go on new lines when multiline (no trailing first arg)
     for cmd in &["add_definitions", "configure_file"] {

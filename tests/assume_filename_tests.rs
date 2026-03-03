@@ -29,7 +29,9 @@ fn test_assume_filename_basic_stdin_formatting() {
         .write_all(input.as_bytes())
         .expect("Failed to write to stdin");
 
-    let output = child.wait_with_output().expect("Failed to wait for command");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
     assert!(output.status.success(), "Command should succeed");
     assert_eq!(
@@ -70,7 +72,9 @@ fn test_assume_filename_config_resolution() {
         .write_all(input.as_bytes())
         .expect("Failed to write to stdin");
 
-    let output = child.wait_with_output().expect("Failed to wait for command");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
     assert!(output.status.success(), "Command should succeed");
     assert_eq!(
@@ -122,7 +126,9 @@ fn test_assume_filename_matches_file_output() {
         .write_all(content.as_bytes())
         .expect("Failed to write to stdin");
 
-    let stdin_output = child.wait_with_output().expect("Failed to wait for command");
+    let stdin_output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
     assert!(
         stdin_output.status.success(),
@@ -166,7 +172,9 @@ fn test_assume_filename_relative_path() {
         .write_all(input.as_bytes())
         .expect("Failed to write to stdin");
 
-    let output = child.wait_with_output().expect("Failed to wait for command");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
     assert!(output.status.success(), "Command should succeed");
     assert_eq!(
@@ -217,7 +225,9 @@ fn test_assume_filename_check_mode() {
         .write_all(input.as_bytes())
         .expect("Failed to write to stdin");
 
-    let output = child.wait_with_output().expect("Failed to wait for command");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
     assert_eq!(
         output.status.code(),
@@ -251,7 +261,9 @@ fn test_assume_filename_diff_mode() {
         .write_all(input.as_bytes())
         .expect("Failed to write to stdin");
 
-    let output = child.wait_with_output().expect("Failed to wait for command");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
     assert_eq!(
         output.status.code(),
@@ -311,7 +323,9 @@ endfunction()
         .write_all(user_file_content.as_bytes())
         .expect("Failed to write to stdin");
 
-    let output = child.wait_with_output().expect("Failed to wait for command");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
 
     assert!(output.status.success(), "Command should succeed");
 
@@ -331,7 +345,10 @@ endfunction()
         .output()
         .expect("Failed to format file directly");
 
-    assert!(file_output.status.success(), "File formatting should succeed");
+    assert!(
+        file_output.status.success(),
+        "File formatting should succeed"
+    );
 
     // The outputs should be identical (both should use project grammar scanning)
     assert_eq!(

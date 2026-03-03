@@ -1,4 +1,4 @@
-use cmake_fmt::interactive::{apply_decisions, generate_hunks, UserChoice};
+use cmake_fmt::interactive::{UserChoice, apply_decisions, generate_hunks};
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -61,7 +61,11 @@ fn test_generate_hunks_adjacent_changes() {
     let hunks = generate_hunks(original, formatted, 3);
 
     // Adjacent changes should merge into single hunk
-    assert_eq!(hunks.len(), 1, "Adjacent changes should merge into one hunk");
+    assert_eq!(
+        hunks.len(),
+        1,
+        "Adjacent changes should merge into one hunk"
+    );
     assert_eq!(hunks[0].old_count, 2, "Both lines changed");
 }
 
@@ -122,8 +126,14 @@ fn test_apply_suppress() {
     let result = apply_decisions(original, &decisions);
 
     // Single-line hunk uses skip directive instead of off/on pair
-    assert!(result.contains("# cmake-fmt: skip"), "Should contain skip marker");
-    assert!(result.contains("set(FOO   bar)"), "Should preserve original line");
+    assert!(
+        result.contains("# cmake-fmt: skip"),
+        "Should contain skip marker"
+    );
+    assert!(
+        result.contains("set(FOO   bar)"),
+        "Should preserve original line"
+    );
 }
 
 #[test]
@@ -143,7 +153,10 @@ fn test_apply_mixed_decisions() {
         let result = apply_decisions(original, &decisions);
 
         // First hunk accepted, second rejected
-        assert!(result.contains("set(FOO bar)"), "First change should be accepted");
+        assert!(
+            result.contains("set(FOO bar)"),
+            "First change should be accepted"
+        );
         // The exact result depends on hunk boundaries
     } else if hunks.len() == 1 {
         // All changes in one hunk - just test it doesn't crash
@@ -165,7 +178,10 @@ fn test_apply_suppress_preserves_indent() {
     let result = apply_decisions(original, &decisions);
 
     // Single-line hunk: skip marker should match indentation
-    assert!(result.contains("    # cmake-fmt: skip"), "Skip marker should be indented");
+    assert!(
+        result.contains("    # cmake-fmt: skip"),
+        "Skip marker should be indented"
+    );
 }
 
 #[test]
@@ -206,8 +222,11 @@ fn test_interactive_no_file_arg() {
     assert!(!output.status.success(), "Should exit with error");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("requires a file"),
-            "Should require file argument. stderr: {}", stderr);
+    assert!(
+        stderr.contains("requires a file"),
+        "Should require file argument. stderr: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -226,8 +245,11 @@ fn test_interactive_conflicts_with_in_place() {
     assert!(!output.status.success(), "Should exit with error");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("conflict") || stderr.contains("cannot be used with"),
-            "Should indicate flag conflict. stderr: {}", stderr);
+    assert!(
+        stderr.contains("conflict") || stderr.contains("cannot be used with"),
+        "Should indicate flag conflict. stderr: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -246,8 +268,11 @@ fn test_interactive_conflicts_with_check() {
     assert!(!output.status.success(), "Should exit with error");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("conflict") || stderr.contains("cannot be used with"),
-            "Should indicate flag conflict. stderr: {}", stderr);
+    assert!(
+        stderr.contains("conflict") || stderr.contains("cannot be used with"),
+        "Should indicate flag conflict. stderr: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -266,8 +291,11 @@ fn test_interactive_conflicts_with_diff() {
     assert!(!output.status.success(), "Should exit with error");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("conflict") || stderr.contains("cannot be used with"),
-            "Should indicate flag conflict. stderr: {}", stderr);
+    assert!(
+        stderr.contains("conflict") || stderr.contains("cannot be used with"),
+        "Should indicate flag conflict. stderr: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -288,6 +316,9 @@ fn test_interactive_multiple_files_rejected() {
     assert!(!output.status.success(), "Should exit with error");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("one file at a time"),
-            "Should reject multiple files. stderr: {}", stderr);
+    assert!(
+        stderr.contains("one file at a time"),
+        "Should reject multiple files. stderr: {}",
+        stderr
+    );
 }

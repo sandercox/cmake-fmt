@@ -1,4 +1,4 @@
-use cmake_fmt::formatter::{format_text, FormatConfig, SortSources, SourceGrouping};
+use cmake_fmt::formatter::{FormatConfig, SortSources, SourceGrouping, format_text};
 
 #[test]
 fn test_sort_sources_disabled_by_default() {
@@ -38,8 +38,14 @@ fn test_sort_sources_case_insensitive() {
     let apple_pos = result.find("apple.cpp").unwrap();
     let banana_pos = result.find("Banana.cpp").unwrap();
     let zoo_pos = result.find("Zoo.cpp").unwrap();
-    assert!(apple_pos < banana_pos, "apple.cpp should come before Banana.cpp");
-    assert!(banana_pos < zoo_pos, "Banana.cpp should come before Zoo.cpp");
+    assert!(
+        apple_pos < banana_pos,
+        "apple.cpp should come before Banana.cpp"
+    );
+    assert!(
+        banana_pos < zoo_pos,
+        "Banana.cpp should come before Zoo.cpp"
+    );
 }
 
 #[test]
@@ -52,7 +58,8 @@ fn test_sort_sources_blank_line_sections() {
     // First section: a.cpp, z.cpp
     // Second section: b.cpp, c.cpp
     let lines: Vec<&str> = result.lines().collect();
-    let source_lines: Vec<&str> = lines.iter()
+    let source_lines: Vec<&str> = lines
+        .iter()
         .filter(|l| l.contains(".cpp"))
         .copied()
         .collect();
@@ -121,7 +128,10 @@ fn test_sort_sources_with_comments() {
     let z_pos = result.find("z_widget.cpp").unwrap();
 
     assert!(a_pos < comment_pos, "a_main.cpp should come before comment");
-    assert!(comment_pos < z_pos, "comment should stay before z_widget.cpp");
+    assert!(
+        comment_pos < z_pos,
+        "comment should stay before z_widget.cpp"
+    );
 }
 
 #[test]
@@ -134,8 +144,14 @@ fn test_sort_sources_with_source_grouping() {
 
     // After sorting: a.cpp, a.h, z.cpp, z.h
     // After grouping (headers first): "a.h a.cpp", "z.h z.cpp"
-    assert!(result.contains("a.h a.cpp"), "Should contain grouped a files");
-    assert!(result.contains("z.h z.cpp"), "Should contain grouped z files");
+    assert!(
+        result.contains("a.h a.cpp"),
+        "Should contain grouped a files"
+    );
+    assert!(
+        result.contains("z.h z.cpp"),
+        "Should contain grouped z files"
+    );
 
     let a_pair_pos = result.find("a.h a.cpp").unwrap();
     let z_pair_pos = result.find("z.h z.cpp").unwrap();
@@ -178,12 +194,24 @@ fn test_sort_sources_no_sort_directive() {
     }
 
     // First section: z.cpp before a.cpp (no sorting)
-    assert!(first_section_lines[0].contains("z.cpp"), "First section should have z.cpp first");
-    assert!(first_section_lines[1].contains("a.cpp"), "First section should have a.cpp second");
+    assert!(
+        first_section_lines[0].contains("z.cpp"),
+        "First section should have z.cpp first"
+    );
+    assert!(
+        first_section_lines[1].contains("a.cpp"),
+        "First section should have a.cpp second"
+    );
 
     // Second section: a.cpp before z.cpp (sorted)
-    assert!(second_section_lines[0].contains("a.cpp"), "Second section should have a.cpp first");
-    assert!(second_section_lines[1].contains("z.cpp"), "Second section should have z.cpp second");
+    assert!(
+        second_section_lines[0].contains("a.cpp"),
+        "Second section should have a.cpp first"
+    );
+    assert!(
+        second_section_lines[1].contains("z.cpp"),
+        "Second section should have z.cpp second"
+    );
 }
 
 #[test]
@@ -247,7 +275,8 @@ sort_sources = "alphabetical"
 
 #[test]
 fn test_sort_sources_with_paths() {
-    let input = "target_sources(mylib\n\tPUBLIC\n\t\tsrc/z.cpp\n\t\tinclude/a.h\n\t\tsrc/b.cpp\n)\n";
+    let input =
+        "target_sources(mylib\n\tPUBLIC\n\t\tsrc/z.cpp\n\t\tinclude/a.h\n\t\tsrc/b.cpp\n)\n";
     let mut config = FormatConfig::default();
     config.sort_sources = SortSources::Alphabetical;
     let result = format_text(input, &config);
@@ -275,5 +304,8 @@ fn test_sort_sources_paired_lines_sort_as_unit() {
     let a_pair = result.find("a.h a.cpp").unwrap();
     let z_pair = result.find("z.h z.cpp").unwrap();
 
-    assert!(a_pair < z_pair, "a.h a.cpp pair should come before z.h z.cpp pair");
+    assert!(
+        a_pair < z_pair,
+        "a.h a.cpp pair should come before z.h z.cpp pair"
+    );
 }

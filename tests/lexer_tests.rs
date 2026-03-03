@@ -1,5 +1,5 @@
-use cmake_fmt::lexer::{lex, Token};
 use cmake_fmt::SyntaxKind;
+use cmake_fmt::lexer::{Token, lex};
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 
@@ -8,7 +8,10 @@ fn assert_token(token: &Token, kind: SyntaxKind, text: &str) {
     assert_eq!(token.kind, kind, "Token kind mismatch");
     assert_eq!(token.text, text, "Token text mismatch");
     assert!(!token.text.is_empty(), "Token text should not be empty");
-    assert!(token.span.end > token.span.start, "Token span should be non-empty");
+    assert!(
+        token.span.end > token.span.start,
+        "Token span should be non-empty"
+    );
 }
 
 // Unit tests for each token type
@@ -46,7 +49,11 @@ fn test_lex_line_comment() {
 fn test_lex_bracket_comment_0_equals() {
     let tokens = lex("#[[This is a bracket comment]]");
     assert_eq!(tokens.len(), 1);
-    assert_token(&tokens[0], SyntaxKind::BRACKET_COMMENT, "#[[This is a bracket comment]]");
+    assert_token(
+        &tokens[0],
+        SyntaxKind::BRACKET_COMMENT,
+        "#[[This is a bracket comment]]",
+    );
 }
 
 #[test]
@@ -99,7 +106,11 @@ fn test_lex_bracket_argument_with_nested_close() {
     assert_eq!(tokens.len(), 4);
     assert_token(&tokens[0], SyntaxKind::COMMAND_NAME, "message");
     assert_token(&tokens[1], SyntaxKind::LPAREN, "(");
-    assert_token(&tokens[2], SyntaxKind::BRACKET_ARGUMENT, "[=[contains ]] inside]=]");
+    assert_token(
+        &tokens[2],
+        SyntaxKind::BRACKET_ARGUMENT,
+        "[=[contains ]] inside]=]",
+    );
     assert_token(&tokens[3], SyntaxKind::RPAREN, ")");
 }
 
@@ -129,7 +140,11 @@ fn test_lex_quoted_argument_with_embedded_var() {
     assert_eq!(tokens.len(), 4);
     assert_token(&tokens[0], SyntaxKind::COMMAND_NAME, "message");
     assert_token(&tokens[1], SyntaxKind::LPAREN, "(");
-    assert_token(&tokens[2], SyntaxKind::QUOTED_ARGUMENT, "\"prefix ${VAR} suffix\"");
+    assert_token(
+        &tokens[2],
+        SyntaxKind::QUOTED_ARGUMENT,
+        "\"prefix ${VAR} suffix\"",
+    );
     assert_token(&tokens[3], SyntaxKind::RPAREN, ")");
 }
 
@@ -183,14 +198,22 @@ fn test_lex_generator_expr_simple() {
 fn test_lex_generator_expr_nested() {
     let tokens = lex("set(X $<$<BOOL:${VAR}>:value>)");
     assert_eq!(tokens.len(), 6);
-    assert_token(&tokens[4], SyntaxKind::GENERATOR_EXPR, "$<$<BOOL:${VAR}>:value>");
+    assert_token(
+        &tokens[4],
+        SyntaxKind::GENERATOR_EXPR,
+        "$<$<BOOL:${VAR}>:value>",
+    );
 }
 
 #[test]
 fn test_lex_generator_expr_deep() {
     let tokens = lex("set(X $<$<AND:$<BOOL:${A}>,$<CONFIG:Debug>>:-g>)");
     assert_eq!(tokens.len(), 6);
-    assert_token(&tokens[4], SyntaxKind::GENERATOR_EXPR, "$<$<AND:$<BOOL:${A}>,$<CONFIG:Debug>>:-g>");
+    assert_token(
+        &tokens[4],
+        SyntaxKind::GENERATOR_EXPR,
+        "$<$<AND:$<BOOL:${A}>,$<CONFIG:Debug>>:-g>",
+    );
 }
 
 #[test]
@@ -280,8 +303,16 @@ fn test_fixture_roundtrip(#[case] filename: &str) {
 
     // Verify no token has empty text
     for token in &tokens {
-        assert!(!token.text.is_empty(), "Token should not have empty text: {:?}", token);
-        assert!(token.span.end > token.span.start, "Token span should be non-empty: {:?}", token);
+        assert!(
+            !token.text.is_empty(),
+            "Token should not have empty text: {:?}",
+            token
+        );
+        assert!(
+            token.span.end > token.span.start,
+            "Token span should be non-empty: {:?}",
+            token
+        );
     }
 
     // Concatenate all token texts

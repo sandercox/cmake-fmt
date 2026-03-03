@@ -48,7 +48,10 @@ pub fn generate_hunks(original: &str, formatted: &str, context_lines: usize) -> 
 
         for op in &ops {
             for change in diff.iter_changes(op) {
-                let line = change.value().trim_end_matches(&['\r', '\n'][..]).to_string();
+                let line = change
+                    .value()
+                    .trim_end_matches(&['\r', '\n'][..])
+                    .to_string();
 
                 match change.tag() {
                     ChangeTag::Equal => {

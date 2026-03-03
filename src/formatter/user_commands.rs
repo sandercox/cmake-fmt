@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
+use crate::SyntaxNode;
 use crate::cst::CommandInvocation;
 use crate::syntax_kind::SyntaxKind;
-use crate::SyntaxNode;
 
 /// Scan top-level function()/macro() definitions and return a map of
 /// lowercased name -> original casing as written in the definition.

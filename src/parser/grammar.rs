@@ -1,6 +1,6 @@
 use crate::lexer::Token;
-use crate::syntax_kind::{SyntaxKind, CMakeLang};
 use crate::parser::error::ParseError;
+use crate::syntax_kind::{CMakeLang, SyntaxKind};
 use rowan::{GreenNodeBuilder, Language};
 
 /// Recursive descent parser that builds a green tree from tokens
@@ -47,7 +47,8 @@ impl Parser {
     fn bump(&mut self) {
         if self.pos < self.tokens.len() {
             let token = &self.tokens[self.pos];
-            self.builder.token(CMakeLang::kind_to_raw(token.kind), &token.text);
+            self.builder
+                .token(CMakeLang::kind_to_raw(token.kind), &token.text);
             self.byte_offset += token.text.len();
             self.pos += 1;
         }
@@ -58,11 +59,7 @@ impl Parser {
         if self.at(kind) {
             self.bump();
         } else {
-            let message = format!(
-                "Expected {:?}, found {:?}",
-                kind,
-                self.current_kind()
-            );
+            let message = format!("Expected {:?}, found {:?}", kind, self.current_kind());
             self.errors.push(ParseError {
                 message,
                 offset: self.byte_offset,
@@ -75,7 +72,10 @@ impl Parser {
     fn skip_trivia(&mut self) {
         while matches!(
             self.current_kind(),
-            SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT
+            SyntaxKind::WHITESPACE
+                | SyntaxKind::NEWLINE
+                | SyntaxKind::COMMENT
+                | SyntaxKind::BRACKET_COMMENT
         ) {
             self.bump();
         }
@@ -83,7 +83,8 @@ impl Parser {
 
     /// Parse the entire file
     pub(crate) fn parse_file(&mut self) {
-        self.builder.start_node(CMakeLang::kind_to_raw(SyntaxKind::FILE));
+        self.builder
+            .start_node(CMakeLang::kind_to_raw(SyntaxKind::FILE));
 
         while !self.eof() {
             self.skip_trivia();
@@ -96,7 +97,8 @@ impl Parser {
                 self.parse_command();
             } else {
                 // Error recovery: unexpected token, wrap in ERROR node
-                self.builder.start_node(CMakeLang::kind_to_raw(SyntaxKind::ERROR));
+                self.builder
+                    .start_node(CMakeLang::kind_to_raw(SyntaxKind::ERROR));
                 let message = format!("Unexpected token: {:?}", self.current_kind());
                 self.errors.push(ParseError {
                     message,
@@ -112,7 +114,8 @@ impl Parser {
 
     /// Parse a command invocation: COMMAND_NAME LPAREN argument_list RPAREN
     fn parse_command(&mut self) {
-        self.builder.start_node(CMakeLang::kind_to_raw(SyntaxKind::COMMAND_INVOCATION));
+        self.builder
+            .start_node(CMakeLang::kind_to_raw(SyntaxKind::COMMAND_INVOCATION));
 
         // Expect command name
         self.expect(SyntaxKind::COMMAND_NAME);
@@ -151,7 +154,8 @@ impl Parser {
 
     /// Parse argument list inside parens
     fn parse_argument_list(&mut self) {
-        self.builder.start_node(CMakeLang::kind_to_raw(SyntaxKind::ARGUMENT_LIST));
+        self.builder
+            .start_node(CMakeLang::kind_to_raw(SyntaxKind::ARGUMENT_LIST));
 
         loop {
             self.skip_trivia();
@@ -181,8 +185,12 @@ impl Parser {
             }
             // Error recovery: unexpected token
             else {
-                self.builder.start_node(CMakeLang::kind_to_raw(SyntaxKind::ERROR));
-                let message = format!("Unexpected token in argument list: {:?}", self.current_kind());
+                self.builder
+                    .start_node(CMakeLang::kind_to_raw(SyntaxKind::ERROR));
+                let message = format!(
+                    "Unexpected token in argument list: {:?}",
+                    self.current_kind()
+                );
                 self.errors.push(ParseError {
                     message,
                     offset: self.byte_offset,

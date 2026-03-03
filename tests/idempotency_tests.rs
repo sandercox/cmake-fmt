@@ -1,6 +1,5 @@
-use cmake_fmt::formatter::{format_text, format_text_with_diagnostics_and_path, FormatConfig, SourceGrouping};
+use cmake_fmt::formatter::{FormatConfig, SourceGrouping, format_text};
 use std::collections::HashMap;
-use std::path::Path;
 
 #[test]
 fn test_idempotency_config_grammar_command() {
@@ -32,7 +31,11 @@ my_install(
     let pass1 = format_text(input, &config);
     let pass2 = format_text(&pass1, &config);
 
-    assert_eq!(pass1, pass2, "Config grammar formatting is not idempotent.\nPass1:\n{}\nPass2:\n{}", pass1, pass2);
+    assert_eq!(
+        pass1, pass2,
+        "Config grammar formatting is not idempotent.\nPass1:\n{}\nPass2:\n{}",
+        pass1, pass2
+    );
 }
 
 #[test]
@@ -57,7 +60,11 @@ target_sources(mylib
     let pass1 = format_text(input, &config);
     let pass2 = format_text(&pass1, &config);
 
-    assert_eq!(pass1, pass2, "Source grouping formatting is not idempotent.\nPass1:\n{}\nPass2:\n{}", pass1, pass2);
+    assert_eq!(
+        pass1, pass2,
+        "Source grouping formatting is not idempotent.\nPass1:\n{}\nPass2:\n{}",
+        pass1, pass2
+    );
 }
 
 #[test]
@@ -90,7 +97,11 @@ endfunction()
     let pass1 = format_text(input, &config);
     let pass2 = format_text(&pass1, &config);
 
-    assert_eq!(pass1, pass2, "User command with cmake_parse_arguments is not idempotent.\nPass1:\n{}\nPass2:\n{}", pass1, pass2);
+    assert_eq!(
+        pass1, pass2,
+        "User command with cmake_parse_arguments is not idempotent.\nPass1:\n{}\nPass2:\n{}",
+        pass1, pass2
+    );
 }
 
 #[test]
@@ -166,7 +177,11 @@ my_custom_command(
     let pass1 = format_text(input, &config);
     let pass2 = format_text(&pass1, &config);
 
-    assert_eq!(pass1, pass2, "Mixed features formatting is not idempotent.\nPass1:\n{}\nPass2:\n{}", pass1, pass2);
+    assert_eq!(
+        pass1, pass2,
+        "Mixed features formatting is not idempotent.\nPass1:\n{}\nPass2:\n{}",
+        pass1, pass2
+    );
 }
 
 #[test]
@@ -310,7 +325,10 @@ install(
     let pass1 = format_text(input, &config);
     let pass2 = format_text(&pass1, &config);
 
-    assert_eq!(pass1, pass2, "Large realistic file formatting is not idempotent");
+    assert_eq!(
+        pass1, pass2,
+        "Large realistic file formatting is not idempotent"
+    );
 }
 
 #[test]
@@ -355,7 +373,11 @@ target_link_libraries(mylib
     let pass1 = format_text(input, &config);
     let pass2 = format_text(&pass1, &config);
 
-    assert_eq!(pass1, pass2, "All keyword types formatting is not idempotent.\nPass1:\n{}\nPass2:\n{}", pass1, pass2);
+    assert_eq!(
+        pass1, pass2,
+        "All keyword types formatting is not idempotent.\nPass1:\n{}\nPass2:\n{}",
+        pass1, pass2
+    );
 }
 
 #[test]
@@ -388,7 +410,11 @@ target_sources(mylib
     let pass1 = format_text(input, &config);
     let pass2 = format_text(&pass1, &config);
 
-    assert_eq!(pass1, pass2, "Formatting with comments and blank lines is not idempotent.\nPass1:\n{}\nPass2:\n{}", pass1, pass2);
+    assert_eq!(
+        pass1, pass2,
+        "Formatting with comments and blank lines is not idempotent.\nPass1:\n{}\nPass2:\n{}",
+        pass1, pass2
+    );
 }
 
 #[test]
@@ -407,7 +433,11 @@ target_link_libraries(mylib
     let pass1 = format_text(input, &config);
     let pass2 = format_text(&pass1, &config);
 
-    assert_eq!(pass1, pass2, "Empty sections formatting is not idempotent.\nPass1:\n{}\nPass2:\n{}", pass1, pass2);
+    assert_eq!(
+        pass1, pass2,
+        "Empty sections formatting is not idempotent.\nPass1:\n{}\nPass2:\n{}",
+        pass1, pass2
+    );
 }
 
 #[test]
@@ -426,5 +456,9 @@ target_compile_definitions(mylib
     let pass1 = format_text(input, &config);
     let pass2 = format_text(&pass1, &config);
 
-    assert_eq!(pass1, pass2, "Nested generator expressions formatting is not idempotent.\nPass1:\n{}\nPass2:\n{}", pass1, pass2);
+    assert_eq!(
+        pass1, pass2,
+        "Nested generator expressions formatting is not idempotent.\nPass1:\n{}\nPass2:\n{}",
+        pass1, pass2
+    );
 }

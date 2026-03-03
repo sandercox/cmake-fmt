@@ -1,22 +1,24 @@
-pub mod config;
 mod builtins;
-pub mod grammar;
-mod cst_to_doc;
 mod cmake_rules;
 mod comments;
+pub mod config;
+mod cst_to_doc;
+pub mod grammar;
+pub mod line_ranges;
 mod suppression;
 mod user_commands;
-pub mod line_ranges;
 
-pub use config::{ClosingStyle, CommandCase, CommentStyle, CommandGrammarConfig, FinalNewline, FormatConfig, LineEnding, SortSources, SourceGrouping, UserCommandCase};
-pub use grammar::{
-    detect_grammar_format, export_command_grammars, export_command_grammars_to_toml,
-    export_command_grammars_to_yaml, export_grammars, export_grammars_to_toml,
-    export_grammars_to_yaml, import_grammar_file, CommandGrammar, GrammarFormat,
-    GrammarRegistry, KeywordType,
+pub use config::{
+    ClosingStyle, CommandCase, CommandGrammarConfig, CommentStyle, FinalNewline, FormatConfig,
+    LineEnding, SortSources, SourceGrouping, UserCommandCase,
 };
-pub use suppression::SuppressionWarning;
+pub use grammar::{
+    CommandGrammar, GrammarFormat, GrammarRegistry, KeywordType, detect_grammar_format,
+    export_command_grammars, export_command_grammars_to_toml, export_command_grammars_to_yaml,
+    export_grammars, export_grammars_to_toml, export_grammars_to_yaml, import_grammar_file,
+};
 pub use line_ranges::{LineRange, format_with_line_ranges, parse_line_ranges};
+pub use suppression::SuppressionWarning;
 
 use crate::cst::parse_text;
 use std::path::Path;
@@ -126,19 +128,28 @@ pub fn format_text_with_diagnostics_and_path(
                         }
                     }
                     Err(e) => {
-                        eprintln!("Warning: Failed to parse grammar file {}: {}", grammar_path.display(), e);
+                        eprintln!(
+                            "Warning: Failed to parse grammar file {}: {}",
+                            grammar_path.display(),
+                            e
+                        );
                     }
                 }
             }
             Err(e) => {
-                eprintln!("Warning: Failed to read grammar file {}: {}", grammar_path.display(), e);
+                eprintln!(
+                    "Warning: Failed to read grammar file {}: {}",
+                    grammar_path.display(),
+                    e
+                );
             }
         }
     }
 
     let user_grammars = merged_grammars;
 
-    let (mut result, warnings) = cst_to_doc::format_cst(&cst, config, parse_input, &user_defs, &user_grammars);
+    let (mut result, warnings) =
+        cst_to_doc::format_cst(&cst, config, parse_input, &user_defs, &user_grammars);
 
     // Apply CRLF if needed
     if effective_line_ending == LineEnding::CrLf && !result.is_empty() {
@@ -158,7 +169,10 @@ pub fn format_text_with_diagnostics_and_path(
 /// A tuple of (formatted_code, warnings) where formatted_code is guaranteed
 /// to end with a single newline (when final_newline is true) and warnings
 /// contains any suppression-related diagnostics
-pub fn format_text_with_diagnostics(input: &str, config: &FormatConfig) -> (String, Vec<SuppressionWarning>) {
+pub fn format_text_with_diagnostics(
+    input: &str,
+    config: &FormatConfig,
+) -> (String, Vec<SuppressionWarning>) {
     format_text_with_diagnostics_and_path(input, config, None, false)
 }
 
@@ -177,7 +191,11 @@ pub fn format_text(input: &str, config: &FormatConfig) -> String {
 }
 
 /// Post-process rendered output: strip trailing whitespace and normalize ending
-pub(crate) fn post_process_rendered_output(result: &str, final_newline: config::FinalNewline, input_had_trailing_newline: bool) -> String {
+pub(crate) fn post_process_rendered_output(
+    result: &str,
+    final_newline: config::FinalNewline,
+    input_had_trailing_newline: bool,
+) -> String {
     // Strip trailing whitespace from each line (the pretty crate can produce
     // indentation on otherwise-blank lines when nest() wraps line() breaks)
     let result: String = result

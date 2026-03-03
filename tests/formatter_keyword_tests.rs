@@ -1,4 +1,6 @@
-use cmake_fmt::formatter::{format_text, ClosingStyle, CommandCase, CommandGrammarConfig, FormatConfig};
+use cmake_fmt::formatter::{
+    ClosingStyle, CommandCase, CommandGrammarConfig, FormatConfig, format_text,
+};
 use std::collections::HashMap;
 
 fn default_config() -> FormatConfig {
@@ -11,7 +13,8 @@ fn default_config() -> FormatConfig {
 
 #[test]
 fn test_target_link_libraries_keywords() {
-    let input = "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 PRIVATE lib6 lib7 lib8)";
+    let input =
+        "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 PRIVATE lib6 lib7 lib8)";
     let result = format_text(input, &default_config());
     // Should break because line is too long
     // When broken, keywords on own line, values one-per-line underneath
@@ -114,7 +117,8 @@ fn test_keyword_aware_with_generator_expr() {
 
 #[test]
 fn test_target_compile_options_keywords() {
-    let input = "target_compile_options(mylib PRIVATE -Wall -Wextra -Wpedantic -Werror PUBLIC -fPIC)";
+    let input =
+        "target_compile_options(mylib PRIVATE -Wall -Wextra -Wpedantic -Werror PUBLIC -fPIC)";
     let result = format_text(input, &default_config());
     // Should break with keywords on own line, values one-per-line underneath
     // Note: PUBLIC has only 1 arg, so it stays inline (MultiValue single-arg behavior)
@@ -211,7 +215,10 @@ fn test_pre_keyword_comments_preserved() {
     let input = "set_source_files_properties(\n\n    # wui/patch/cord/cord_anchor.cpp\n    wui/patch/node/node_view.cpp\n    wui/skin/skin.cpp\n    PROPERTIES COMPILE_FLAGS /wd4996\n)\n";
     let result = format_text(input, &default_config());
     // Comment must be preserved in the pre-keyword section
-    assert!(result.contains("# wui/patch/cord/cord_anchor.cpp"), "Comment was dropped from pre-keyword section");
+    assert!(
+        result.contains("# wui/patch/cord/cord_anchor.cpp"),
+        "Comment was dropped from pre-keyword section"
+    );
     // Both source files must be present
     assert!(result.contains("wui/patch/node/node_view.cpp"));
     assert!(result.contains("wui/skin/skin.cpp"));
@@ -224,7 +231,10 @@ fn test_pre_keyword_blank_lines_preserved() {
     let input = "set_source_files_properties(\n\n    src/a.cpp\n    src/b.cpp\n    PROPERTIES COMPILE_FLAGS /wd4996\n)\n";
     let result = format_text(input, &default_config());
     // Blank line should be preserved (appears as double newline in output)
-    assert!(result.contains("\n\n"), "Blank line in pre-keyword section was dropped");
+    assert!(
+        result.contains("\n\n"),
+        "Blank line in pre-keyword section was dropped"
+    );
     assert!(result.contains("src/a.cpp"));
     assert!(result.contains("src/b.cpp"));
 }
@@ -234,13 +244,19 @@ fn test_trailing_inline_comment_preserved() {
     let input = "target_link_libraries(wui PUBLIC\n    juce::JUCE\n    rj::rj\n    wire_common::wire_common\n    WireDev # For Clock enum...but I'd rather not\n    WireResources\n)\n";
     let result = format_text(input, &default_config());
     // Trailing comment must stay on the same line as WireDev
-    assert!(result.contains("WireDev # For Clock enum"),
-        "Trailing inline comment was moved away from its argument. Got:\n{}", result);
+    assert!(
+        result.contains("WireDev # For Clock enum"),
+        "Trailing inline comment was moved away from its argument. Got:\n{}",
+        result
+    );
     // WireResources must be on a separate line, not preceded by the comment
     let lines: Vec<&str> = result.lines().collect();
     let wiredev_line = lines.iter().find(|l| l.contains("WireDev")).unwrap();
-    assert!(wiredev_line.contains("# For Clock enum"),
-        "Comment not on same line as WireDev. WireDev line: {}", wiredev_line);
+    assert!(
+        wiredev_line.contains("# For Clock enum"),
+        "Comment not on same line as WireDev. WireDev line: {}",
+        wiredev_line
+    );
 }
 
 #[test]
@@ -248,8 +264,11 @@ fn test_trailing_inline_comment_simple_args() {
     let input = "set(FLAGS\n    -Wall\n    -Wextra # Extra warnings\n    -Wpedantic\n)\n";
     let result = format_text(input, &default_config());
     // Trailing comment must stay on same line as -Wextra
-    assert!(result.contains("-Wextra # Extra warnings"),
-        "Trailing comment moved away from -Wextra. Got:\n{}", result);
+    assert!(
+        result.contains("-Wextra # Extra warnings"),
+        "Trailing comment moved away from -Wextra. Got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -258,12 +277,24 @@ fn test_leading_comment_own_line_still_works() {
     let result = format_text(input, &default_config());
     // Leading comment should be on its own line, before src/core.cpp
     let lines: Vec<&str> = result.lines().collect();
-    let comment_idx = lines.iter().position(|l| l.contains("# Core library sources")).unwrap();
-    let core_idx = lines.iter().position(|l| l.contains("src/core.cpp")).unwrap();
-    assert!(comment_idx < core_idx, "Leading comment should appear before src/core.cpp");
+    let comment_idx = lines
+        .iter()
+        .position(|l| l.contains("# Core library sources"))
+        .unwrap();
+    let core_idx = lines
+        .iter()
+        .position(|l| l.contains("src/core.cpp"))
+        .unwrap();
+    assert!(
+        comment_idx < core_idx,
+        "Leading comment should appear before src/core.cpp"
+    );
     // Comment should NOT be on the same line as src/main.cpp
     let main_line = lines.iter().find(|l| l.contains("src/main.cpp")).unwrap();
-    assert!(!main_line.contains("#"), "Leading comment should not be on main.cpp's line");
+    assert!(
+        !main_line.contains("#"),
+        "Leading comment should not be on main.cpp's line"
+    );
 }
 
 // ============================================================================
@@ -404,7 +435,8 @@ fn test_interface_keyword() {
 
 #[test]
 fn test_mixed_keywords_proper_indentation() {
-    let input = "target_link_libraries(myapp PUBLIC lib1 lib2 PRIVATE lib3 lib4 INTERFACE lib5 lib6)";
+    let input =
+        "target_link_libraries(myapp PUBLIC lib1 lib2 PRIVATE lib3 lib4 INTERFACE lib5 lib6)";
     let result = format_text(input, &default_config());
     // Should break with all three keyword sections, keywords on own line, values one-per-line
     assert!(result.contains("\tPUBLIC\n"));
@@ -503,7 +535,11 @@ fn test_keyword_arglist_comment_not_duplicated() {
     eprintln!("Result:\n{}", result);
     // Comment should appear exactly once
     let count = result.matches("# main lib").count();
-    assert_eq!(count, 1, "Comment should appear exactly once, found {} times", count);
+    assert_eq!(
+        count, 1,
+        "Comment should appear exactly once, found {} times",
+        count
+    );
 }
 
 #[test]
@@ -527,7 +563,11 @@ fn test_keyword_arglist_idempotency() {
     for input in inputs {
         let once = format_text(input, &default_config());
         let twice = format_text(&once, &default_config());
-        assert_eq!(once, twice, "Formatting should be idempotent for input:\n{}", input);
+        assert_eq!(
+            once, twice,
+            "Formatting should be idempotent for input:\n{}",
+            input
+        );
     }
 }
 
@@ -598,7 +638,8 @@ fn test_unknown_keyword_in_known_command() {
 #[test]
 fn test_completely_unknown_command() {
     // my_custom_function is not in grammar registry -- should use simple formatting
-    let input = "my_custom_function(arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9 arg10 arg11 arg12 arg13)";
+    let input =
+        "my_custom_function(arg1 arg2 arg3 arg4 arg5 arg6 arg7 arg8 arg9 arg10 arg11 arg12 arg13)";
     let result = format_text(input, &default_config());
     // Should format without errors using simple argument formatting
     assert!(result.contains("my_custom_function"));
@@ -615,7 +656,11 @@ fn test_force_break_keywords_true() {
     // With force_break, should go multiline
     assert!(result.contains('\n'));
     let line_count = result.lines().count();
-    assert!(line_count >= 2, "Expected multiline output with force_break_keywords, got {} lines", line_count);
+    assert!(
+        line_count >= 2,
+        "Expected multiline output with force_break_keywords, got {} lines",
+        line_count
+    );
 }
 
 #[test]
@@ -654,7 +699,11 @@ fn test_idempotency_force_break() {
     for input in inputs {
         let first = format_text(input, &config);
         let second = format_text(&first, &config);
-        assert_eq!(first, second, "Idempotency failed with force_break for: {}", input);
+        assert_eq!(
+            first, second,
+            "Idempotency failed with force_break for: {}",
+            input
+        );
     }
 }
 
@@ -708,7 +757,10 @@ fn test_install_files_mode_formatting() {
     eprintln!("Result:\n{}", result);
 
     // Short command fits on one line — flat rendering
-    assert_eq!(result, "install(FILES readme.txt license.txt DESTINATION share/doc)");
+    assert_eq!(
+        result,
+        "install(FILES readme.txt license.txt DESTINATION share/doc)"
+    );
 }
 
 #[test]
@@ -718,7 +770,10 @@ fn test_install_directory_mode_formatting() {
     eprintln!("Result:\n{}", result);
 
     // Short command fits on one line — flat rendering
-    assert_eq!(result, "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")");
+    assert_eq!(
+        result,
+        "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")"
+    );
 }
 
 #[test]
@@ -772,7 +827,10 @@ fn test_install_mode_idempotency_directory() {
     let input = "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")";
     let pass1 = format_text(input, &default_config());
     let pass2 = format_text(&pass1, &default_config());
-    assert_eq!(pass1, pass2, "DIRECTORY mode formatting should be idempotent");
+    assert_eq!(
+        pass1, pass2,
+        "DIRECTORY mode formatting should be idempotent"
+    );
 }
 
 #[test]
@@ -824,7 +882,8 @@ fn test_file_glob_mode_formatting() {
 
 #[test]
 fn test_file_glob_recurse_with_keywords() {
-    let input = "file(GLOB_RECURSE headers LIST_DIRECTORIES false CONFIGURE_DEPENDS \"include/*.h\")";
+    let input =
+        "file(GLOB_RECURSE headers LIST_DIRECTORIES false CONFIGURE_DEPENDS \"include/*.h\")";
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
 
@@ -1084,7 +1143,10 @@ fn test_custom_command_fits_one_line() {
     let input = "GenerateTestExecutionGitlabCI(OUTPUT file.yml PLATFORM Linux)";
     let result = format_text(input, &default_config());
     // Should stay on one line when it fits
-    assert_eq!(result, "GenerateTestExecutionGitlabCI(OUTPUT file.yml PLATFORM Linux)");
+    assert_eq!(
+        result,
+        "GenerateTestExecutionGitlabCI(OUTPUT file.yml PLATFORM Linux)"
+    );
 }
 
 #[test]
@@ -1126,7 +1188,8 @@ fn test_custom_macro_long_args() {
 
 #[test]
 fn test_builtin_command_keeps_first_arg_inline() {
-    let input = "set(MY_VARIABLE value1 value2 value3 value4 value5 value6 value7 value8 value9 value10)";
+    let input =
+        "set(MY_VARIABLE value1 value2 value3 value4 value5 value6 value7 value8 value9 value10)";
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
     // Builtin command should keep first arg on same line when breaking (current behavior)
@@ -1142,7 +1205,8 @@ fn test_builtin_command_keeps_first_arg_inline() {
 #[test]
 fn test_keyword_break_values_per_line() {
     // KWFMT-02: When keyword commands auto-break, values appear one-per-line
-    let input = "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 PRIVATE lib6 lib7 lib8 lib9)";
+    let input =
+        "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 PRIVATE lib6 lib7 lib8 lib9)";
     let result = format_text(input, &default_config());
 
     // Verify keywords are on their own line
@@ -1170,7 +1234,10 @@ fn test_set_source_files_properties_short() {
     let input = "set_source_files_properties(f.cpp PROPERTIES GENERATED TRUE)";
     let result = format_text(input, &default_config());
     // Short enough to stay on one line
-    assert_eq!(result, "set_source_files_properties(f.cpp PROPERTIES GENERATED TRUE)");
+    assert_eq!(
+        result,
+        "set_source_files_properties(f.cpp PROPERTIES GENERATED TRUE)"
+    );
 }
 
 #[test]
@@ -1186,7 +1253,8 @@ fn test_set_source_files_properties_pairs() {
 
 #[test]
 fn test_set_target_properties_pairs() {
-    let input = "set_target_properties(mylib PROPERTIES VERSION 1.0 SOVERSION 1 OUTPUT_NAME \"mylib\")";
+    let input =
+        "set_target_properties(mylib PROPERTIES VERSION 1.0 SOVERSION 1 OUTPUT_NAME \"mylib\")";
     let result = format_text(input, &default_config());
     // Should break with PROPERTIES pairs
     assert!(result.contains("\tPROPERTIES\n"));
@@ -1223,13 +1291,18 @@ fn test_multivalue_single_arg_stays_inline() {
     // PROGRAMS value should be inline with PROGRAMS keyword (not on next line)
     // DESTINATION value should be inline with DESTINATION keyword (SingleValue behavior)
     // COMPONENT value should be inline with COMPONENT keyword (SingleValue behavior)
-    assert!(result.contains("PROGRAMS ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/crashpad_handler\n"));
+    assert!(result.contains(
+        "PROGRAMS ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/crashpad_handler\n"
+    ));
     assert!(result.contains("DESTINATION bin\n"));
     assert!(result.contains("COMPONENT crashpad\n"));
 
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
-    assert_eq!(result, pass2, "MultiValue single-arg formatting must be idempotent");
+    assert_eq!(
+        result, pass2,
+        "MultiValue single-arg formatting must be idempotent"
+    );
 }
 
 #[test]
@@ -1250,7 +1323,10 @@ fn test_multivalue_multiple_args_still_vertical() {
 
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
-    assert_eq!(result, pass2, "MultiValue multi-arg formatting must be idempotent");
+    assert_eq!(
+        result, pass2,
+        "MultiValue multi-arg formatting must be idempotent"
+    );
 }
 
 // ============================================================================
@@ -1262,7 +1338,10 @@ fn test_command_short_stays_inline() {
     // Short COMMAND stays on one line
     let input = "execute_process(COMMAND echo hello OUTPUT_VARIABLE result)";
     let result = format_text(input, &default_config());
-    assert_eq!(result, "execute_process(COMMAND echo hello OUTPUT_VARIABLE result)");
+    assert_eq!(
+        result,
+        "execute_process(COMMAND echo hello OUTPUT_VARIABLE result)"
+    );
 }
 
 #[test]
@@ -1289,8 +1368,14 @@ fn test_command_bin_packs_wraps_long_lines() {
     // Values should bin-pack across multiple lines
     // First line after COMMAND should have multiple args packed
     let command_line = result.lines().find(|l| l.contains("COMMAND")).unwrap();
-    assert!(command_line.contains("${CMAKE_COMMAND}"), "First arg should be on COMMAND line");
-    assert!(command_line.contains("-E"), "Short args should pack on COMMAND line");
+    assert!(
+        command_line.contains("${CMAKE_COMMAND}"),
+        "First arg should be on COMMAND line"
+    );
+    assert!(
+        command_line.contains("-E"),
+        "Short args should pack on COMMAND line"
+    );
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
     assert_eq!(result, pass2, "BinPack wrapping must be idempotent");
@@ -1334,7 +1419,10 @@ fn test_command_add_custom_target_bin_packs() {
     assert!(result.contains("${CMAKE_CTEST_COMMAND}"));
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
-    assert_eq!(result, pass2, "add_custom_target BinPack must be idempotent");
+    assert_eq!(
+        result, pass2,
+        "add_custom_target BinPack must be idempotent"
+    );
 }
 
 // ============================================================================
@@ -1348,13 +1436,18 @@ fn test_command_binpack_with_trailing_comment() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
     // Trailing comment must be preserved
-    assert!(result.contains("# if the policy is set, add this to the codegen target"),
-        "Trailing comment was dropped");
+    assert!(
+        result.contains("# if the policy is set, add this to the codegen target"),
+        "Trailing comment was dropped"
+    );
     // ENABLE_CODEGEN should be present
     assert!(result.contains("${ENABLE_CODEGEN}"));
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
-    assert_eq!(result, pass2, "BinPack with trailing comment must be idempotent");
+    assert_eq!(
+        result, pass2,
+        "BinPack with trailing comment must be idempotent"
+    );
 }
 
 #[test]
@@ -1368,20 +1461,27 @@ fn test_command_binpack_force_multiline_packs_args() {
     // Find the COMMAND line
     let command_line = result.lines().find(|l| l.contains("COMMAND")).unwrap();
     // It should have more than just "COMMAND" on it - at least the tool name
-    assert!(command_line.contains("ToolVersionMapToCode"),
-        "Tool name should be on same line as COMMAND");
+    assert!(
+        command_line.contains("ToolVersionMapToCode"),
+        "Tool name should be on same line as COMMAND"
+    );
     // Args should be packed, not one-per-line
     // Count lines between COMMAND and the closing ) or next keyword
     let lines: Vec<&str> = result.lines().collect();
     let cmd_idx = lines.iter().position(|l| l.contains("COMMAND")).unwrap();
     // The next line after COMMAND args should be ")" - not many individual arg lines
     // With bin-packing, COMMAND + args should take at most 2-3 lines, not 7+ lines
-    let arg_lines: Vec<&str> = lines[cmd_idx..].iter()
+    let arg_lines: Vec<&str> = lines[cmd_idx..]
+        .iter()
         .take_while(|l| !l.trim().starts_with(')'))
         .copied()
         .collect();
-    assert!(arg_lines.len() <= 3,
-        "BinPack should use at most 3 lines for these args, got {}: {:?}", arg_lines.len(), arg_lines);
+    assert!(
+        arg_lines.len() <= 3,
+        "BinPack should use at most 3 lines for these args, got {}: {:?}",
+        arg_lines.len(),
+        arg_lines
+    );
     // Verify idempotency
     let pass2 = format_text(&result, &default_config());
     assert_eq!(result, pass2, "BinPack multiline must be idempotent");
@@ -1393,10 +1493,16 @@ fn test_command_binpack_with_leading_comment() {
     let input = "add_custom_command(\n    OUTPUT output.txt\n    COMMAND ${TOOL}\n    # this is important\n    --flag\n)";
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
-    assert!(result.contains("# this is important"), "Leading comment was dropped");
+    assert!(
+        result.contains("# this is important"),
+        "Leading comment was dropped"
+    );
     assert!(result.contains("--flag"));
     let pass2 = format_text(&result, &default_config());
-    assert_eq!(result, pass2, "BinPack with leading comment must be idempotent");
+    assert_eq!(
+        result, pass2,
+        "BinPack with leading comment must be idempotent"
+    );
 }
 
 // ============================================================================
@@ -1464,7 +1570,10 @@ fn test_single_value_overflow_multiline() {
     assert!(!result.contains("\t\t${CI_ARCHITECTURE}"));
     // Idempotency
     let pass2 = format_text(&result, &config);
-    assert_eq!(result, pass2, "SingleValue multiline overflow must be idempotent");
+    assert_eq!(
+        result, pass2,
+        "SingleValue multiline overflow must be idempotent"
+    );
 }
 
 // ============================================================================
@@ -1477,8 +1586,11 @@ fn test_list_append_keeps_mode_and_variable_inline() {
     let input = "list(APPEND\n    SOURCES\n    file1.cpp\n    file2.cpp\n    file3.cpp\n)\n";
     let result = format_text(input, &config);
     // APPEND and SOURCES should be on the same line
-    assert!(result.contains("list(APPEND SOURCES"),
-        "APPEND and variable name should stay on the same line: {}", result);
+    assert!(
+        result.contains("list(APPEND SOURCES"),
+        "APPEND and variable name should stay on the same line: {}",
+        result
+    );
     // Files should be on separate lines
     assert!(result.contains("\tfile1.cpp\n"));
     assert!(result.contains("\tfile2.cpp\n"));
@@ -1493,8 +1605,10 @@ fn test_list_append_short_stays_one_line() {
     let config = FormatConfig::default();
     let input = "list(APPEND SOURCES \"item\")\n";
     let result = format_text(input, &config);
-    assert_eq!(result, "list(APPEND SOURCES \"item\")\n",
-        "Short list(APPEND) should stay on one line");
+    assert_eq!(
+        result, "list(APPEND SOURCES \"item\")\n",
+        "Short list(APPEND) should stay on one line"
+    );
 }
 
 #[test]
@@ -1503,8 +1617,11 @@ fn test_list_sort_keeps_mode_and_variable_inline() {
     let input = "list(SORT\n    mylist\n    COMPARE STRING\n    CASE INSENSITIVE\n    ORDER DESCENDING\n)\n";
     let result = format_text(input, &config);
     // SORT and mylist should be on the same line
-    assert!(result.contains("list(SORT mylist"),
-        "SORT and variable name should stay on the same line: {}", result);
+    assert!(
+        result.contains("list(SORT mylist"),
+        "SORT and variable name should stay on the same line: {}",
+        result
+    );
     // Keywords should be on separate lines
     assert!(result.contains("\tCOMPARE STRING\n"));
     assert!(result.contains("\tCASE INSENSITIVE\n"));
@@ -1518,8 +1635,10 @@ fn test_list_reverse_simple() {
     let config = FormatConfig::default();
     let input = "list(REVERSE mylist)\n";
     let result = format_text(input, &config);
-    assert_eq!(result, "list(REVERSE mylist)\n",
-        "list(REVERSE) should stay on one line");
+    assert_eq!(
+        result, "list(REVERSE mylist)\n",
+        "list(REVERSE) should stay on one line"
+    );
 }
 
 #[test]
@@ -1528,13 +1647,22 @@ fn test_define_property_keeps_scope_property_name_inline() {
     let input = "define_property(TEST\n    PROPERTY\n    SEPARATE_JOB\n    BRIEF_DOCS\n    \"Run as separate job\"\n    FULL_DOCS\n    \"Switches the job to run separately\"\n)\n";
     let result = format_text(input, &config);
     // Scope + PROPERTY + name should be on the same line
-    assert!(result.contains("define_property(TEST PROPERTY SEPARATE_JOB"),
-        "TEST PROPERTY SEPARATE_JOB should stay on the same line: {}", result);
+    assert!(
+        result.contains("define_property(TEST PROPERTY SEPARATE_JOB"),
+        "TEST PROPERTY SEPARATE_JOB should stay on the same line: {}",
+        result
+    );
     // BRIEF_DOCS and FULL_DOCS should be keyword sections on new lines
-    assert!(result.contains("\tBRIEF_DOCS \"Run as separate job\""),
-        "BRIEF_DOCS should be on its own line with value: {}", result);
-    assert!(result.contains("\tFULL_DOCS \"Switches the job to run separately\""),
-        "FULL_DOCS should be on its own line with value: {}", result);
+    assert!(
+        result.contains("\tBRIEF_DOCS \"Run as separate job\""),
+        "BRIEF_DOCS should be on its own line with value: {}",
+        result
+    );
+    assert!(
+        result.contains("\tFULL_DOCS \"Switches the job to run separately\""),
+        "FULL_DOCS should be on its own line with value: {}",
+        result
+    );
     // Idempotency
     let pass2 = format_text(&result, &config);
     assert_eq!(result, pass2, "define_property should be idempotent");
@@ -1545,8 +1673,10 @@ fn test_define_property_short_stays_one_line() {
     let config = FormatConfig::default();
     let input = "define_property(TARGET PROPERTY MY_PROP)\n";
     let result = format_text(input, &config);
-    assert_eq!(result, "define_property(TARGET PROPERTY MY_PROP)\n",
-        "Short define_property should stay on one line");
+    assert_eq!(
+        result, "define_property(TARGET PROPERTY MY_PROP)\n",
+        "Short define_property should stay on one line"
+    );
 }
 
 #[test]
@@ -1555,19 +1685,34 @@ fn test_define_property_with_inherited() {
     let input = "define_property(DIRECTORY\n    PROPERTY\n    MY_CUSTOM_PROP\n    INHERITED\n    BRIEF_DOCS\n    \"A custom property\"\n    FULL_DOCS\n    \"This is a custom directory property that is inherited by subdirectories\"\n)\n";
     let result = format_text(input, &config);
     // Scope + PROPERTY + name should be on the same line
-    assert!(result.contains("define_property(DIRECTORY PROPERTY MY_CUSTOM_PROP"),
-        "DIRECTORY PROPERTY MY_CUSTOM_PROP should stay together: {}", result);
+    assert!(
+        result.contains("define_property(DIRECTORY PROPERTY MY_CUSTOM_PROP"),
+        "DIRECTORY PROPERTY MY_CUSTOM_PROP should stay together: {}",
+        result
+    );
     // INHERITED should appear (as a flag, grouped with scope or on its own)
-    assert!(result.contains("INHERITED"),
-        "INHERITED flag should be present: {}", result);
+    assert!(
+        result.contains("INHERITED"),
+        "INHERITED flag should be present: {}",
+        result
+    );
     // BRIEF_DOCS and FULL_DOCS should be keyword sections
-    assert!(result.contains("BRIEF_DOCS"),
-        "BRIEF_DOCS should be present: {}", result);
-    assert!(result.contains("FULL_DOCS"),
-        "FULL_DOCS should be present: {}", result);
+    assert!(
+        result.contains("BRIEF_DOCS"),
+        "BRIEF_DOCS should be present: {}",
+        result
+    );
+    assert!(
+        result.contains("FULL_DOCS"),
+        "FULL_DOCS should be present: {}",
+        result
+    );
     // Idempotency
     let pass2 = format_text(&result, &config);
-    assert_eq!(result, pass2, "define_property with INHERITED should be idempotent");
+    assert_eq!(
+        result, pass2,
+        "define_property with INHERITED should be idempotent"
+    );
 }
 
 #[test]
@@ -1576,18 +1721,33 @@ fn test_define_property_multiple_brief_docs() {
     let input = "define_property(GLOBAL PROPERTY MY_GLOBAL_PROP BRIEF_DOCS \"doc1\" \"doc2\" FULL_DOCS \"full doc\")\n";
     let result = format_text(input, &config);
     // Should contain the property name
-    assert!(result.contains("PROPERTY MY_GLOBAL_PROP"),
-        "PROPERTY and name should stay together: {}", result);
+    assert!(
+        result.contains("PROPERTY MY_GLOBAL_PROP"),
+        "PROPERTY and name should stay together: {}",
+        result
+    );
     // Multiple BRIEF_DOCS values
-    assert!(result.contains("BRIEF_DOCS"),
-        "BRIEF_DOCS should be present: {}", result);
-    assert!(result.contains("\"doc1\""),
-        "First doc string should be present: {}", result);
-    assert!(result.contains("\"doc2\""),
-        "Second doc string should be present: {}", result);
+    assert!(
+        result.contains("BRIEF_DOCS"),
+        "BRIEF_DOCS should be present: {}",
+        result
+    );
+    assert!(
+        result.contains("\"doc1\""),
+        "First doc string should be present: {}",
+        result
+    );
+    assert!(
+        result.contains("\"doc2\""),
+        "Second doc string should be present: {}",
+        result
+    );
     // Idempotency
     let pass2 = format_text(&result, &config);
-    assert_eq!(result, pass2, "define_property with multiple docs should be idempotent");
+    assert_eq!(
+        result, pass2,
+        "define_property with multiple docs should be idempotent"
+    );
 }
 
 // ============================================================================
@@ -1791,8 +1951,11 @@ set(SOURCES
 ";
     let result = format_text(input, &default_config());
     // Blank line between the two comment groups must be preserved
-    assert!(result.contains("# delay_meter/class.cpp\n\n\t# fdn_reverb/class.hpp"),
-        "Expected blank line between comment groups, got:\n{}", result);
+    assert!(
+        result.contains("# delay_meter/class.cpp\n\n\t# fdn_reverb/class.hpp"),
+        "Expected blank line between comment groups, got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -1811,10 +1974,16 @@ set(SOURCES
 )
 ";
     let result = format_text(input, &default_config());
-    assert!(result.contains("# group A continued\n\n\t# group B"),
-        "Expected blank line between groups A and B, got:\n{}", result);
-    assert!(result.contains("# group B continued\n\n\t# group C"),
-        "Expected blank line between groups B and C, got:\n{}", result);
+    assert!(
+        result.contains("# group A continued\n\n\t# group B"),
+        "Expected blank line between groups A and B, got:\n{}",
+        result
+    );
+    assert!(
+        result.contains("# group B continued\n\n\t# group C"),
+        "Expected blank line between groups B and C, got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -1834,8 +2003,11 @@ target_sources(mylib
 )
 ";
     let result = format_text(input, &default_config());
-    assert!(result.contains("# audio/engine.cpp\n\n\t\t# video sources"),
-        "Expected blank line between comment groups under keyword, got:\n{}", result);
+    assert!(
+        result.contains("# audio/engine.cpp\n\n\t\t# video sources"),
+        "Expected blank line between comment groups under keyword, got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -1853,8 +2025,11 @@ set(SOURCES
 )
 ";
     let result = format_text(input, &default_config());
-    assert!(result.contains("# module_a/foo.cpp\n\n\t# disabled module B"),
-        "Expected blank line between trailing comment blocks, got:\n{}", result);
+    assert!(
+        result.contains("# module_a/foo.cpp\n\n\t# disabled module B"),
+        "Expected blank line between trailing comment blocks, got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -1870,8 +2045,11 @@ set(SOURCES
 ";
     let result = format_text(input, &default_config());
     // Blank line before comment, comment before file2
-    assert!(result.contains("file1.cpp\n\n\t# section header\n\tfile2.cpp"),
-        "Expected preserved blank line + comment + arg ordering, got:\n{}", result);
+    assert!(
+        result.contains("file1.cpp\n\n\t# section header\n\tfile2.cpp"),
+        "Expected preserved blank line + comment + arg ordering, got:\n{}",
+        result
+    );
 }
 
 // ============================================================================
@@ -1893,7 +2071,10 @@ fn test_install_targets_export_keyword() {
     assert!(result.contains("INCLUDES DESTINATION include"));
     // Idempotency
     let pass2 = format_text(&result, &default_config());
-    assert_eq!(result, pass2, "install TARGETS with EXPORT should be idempotent");
+    assert_eq!(
+        result, pass2,
+        "install TARGETS with EXPORT should be idempotent"
+    );
 }
 
 #[test]
@@ -1912,7 +2093,10 @@ fn test_install_targets_artifact_binpack_multiline() {
     assert!(result.contains("RUNTIME DESTINATION bin"));
     // Idempotency
     let pass2 = format_text(&result, &default_config());
-    assert_eq!(result, pass2, "install TARGETS with multiline artifact should be idempotent");
+    assert_eq!(
+        result, pass2,
+        "install TARGETS with multiline artifact should be idempotent"
+    );
 }
 
 #[test]
@@ -1926,7 +2110,10 @@ fn test_install_targets_export_not_consumed_as_target() {
     assert!(result.contains("RUNTIME DESTINATION bin"));
     // Idempotency
     let pass2 = format_text(&result, &default_config());
-    assert_eq!(result, pass2, "install TARGETS with EXPORT should be idempotent");
+    assert_eq!(
+        result, pass2,
+        "install TARGETS with EXPORT should be idempotent"
+    );
 }
 
 #[test]
@@ -1935,11 +2122,19 @@ fn test_install_targets_global_destination_component() {
     let input = "install(TARGETS libwire COMPONENT wire DESTINATION lib)\n";
     let result = format_text(input, &default_config());
     // COMPONENT and DESTINATION should be recognized as keywords
-    assert!(result.contains("COMPONENT wire"), "COMPONENT should be a keyword");
-    assert!(result.contains("DESTINATION lib"), "DESTINATION should be a keyword");
+    assert!(
+        result.contains("COMPONENT wire"),
+        "COMPONENT should be a keyword"
+    );
+    assert!(
+        result.contains("DESTINATION lib"),
+        "DESTINATION should be a keyword"
+    );
     // They should NOT be consumed as target names
-    assert!(!result.contains("TARGETS\n\t\tlibwire\n\t\tCOMPONENT"),
-        "COMPONENT should not be a target arg");
+    assert!(
+        !result.contains("TARGETS\n\t\tlibwire\n\t\tCOMPONENT"),
+        "COMPONENT should not be a target arg"
+    );
     // Idempotency
     let pass2 = format_text(&result, &default_config());
     assert_eq!(result, pass2, "Should be idempotent");
@@ -1956,13 +2151,28 @@ fn test_install_targets_multiline_not_absorbed() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
     // TARGETS should have Wire as its only value
-    assert!(result.contains("TARGETS Wire"), "Wire should be inline with TARGETS");
+    assert!(
+        result.contains("TARGETS Wire"),
+        "Wire should be inline with TARGETS"
+    );
     // DESTINATION and COMPONENT must be separate keyword sections
-    assert!(result.contains("\tDESTINATION bin"), "DESTINATION should be a separate keyword");
-    assert!(result.contains("\tCOMPONENT wire"), "COMPONENT should be a separate keyword");
+    assert!(
+        result.contains("\tDESTINATION bin"),
+        "DESTINATION should be a separate keyword"
+    );
+    assert!(
+        result.contains("\tCOMPONENT wire"),
+        "COMPONENT should be a separate keyword"
+    );
     // Must NOT have DESTINATION/COMPONENT indented under TARGETS
-    assert!(!result.contains("\t\tDESTINATION"), "DESTINATION must not be a TARGETS value");
-    assert!(!result.contains("\t\tCOMPONENT"), "COMPONENT must not be a TARGETS value");
+    assert!(
+        !result.contains("\t\tDESTINATION"),
+        "DESTINATION must not be a TARGETS value"
+    );
+    assert!(
+        !result.contains("\t\tCOMPONENT"),
+        "COMPONENT must not be a TARGETS value"
+    );
     // Idempotency
     let pass2 = format_text(&result, &default_config());
     assert_eq!(result, pass2, "Should be idempotent");
@@ -1975,11 +2185,23 @@ fn test_install_targets_multiline_with_artifact_types() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
     // TARGETS should have mylib inline
-    assert!(result.contains("TARGETS mylib"), "mylib should be inline with TARGETS");
+    assert!(
+        result.contains("TARGETS mylib"),
+        "mylib should be inline with TARGETS"
+    );
     // Artifact types should consume DESTINATION as sub_keyword (BinPack behavior)
-    assert!(result.contains("RUNTIME DESTINATION bin"), "RUNTIME should consume DESTINATION");
-    assert!(result.contains("LIBRARY DESTINATION lib"), "LIBRARY should consume DESTINATION");
-    assert!(result.contains("ARCHIVE DESTINATION lib"), "ARCHIVE should consume DESTINATION");
+    assert!(
+        result.contains("RUNTIME DESTINATION bin"),
+        "RUNTIME should consume DESTINATION"
+    );
+    assert!(
+        result.contains("LIBRARY DESTINATION lib"),
+        "LIBRARY should consume DESTINATION"
+    );
+    assert!(
+        result.contains("ARCHIVE DESTINATION lib"),
+        "ARCHIVE should consume DESTINATION"
+    );
     // Idempotency
     let pass2 = format_text(&result, &default_config());
     assert_eq!(result, pass2, "Should be idempotent");
@@ -1992,7 +2214,10 @@ fn test_install_files_matching_still_groups_after_fix() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
     // FILES_MATCHING should group PATTERN inline
-    assert!(result.contains("FILES_MATCHING PATTERN \"*.h\""), "PATTERN should be grouped with FILES_MATCHING");
+    assert!(
+        result.contains("FILES_MATCHING PATTERN \"*.h\""),
+        "PATTERN should be grouped with FILES_MATCHING"
+    );
     // Idempotency
     let pass2 = format_text(&result, &default_config());
     assert_eq!(result, pass2, "Should be idempotent");
@@ -2008,7 +2233,10 @@ fn test_files_matching_single_pattern_inline() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
     // Single pattern: should be inline with FILES_MATCHING
-    assert!(result.contains("FILES_MATCHING PATTERN \"*.h\""), "Single PATTERN should be inline with FILES_MATCHING");
+    assert!(
+        result.contains("FILES_MATCHING PATTERN \"*.h\""),
+        "Single PATTERN should be inline with FILES_MATCHING"
+    );
 }
 
 #[test]
@@ -2019,10 +2247,22 @@ fn test_files_matching_multiple_patterns_indented() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // Multiple patterns: each on indented line below FILES_MATCHING
-    assert!(result.contains("FILES_MATCHING\n"), "FILES_MATCHING should be on its own line with multiple patterns");
-    assert!(result.contains("\t\tPATTERN \"*.h\"\n"), "First PATTERN should be indented under FILES_MATCHING");
-    assert!(result.contains("\t\tPATTERN \"*.cpp\"\n"), "Second PATTERN should be indented under FILES_MATCHING");
-    assert!(result.contains("\t\tEXCLUDE PATTERN \"internal/*\"\n"), "EXCLUDE PATTERN should be indented under FILES_MATCHING");
+    assert!(
+        result.contains("FILES_MATCHING\n"),
+        "FILES_MATCHING should be on its own line with multiple patterns"
+    );
+    assert!(
+        result.contains("\t\tPATTERN \"*.h\"\n"),
+        "First PATTERN should be indented under FILES_MATCHING"
+    );
+    assert!(
+        result.contains("\t\tPATTERN \"*.cpp\"\n"),
+        "Second PATTERN should be indented under FILES_MATCHING"
+    );
+    assert!(
+        result.contains("\t\tEXCLUDE PATTERN \"internal/*\"\n"),
+        "EXCLUDE PATTERN should be indented under FILES_MATCHING"
+    );
 }
 
 #[test]
@@ -2031,7 +2271,10 @@ fn test_files_matching_single_regex_inline() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
     // Single REGEX: should be inline with FILES_MATCHING
-    assert!(result.contains("FILES_MATCHING REGEX"), "Single REGEX should be inline with FILES_MATCHING");
+    assert!(
+        result.contains("FILES_MATCHING REGEX"),
+        "Single REGEX should be inline with FILES_MATCHING"
+    );
 }
 
 #[test]
@@ -2039,7 +2282,10 @@ fn test_files_matching_idempotent_single() {
     let input = "install(\n    DIRECTORY include/\n    DESTINATION include\n    FILES_MATCHING\n    PATTERN \"*.h\"\n)";
     let pass1 = format_text(input, &default_config());
     let pass2 = format_text(&pass1, &default_config());
-    assert_eq!(pass1, pass2, "FILES_MATCHING single pattern should be idempotent");
+    assert_eq!(
+        pass1, pass2,
+        "FILES_MATCHING single pattern should be idempotent"
+    );
 }
 
 #[test]
@@ -2049,7 +2295,10 @@ fn test_files_matching_idempotent_multiple() {
     eprintln!("Pass 1:\n{}", pass1);
     let pass2 = format_text(&pass1, &default_config());
     eprintln!("Pass 2:\n{}", pass2);
-    assert_eq!(pass1, pass2, "FILES_MATCHING multiple patterns should be idempotent");
+    assert_eq!(
+        pass1, pass2,
+        "FILES_MATCHING multiple patterns should be idempotent"
+    );
 }
 
 #[test]
@@ -2058,7 +2307,10 @@ fn test_files_matching_file_copy_mode() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
     // file(COPY) should also support FILES_MATCHING collection formatting
-    assert!(result.contains("FILES_MATCHING PATTERN \"*.cmake\""), "file(COPY) should format FILES_MATCHING inline for single pattern");
+    assert!(
+        result.contains("FILES_MATCHING PATTERN \"*.cmake\""),
+        "file(COPY) should format FILES_MATCHING inline for single pattern"
+    );
 }
 
 #[test]
@@ -2067,7 +2319,10 @@ fn test_files_matching_flat_short_command() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
     // Short command fits on one line — flat rendering
-    assert_eq!(result, "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")");
+    assert_eq!(
+        result,
+        "install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN \"*.h\")"
+    );
 }
 
 // ============================================================================
@@ -2080,7 +2335,10 @@ fn test_collapse_empty_flags_default_true() {
     let result = format_text(input, &default_config());
     eprintln!("Result:\n{}", result);
     // Default behavior: STATIC collapses onto same line as target name
-    assert!(result.contains("mylib STATIC\n"), "STATIC should collapse with target name");
+    assert!(
+        result.contains("mylib STATIC\n"),
+        "STATIC should collapse with target name"
+    );
 }
 
 #[test]
@@ -2092,8 +2350,14 @@ fn test_collapse_empty_flags_false() {
     eprintln!("Result:\n{}", result);
     // With collapse disabled: STATIC is a type-selector flag with trailing source args,
     // so it stays inline with the target name regardless of collapse_empty_flags
-    assert!(result.contains("mylib STATIC"), "STATIC should stay on same line as target name (type-selector flag with trailing args)");
-    assert!(!result.contains("\tSTATIC\n"), "STATIC should NOT be on its own line");
+    assert!(
+        result.contains("mylib STATIC"),
+        "STATIC should stay on same line as target name (type-selector flag with trailing args)"
+    );
+    assert!(
+        !result.contains("\tSTATIC\n"),
+        "STATIC should NOT be on its own line"
+    );
 }
 
 #[test]
@@ -2105,8 +2369,14 @@ fn test_collapse_empty_flags_false_find_package() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // REQUIRED and CONFIG should each be on their own line
-    assert!(result.contains("\tREQUIRED\n"), "REQUIRED should be on its own line");
-    assert!(result.contains("\tCONFIG\n"), "CONFIG should be on its own line");
+    assert!(
+        result.contains("\tREQUIRED\n"),
+        "REQUIRED should be on its own line"
+    );
+    assert!(
+        result.contains("\tCONFIG\n"),
+        "CONFIG should be on its own line"
+    );
 }
 
 #[test]
@@ -2116,7 +2386,10 @@ fn test_collapse_empty_flags_idempotent() {
     let input = "add_library(mylib STATIC src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp src/f.cpp src/g.cpp)";
     let pass1 = format_text(input, &config);
     let pass2 = format_text(&pass1, &config);
-    assert_eq!(pass1, pass2, "Formatting with collapse_empty_flags=false should be idempotent");
+    assert_eq!(
+        pass1, pass2,
+        "Formatting with collapse_empty_flags=false should be idempotent"
+    );
 }
 
 #[test]
@@ -2143,8 +2416,14 @@ fn test_collapse_empty_flags_false_add_library_static_stays_inline() {
     let input = "add_library(AdobeAfterEffectsSDK STATIC\n\tExamples/Util/AEGP_SuiteHandler.cpp\n\tExamples/Util/AEGP_SuiteHandler.h\n\tExamples/Util/entry.h\n\tExamples/Util/MissingSuiteError.cpp\n)\n";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
-    assert!(result.contains("AdobeAfterEffectsSDK STATIC"), "STATIC must stay inline with target name");
-    assert!(!result.contains("AdobeAfterEffectsSDK\n\tSTATIC"), "STATIC must NOT drop to a new line");
+    assert!(
+        result.contains("AdobeAfterEffectsSDK STATIC"),
+        "STATIC must stay inline with target name"
+    );
+    assert!(
+        !result.contains("AdobeAfterEffectsSDK\n\tSTATIC"),
+        "STATIC must NOT drop to a new line"
+    );
     // Idempotency
     let pass2 = format_text(&result, &config);
     assert_eq!(result, pass2, "Should be idempotent");
@@ -2158,7 +2437,10 @@ fn test_collapse_empty_flags_false_add_library_shared_stays_inline() {
     let input = "add_library(mylib SHARED src/a.cpp src/b.cpp src/c.cpp src/d.cpp src/e.cpp src/f.cpp src/g.cpp)";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
-    assert!(result.contains("mylib SHARED"), "SHARED must stay inline with target name");
+    assert!(
+        result.contains("mylib SHARED"),
+        "SHARED must stay inline with target name"
+    );
 }
 
 #[test]
@@ -2169,7 +2451,10 @@ fn test_collapse_empty_flags_false_add_executable_win32_stays_inline() {
     let input = "add_executable(myapp WIN32 src/main.cpp src/app.cpp src/util.cpp src/config.cpp src/render.cpp src/input.cpp)";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
-    assert!(result.contains("myapp WIN32"), "WIN32 must stay inline with target name");
+    assert!(
+        result.contains("myapp WIN32"),
+        "WIN32 must stay inline with target name"
+    );
 }
 
 #[test]
@@ -2181,8 +2466,14 @@ fn test_collapse_empty_flags_false_pure_flags_still_separate() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // Both STATIC and IMPORTED have no trailing source args here, so both should be on own lines
-    assert!(result.contains("\tSTATIC\n"), "STATIC with no trailing args should be on own line");
-    assert!(result.contains("\tIMPORTED\n"), "IMPORTED with no trailing args should be on own line");
+    assert!(
+        result.contains("\tSTATIC\n"),
+        "STATIC with no trailing args should be on own line"
+    );
+    assert!(
+        result.contains("\tIMPORTED\n"),
+        "IMPORTED with no trailing args should be on own line"
+    );
 }
 
 #[test]
@@ -2215,11 +2506,23 @@ fn test_inline_single_keyword_true_single_section() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // Keyword PUBLIC is on same line as mylib (inline), values are single-tab indented
-    assert!(result.contains("mylib PUBLIC\n"), "PUBLIC must be on same line as mylib");
-    assert!(result.contains("\tsrc/a.cpp\n"), "values must be single-tab indented");
-    assert!(result.contains("\tsrc/b.cpp\n"), "values must be single-tab indented");
+    assert!(
+        result.contains("mylib PUBLIC\n"),
+        "PUBLIC must be on same line as mylib"
+    );
+    assert!(
+        result.contains("\tsrc/a.cpp\n"),
+        "values must be single-tab indented"
+    );
+    assert!(
+        result.contains("\tsrc/b.cpp\n"),
+        "values must be single-tab indented"
+    );
     // Must NOT use double-tab indent
-    assert!(!result.contains("\t\tsrc/a.cpp"), "values must NOT be double-tab indented");
+    assert!(
+        !result.contains("\t\tsrc/a.cpp"),
+        "values must NOT be double-tab indented"
+    );
     // Exact expected output
     let expected = "target_sources(mylib PUBLIC\n\tsrc/a.cpp\n\tsrc/b.cpp\n\tsrc/c.cpp\n\tsrc/d.cpp\n\tsrc/e.cpp\n)";
     assert_eq!(result, expected);
@@ -2235,10 +2538,22 @@ fn test_inline_single_keyword_true_multiple_sections() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // Standard layout: keywords on own lines, values double-indented
-    assert!(result.contains("\tPUBLIC\n"), "PUBLIC must be on its own line (standard layout)");
-    assert!(result.contains("\t\tsrc/a.cpp\n"), "values must be double-tab indented");
-    assert!(result.contains("\tPRIVATE\n"), "PRIVATE must be on its own line");
-    assert!(result.contains("\t\tsrc/c.cpp\n"), "values must be double-tab indented");
+    assert!(
+        result.contains("\tPUBLIC\n"),
+        "PUBLIC must be on its own line (standard layout)"
+    );
+    assert!(
+        result.contains("\t\tsrc/a.cpp\n"),
+        "values must be double-tab indented"
+    );
+    assert!(
+        result.contains("\tPRIVATE\n"),
+        "PRIVATE must be on its own line"
+    );
+    assert!(
+        result.contains("\t\tsrc/c.cpp\n"),
+        "values must be double-tab indented"
+    );
 }
 
 #[test]
@@ -2250,8 +2565,14 @@ fn test_inline_single_keyword_false_default() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // Standard layout
-    assert!(result.contains("\tPUBLIC\n"), "PUBLIC must be on its own line with default config");
-    assert!(result.contains("\t\tsrc/a.cpp\n"), "values must be double-tab indented with default config");
+    assert!(
+        result.contains("\tPUBLIC\n"),
+        "PUBLIC must be on its own line with default config"
+    );
+    assert!(
+        result.contains("\t\tsrc/a.cpp\n"),
+        "values must be double-tab indented with default config"
+    );
 }
 
 #[test]
@@ -2276,10 +2597,19 @@ fn test_inline_single_keyword_target_link_libraries() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // PUBLIC on same line as myapp
-    assert!(result.contains("myapp PUBLIC\n"), "PUBLIC must be on same line as myapp");
+    assert!(
+        result.contains("myapp PUBLIC\n"),
+        "PUBLIC must be on same line as myapp"
+    );
     // Values single-tab indented
-    assert!(result.contains("\tlib1\n"), "libs must be single-tab indented");
-    assert!(!result.contains("\t\tlib1"), "libs must NOT be double-tab indented");
+    assert!(
+        result.contains("\tlib1\n"),
+        "libs must be single-tab indented"
+    );
+    assert!(
+        !result.contains("\t\tlib1"),
+        "libs must NOT be double-tab indented"
+    );
 }
 
 #[test]
@@ -2293,7 +2623,10 @@ fn test_inline_single_keyword_idempotent() {
     let pass2 = format_text(&result, &config);
     eprintln!("Pass 1:\n{}", result);
     eprintln!("Pass 2:\n{}", pass2);
-    assert_eq!(result, pass2, "inline_single_keyword formatting must be idempotent");
+    assert_eq!(
+        result, pass2,
+        "inline_single_keyword formatting must be idempotent"
+    );
 }
 
 #[test]
@@ -2307,9 +2640,18 @@ fn test_inline_single_keyword_with_force_break() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // Keyword stays inline, value single-indented
-    assert!(result.contains("myapp PUBLIC\n"), "PUBLIC must be inline with myapp even with force_break");
-    assert!(result.contains("\tlib1\n"), "lib1 must be single-tab indented");
-    assert!(!result.contains("\t\tlib1"), "lib1 must NOT be double-tab indented");
+    assert!(
+        result.contains("myapp PUBLIC\n"),
+        "PUBLIC must be inline with myapp even with force_break"
+    );
+    assert!(
+        result.contains("\tlib1\n"),
+        "lib1 must be single-tab indented"
+    );
+    assert!(
+        !result.contains("\t\tlib1"),
+        "lib1 must NOT be double-tab indented"
+    );
 }
 
 #[test]
@@ -2323,9 +2665,15 @@ fn test_inline_single_keyword_multiline_pre_args_no_inline() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // PROPERTIES must NOT be on the same line as skin.cpp — it should be on its own line
-    assert!(!result.contains("skin.cpp PROPERTIES"), "keyword must NOT be inlined when pre-keyword args are multiline");
+    assert!(
+        !result.contains("skin.cpp PROPERTIES"),
+        "keyword must NOT be inlined when pre-keyword args are multiline"
+    );
     // Standard layout: keyword on own line, indented (values may follow on same line)
-    assert!(result.contains("\tPROPERTIES"), "PROPERTIES must be on its own indented line");
+    assert!(
+        result.contains("\tPROPERTIES"),
+        "PROPERTIES must be on its own indented line"
+    );
 }
 
 #[test]
@@ -2338,7 +2686,10 @@ fn test_inline_single_keyword_multiline_pre_args_idempotent() {
     let pass2 = format_text(&result, &config);
     eprintln!("Pass 1:\n{}", result);
     eprintln!("Pass 2:\n{}", pass2);
-    assert_eq!(result, pass2, "multiline pre-keyword args must be idempotent");
+    assert_eq!(
+        result, pass2,
+        "multiline pre-keyword args must be idempotent"
+    );
 }
 
 #[test]
@@ -2352,7 +2703,10 @@ fn test_inline_single_keyword_two_short_pre_args_still_inlines() {
     eprintln!("Result:\n{}", result);
     // With max_line_length=80, "set_source_files_properties(a.cpp b.cpp PROPERTIES" = 51 chars, fits
     // So inline should still apply
-    assert!(result.contains("b.cpp PROPERTIES"), "keyword should be inlined when pre-keyword args fit on opening line");
+    assert!(
+        result.contains("b.cpp PROPERTIES"),
+        "keyword should be inlined when pre-keyword args fit on opening line"
+    );
 }
 
 // ============================================================================
@@ -2370,13 +2724,28 @@ fn test_inline_single_keyword_list_append() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // APPEND SOURCES must be on the opening line (inline with the command)
-    assert!(result.contains("list(APPEND SOURCES\n"), "APPEND SOURCES must be on the command opening line");
+    assert!(
+        result.contains("list(APPEND SOURCES\n"),
+        "APPEND SOURCES must be on the command opening line"
+    );
     // Files must be single-tab indented
-    assert!(result.contains("\tfile1.cpp\n"), "files must be single-tab indented");
-    assert!(result.contains("\tfile2.cpp\n"), "files must be single-tab indented");
+    assert!(
+        result.contains("\tfile1.cpp\n"),
+        "files must be single-tab indented"
+    );
+    assert!(
+        result.contains("\tfile2.cpp\n"),
+        "files must be single-tab indented"
+    );
     // APPEND must NOT be on its own line
-    assert!(!result.contains("\nAPPEND\n"), "APPEND must NOT be on its own line");
-    assert!(!result.contains("\tAPPEND\n"), "APPEND must NOT be on its own indented line");
+    assert!(
+        !result.contains("\nAPPEND\n"),
+        "APPEND must NOT be on its own line"
+    );
+    assert!(
+        !result.contains("\tAPPEND\n"),
+        "APPEND must NOT be on its own indented line"
+    );
 }
 
 #[test]
@@ -2391,10 +2760,19 @@ fn test_inline_single_keyword_list_append_with_space_parens() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // With space_between_command_parens, opening has "list( APPEND SOURCES"
-    assert!(result.starts_with("list( APPEND SOURCES\n"), "must start with 'list( APPEND SOURCES\\n'");
+    assert!(
+        result.starts_with("list( APPEND SOURCES\n"),
+        "must start with 'list( APPEND SOURCES\\n'"
+    );
     // Files must be single-tab indented
-    assert!(result.contains("\tfile1.cpp\n"), "files must be single-tab indented");
-    assert!(result.contains("\tfile2.cpp\n"), "files must be single-tab indented");
+    assert!(
+        result.contains("\tfile1.cpp\n"),
+        "files must be single-tab indented"
+    );
+    assert!(
+        result.contains("\tfile2.cpp\n"),
+        "files must be single-tab indented"
+    );
 }
 
 #[test]
@@ -2409,12 +2787,24 @@ fn test_inline_single_keyword_list_append_multiline_input() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // APPEND SOURCES must be on the opening line
-    assert!(result.contains("list( APPEND SOURCES\n"), "APPEND SOURCES must be on the command opening line");
+    assert!(
+        result.contains("list( APPEND SOURCES\n"),
+        "APPEND SOURCES must be on the command opening line"
+    );
     // Files must be single-tab indented
-    assert!(result.contains("\tTestCoreJSON.cpp\n"), "files must be single-tab indented");
-    assert!(result.contains("\tTestPrimitiveJSON.cpp\n"), "files must be single-tab indented");
+    assert!(
+        result.contains("\tTestCoreJSON.cpp\n"),
+        "files must be single-tab indented"
+    );
+    assert!(
+        result.contains("\tTestPrimitiveJSON.cpp\n"),
+        "files must be single-tab indented"
+    );
     // APPEND must NOT be on its own line
-    assert!(!result.contains("\tAPPEND\n"), "APPEND must NOT be on its own indented line");
+    assert!(
+        !result.contains("\tAPPEND\n"),
+        "APPEND must NOT be on its own indented line"
+    );
 }
 
 #[test]
@@ -2428,7 +2818,10 @@ fn test_inline_single_keyword_list_append_idempotent() {
     let pass2 = format_text(&pass1, &config);
     eprintln!("Pass 1:\n{}", pass1);
     eprintln!("Pass 2:\n{}", pass2);
-    assert_eq!(pass1, pass2, "list(APPEND) + inline_single_keyword formatting must be idempotent");
+    assert_eq!(
+        pass1, pass2,
+        "list(APPEND) + inline_single_keyword formatting must be idempotent"
+    );
 }
 
 #[test]
@@ -2456,8 +2849,14 @@ fn test_control_flow_space_before_paren_if_enabled() {
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     assert!(result.contains("if (TRUE)"), "if must have space before (");
-    assert!(result.contains("endif ()"), "endif must have space before (");
-    assert!(result.contains("message(\"hello\")"), "message must NOT have space before (");
+    assert!(
+        result.contains("endif ()"),
+        "endif must have space before ("
+    );
+    assert!(
+        result.contains("message(\"hello\")"),
+        "message must NOT have space before ("
+    );
 }
 
 #[test]
@@ -2468,8 +2867,14 @@ fn test_control_flow_space_before_paren_foreach() {
     let input = "foreach(item IN LISTS a b c)\nendforeach()";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
-    assert!(result.contains("foreach (item"), "foreach must have space before (");
-    assert!(result.contains("endforeach ()"), "endforeach must have space before (");
+    assert!(
+        result.contains("foreach (item"),
+        "foreach must have space before ("
+    );
+    assert!(
+        result.contains("endforeach ()"),
+        "endforeach must have space before ("
+    );
 }
 
 #[test]
@@ -2479,8 +2884,14 @@ fn test_control_flow_space_before_paren_disabled_default() {
     let input = "if(TRUE)\nendif()";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
-    assert!(result.contains("if(TRUE)"), "if must NOT have space before ( with default config");
-    assert!(result.contains("endif()"), "endif must NOT have space before ( with default config");
+    assert!(
+        result.contains("if(TRUE)"),
+        "if must NOT have space before ( with default config"
+    );
+    assert!(
+        result.contains("endif()"),
+        "endif must NOT have space before ( with default config"
+    );
 }
 
 #[test]
@@ -2491,9 +2902,18 @@ fn test_control_flow_space_before_paren_regular_commands_unaffected() {
     let input = "set(MY_VAR \"value\")\nmessage(\"hello\")\nadd_library(mylib STATIC src/a.cpp)";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
-    assert!(result.contains("set(MY_VAR"), "set must NOT have space before (");
-    assert!(result.contains("message(\"hello\")"), "message must NOT have space before (");
-    assert!(result.contains("add_library(mylib"), "add_library must NOT have space before (");
+    assert!(
+        result.contains("set(MY_VAR"),
+        "set must NOT have space before ("
+    );
+    assert!(
+        result.contains("message(\"hello\")"),
+        "message must NOT have space before ("
+    );
+    assert!(
+        result.contains("add_library(mylib"),
+        "add_library must NOT have space before ("
+    );
 }
 
 #[test]
@@ -2524,13 +2944,22 @@ fn test_control_flow_space_before_paren_all_block_commands() {
     assert!(result.contains("else ()"), "else must have space");
     assert!(result.contains("endif ()"), "endif must have space");
     assert!(result.contains("foreach (x"), "foreach must have space");
-    assert!(result.contains("endforeach ()"), "endforeach must have space");
+    assert!(
+        result.contains("endforeach ()"),
+        "endforeach must have space"
+    );
     assert!(result.contains("while (cond)"), "while must have space");
     assert!(result.contains("endwhile ()"), "endwhile must have space");
     assert!(result.contains("macro (my_macro)"), "macro must have space");
     assert!(result.contains("endmacro ()"), "endmacro must have space");
-    assert!(result.contains("function (my_func)"), "function must have space");
-    assert!(result.contains("endfunction ()"), "endfunction must have space");
+    assert!(
+        result.contains("function (my_func)"),
+        "function must have space"
+    );
+    assert!(
+        result.contains("endfunction ()"),
+        "endfunction must have space"
+    );
     assert!(result.contains("block ()"), "block must have space");
     assert!(result.contains("endblock ()"), "endblock must have space");
 }
@@ -2544,8 +2973,14 @@ fn test_control_flow_space_before_paren_with_closing_style_remove() {
     let input = "if(condition)\nendif(condition)";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
-    assert!(result.contains("if (condition)"), "if must have space before (");
-    assert!(result.contains("endif ()"), "endif must have space before ( and closing args removed");
+    assert!(
+        result.contains("if (condition)"),
+        "if must have space before ("
+    );
+    assert!(
+        result.contains("endif ()"),
+        "endif must have space before ( and closing args removed"
+    );
 }
 
 #[test]
@@ -2558,7 +2993,10 @@ fn test_control_flow_space_before_paren_idempotent() {
     let pass2 = format_text(&pass1, &config);
     eprintln!("Pass 1:\n{}", pass1);
     eprintln!("Pass 2:\n{}", pass2);
-    assert_eq!(pass1, pass2, "control_flow_space_before_paren formatting must be idempotent");
+    assert_eq!(
+        pass1, pass2,
+        "control_flow_space_before_paren formatting must be idempotent"
+    );
 }
 
 #[test]
@@ -2577,10 +3015,16 @@ fn test_control_flow_space_before_paren_nested() {
     eprintln!("Result:\n{}", result);
     assert!(result.contains("if (OUTER)"), "outer if must have space");
     assert!(result.contains("foreach (item"), "foreach must have space");
-    assert!(result.contains("endforeach ()"), "endforeach must have space");
+    assert!(
+        result.contains("endforeach ()"),
+        "endforeach must have space"
+    );
     assert!(result.contains("endif ()"), "endif must have space");
     // Regular command inside block — no space
-    assert!(result.contains("message(${item})"), "message must NOT have space");
+    assert!(
+        result.contains("message(${item})"),
+        "message must NOT have space"
+    );
 }
 
 // ============================================================================
@@ -2600,14 +3044,21 @@ fn test_space_between_command_parens_single_line() {
 fn test_space_between_command_parens_multiline_builtin() {
     let mut config = default_config();
     config.space_between_command_parens = true;
-    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let input =
+        "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // Space after opening paren (first arg follows on same line for builtin)
-    assert!(result.starts_with("set( MY_LONG_VARIABLE_NAME"), "opening paren must have space before first arg");
+    assert!(
+        result.starts_with("set( MY_LONG_VARIABLE_NAME"),
+        "opening paren must have space before first arg"
+    );
     // Closing ) at base indent (no extra space before it)
     let last_line = result.trim_end_matches('\n').lines().last().unwrap_or("");
-    assert_eq!(last_line, ")", "closing paren must be at column 0 with no leading space");
+    assert_eq!(
+        last_line, ")",
+        "closing paren must be at column 0 with no leading space"
+    );
 }
 
 #[test]
@@ -2634,14 +3085,21 @@ fn test_space_between_command_parens_keyword_aware() {
 fn test_space_between_command_parens_keyword_multiline() {
     let mut config = default_config();
     config.space_between_command_parens = true;
-    let input = "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 lib6 lib7 lib8 lib9 lib10)";
+    let input =
+        "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 lib6 lib7 lib8 lib9 lib10)";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // First line has space after ( before first arg
-    assert!(result.starts_with("target_link_libraries( myapp"), "first line must have space after (");
+    assert!(
+        result.starts_with("target_link_libraries( myapp"),
+        "first line must have space after ("
+    );
     // Closing ) at base indent
     let last_line = result.trim_end_matches('\n').lines().last().unwrap_or("");
-    assert_eq!(last_line, ")", "closing paren must be at column 0 with no leading space");
+    assert_eq!(
+        last_line, ")",
+        "closing paren must be at column 0 with no leading space"
+    );
 }
 
 #[test]
@@ -2668,10 +3126,16 @@ fn test_space_between_command_parens_no_trailing_whitespace() {
     let mut config = default_config();
     config.space_between_command_parens = true;
     // A command that will break to multiline
-    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let input =
+        "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
     let result = format_text(input, &config);
     for line in result.lines() {
-        assert_eq!(line, line.trim_end(), "no line should have trailing whitespace, got: {:?}", line);
+        assert_eq!(
+            line,
+            line.trim_end(),
+            "no line should have trailing whitespace, got: {:?}",
+            line
+        );
     }
 }
 
@@ -2711,7 +3175,10 @@ fn test_space_between_command_parens_single_arg_idempotent() {
     let input = r#"add_subdirectory("mevi-vktools/")"#;
     let first = format_text(input, &config);
     let second = format_text(&first, &config);
-    assert_eq!(first, second, "formatting must be idempotent for single-arg commands");
+    assert_eq!(
+        first, second,
+        "formatting must be idempotent for single-arg commands"
+    );
 }
 
 // ============================================================================
@@ -2722,7 +3189,8 @@ fn test_space_between_command_parens_single_arg_idempotent() {
 fn test_indent_closing_paren_multiline() {
     let mut config = default_config();
     config.indent_closing_paren = true;
-    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let input =
+        "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // Closing ) is indented one level
@@ -2744,7 +3212,8 @@ fn test_indent_closing_paren_single_line_unchanged() {
 fn test_indent_closing_paren_keyword_aware() {
     let mut config = default_config();
     config.indent_closing_paren = true;
-    let input = "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 lib6 lib7 lib8 lib9 lib10)";
+    let input =
+        "target_link_libraries(myapp PUBLIC lib1 lib2 lib3 lib4 lib5 lib6 lib7 lib8 lib9 lib10)";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // Closing ) indented one level
@@ -2755,18 +3224,23 @@ fn test_indent_closing_paren_keyword_aware() {
 #[test]
 fn test_indent_closing_paren_false_default() {
     let config = default_config();
-    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let input =
+        "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
     let result = format_text(input, &config);
     // Default: closing ) at column 0
     let last_line = result.trim_end_matches('\n').lines().last().unwrap_or("");
-    assert_eq!(last_line, ")", "closing paren must be at column 0 by default");
+    assert_eq!(
+        last_line, ")",
+        "closing paren must be at column 0 by default"
+    );
 }
 
 #[test]
 fn test_indent_closing_paren_idempotent() {
     let mut config = default_config();
     config.indent_closing_paren = true;
-    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let input =
+        "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
     let first = format_text(input, &config);
     let second = format_text(&first, &config);
     assert_eq!(first, second, "formatting must be idempotent");
@@ -2783,7 +3257,10 @@ fn test_indent_closing_paren_single_arg_force_multiline() {
     eprintln!("Result:\n{}", result);
     // The closing ) must be on its own line, indented one tab
     let last_line = result.trim_end_matches('\n').lines().last().unwrap_or("");
-    assert_eq!(last_line, "\t)", "closing paren must be indented one tab for single-arg force-multiline");
+    assert_eq!(
+        last_line, "\t)",
+        "closing paren must be indented one tab for single-arg force-multiline"
+    );
 }
 
 // ============================================================================
@@ -2806,14 +3283,21 @@ fn test_combined_space_parens_and_indent_closing_multiline() {
     let mut config = default_config();
     config.space_between_command_parens = true;
     config.indent_closing_paren = true;
-    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let input =
+        "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
     let result = format_text(input, &config);
     eprintln!("Result:\n{}", result);
     // Space after opening paren on first line
-    assert!(result.starts_with("set( MY_LONG_VARIABLE_NAME"), "opening paren must have space");
+    assert!(
+        result.starts_with("set( MY_LONG_VARIABLE_NAME"),
+        "opening paren must have space"
+    );
     // Closing ) indented one level, no extra space before it
     let last_line = result.trim_end_matches('\n').lines().last().unwrap_or("");
-    assert_eq!(last_line, "\t)", "closing paren must be indented one tab without extra space");
+    assert_eq!(
+        last_line, "\t)",
+        "closing paren must be indented one tab without extra space"
+    );
 }
 
 #[test]
@@ -2821,7 +3305,8 @@ fn test_combined_idempotent() {
     let mut config = default_config();
     config.space_between_command_parens = true;
     config.indent_closing_paren = true;
-    let input = "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
+    let input =
+        "set(MY_LONG_VARIABLE_NAME value1 value2 value3 value4 value5 value6 value7 value8 value9)";
     let first = format_text(input, &config);
     let second = format_text(&first, &config);
     assert_eq!(first, second, "combined options must be idempotent");
@@ -2835,7 +3320,10 @@ fn test_inline_single_keyword_pair_value_properties() {
     config.inline_single_keyword = true;
     let input = "set_target_properties(myTarget PROPERTIES\n\tMACOSX_BUNDLE TRUE\n\tXCODE_ATTRIBUTE_CODE_SIGN_IDENTITY \"\"\n\tINSTALL_RPATH @executable_path/../Frameworks\n)\n";
     let result = format_text(input, &config);
-    assert_eq!(result, input, "PairValue properties should stay as key-value pairs");
+    assert_eq!(
+        result, input,
+        "PairValue properties should stay as key-value pairs"
+    );
 }
 
 #[test]
@@ -2845,7 +3333,10 @@ fn test_inline_single_keyword_pair_value_with_space_parens() {
     config.space_between_command_parens = true;
     let input = "set_target_properties( ${targetName} PROPERTIES\n\tMACOSX_BUNDLE TRUE\n\tXCODE_ATTRIBUTE_CODE_SIGN_IDENTITY \"\"\n\tINSTALL_RPATH @executable_path/../Frameworks\n)\n";
     let result = format_text(input, &config);
-    assert_eq!(result, input, "PairValue with space_between_command_parens should be idempotent");
+    assert_eq!(
+        result, input,
+        "PairValue with space_between_command_parens should be idempotent"
+    );
 }
 
 #[test]
@@ -2854,7 +3345,10 @@ fn test_inline_single_keyword_pair_value_single_pair() {
     config.inline_single_keyword = true;
     let input = "set_target_properties(myTarget PROPERTIES MACOSX_BUNDLE TRUE)\n";
     let result = format_text(input, &config);
-    assert_eq!(result, input, "Single property pair should stay inline with keyword");
+    assert_eq!(
+        result, input,
+        "Single property pair should stay inline with keyword"
+    );
 }
 
 // Regression: source_grouping headers_first should apply to keyword section args
@@ -2867,9 +3361,17 @@ fn test_inline_single_keyword_source_grouping_headers_first() {
     let input = "target_sources(myTarget PUBLIC\n\tfoo.h\n\tfoo.cpp\n\tbar.h\n\tbaz.cpp\n)\n";
     let result = format_text(input, &config);
     // foo.h + foo.cpp should be paired on same line
-    assert!(result.contains("foo.h foo.cpp"), "header+source pair should be grouped: got {}", result);
+    assert!(
+        result.contains("foo.h foo.cpp"),
+        "header+source pair should be grouped: got {}",
+        result
+    );
     // bar.h has no matching bar.cpp so stays alone
-    assert!(result.contains("\tbar.h\n"), "unmatched header stays on its own line: got {}", result);
+    assert!(
+        result.contains("\tbar.h\n"),
+        "unmatched header stays on its own line: got {}",
+        result
+    );
 }
 
 #[test]
@@ -2882,5 +3384,9 @@ fn test_inline_single_keyword_source_grouping_with_blank_lines() {
     let input = "target_sources( myTarget PUBLIC\n\talpha.h alpha.cpp\n\n\tbeta.h beta.cpp\n)\n";
     let result = format_text(input, &config);
     let second = format_text(&result, &config);
-    assert_eq!(result, second, "source_grouping + inline_single_keyword must be idempotent: got {}", result);
+    assert_eq!(
+        result, second,
+        "source_grouping + inline_single_keyword must be idempotent: got {}",
+        result
+    );
 }

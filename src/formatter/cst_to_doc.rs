@@ -1,18 +1,20 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::SyntaxNode;
 use crate::cst::{ArgumentList, CSTRoot, CommandInvocation};
 use crate::syntax_kind::SyntaxKind;
-use crate::SyntaxNode;
 use pretty::RcDoc;
 use rowan::NodeOrToken;
 
 use super::builtins;
-use super::config::{ClosingStyle, CommandCase, FormatConfig, UserCommandCase};
 use super::cmake_rules;
 use super::comments;
-use super::suppression::{parse_directive, line_number_at_offset, SuppressionTracker, SuppressionWarning};
+use super::config::{ClosingStyle, CommandCase, FormatConfig, UserCommandCase};
 use super::grammar::GrammarRegistry;
+use super::suppression::{
+    SuppressionTracker, SuppressionWarning, line_number_at_offset, parse_directive,
+};
 
 // Import post-processing function from parent module
 use super::post_process_rendered_output;
@@ -91,20 +93,18 @@ fn render_batch(docs: Vec<RcDoc<'static, ()>>, width: usize) -> String {
     let effective_width = if width == 0 { usize::MAX } else { width };
     doc.render(effective_width, &mut output)
         .expect("rendering to Vec should not fail");
-    String::from_utf8(output)
-        .expect("formatted output should be valid UTF-8")
+    String::from_utf8(output).expect("formatted output should be valid UTF-8")
 }
 
 /// Collect all trailing comments in the file
 fn collect_trailing_comments(node: &SyntaxNode) -> std::collections::HashSet<String> {
     let mut trailing_comments = std::collections::HashSet::new();
     for child in node.children_with_tokens() {
-        if let NodeOrToken::Node(child_node) = &child {
-            if child_node.kind() == SyntaxKind::COMMAND_INVOCATION {
-                if let Some(trailing) = comments::extract_trailing_comment(child_node) {
-                    trailing_comments.insert(trailing);
-                }
-            }
+        if let NodeOrToken::Node(child_node) = &child
+            && child_node.kind() == SyntaxKind::COMMAND_INVOCATION
+            && let Some(trailing) = comments::extract_trailing_comment(child_node)
+        {
+            trailing_comments.insert(trailing);
         }
     }
     trailing_comments
@@ -126,23 +126,23 @@ fn comment_block_lines(source: &str) -> HashSet<usize> {
                 run_start = Some(i);
             }
         } else {
-            if let Some(start) = run_start {
-                if i - start >= 2 {
-                    // 2+ consecutive comment lines = block
-                    for j in start..i {
-                        result.insert(j + 1); // 1-indexed line numbers
-                    }
+            if let Some(start) = run_start
+                && i - start >= 2
+            {
+                // 2+ consecutive comment lines = block
+                for j in start..i {
+                    result.insert(j + 1); // 1-indexed line numbers
                 }
             }
             run_start = None;
         }
     }
     // Handle block at end of file
-    if let Some(start) = run_start {
-        if lines.len() - start >= 2 {
-            for j in start..lines.len() {
-                result.insert(j + 1);
-            }
+    if let Some(start) = run_start
+        && lines.len() - start >= 2
+    {
+        for j in start..lines.len() {
+            result.insert(j + 1);
         }
     }
 
@@ -150,7 +150,11 @@ fn comment_block_lines(source: &str) -> HashSet<usize> {
 }
 
 /// Format the FILE node
-fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String, Vec<SuppressionWarning>) {
+fn format_file(
+    node: &SyntaxNode,
+    ctx: &FormatContext,
+    source: &str,
+) -> (String, Vec<SuppressionWarning>) {
     // Clone config so we can modify it based on style directives
     let mut config = ctx.config.clone();
 
@@ -179,13 +183,13 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
     // Then collect leading comments, but skip those that are trailing comments
     for child in node.children_with_tokens() {
-        if let NodeOrToken::Node(child_node) = &child {
-            if child_node.kind() == SyntaxKind::COMMAND_INVOCATION {
-                for lc in comments::extract_leading_comments(child_node) {
-                    // Don't mark as handled if it's a trailing comment
-                    if !trailing_comments.contains(&lc.text) {
-                        handled_comments.insert(lc.text);
-                    }
+        if let NodeOrToken::Node(child_node) = &child
+            && child_node.kind() == SyntaxKind::COMMAND_INVOCATION
+        {
+            for lc in comments::extract_leading_comments(child_node) {
+                // Don't mark as handled if it's a trailing comment
+                if !trailing_comments.contains(&lc.text) {
+                    handled_comments.insert(lc.text);
                 }
             }
         }
@@ -206,9 +210,8 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                         for lc in &leading_comments {
                             if let Some(directive) = parse_directive(&lc.text) {
                                 // Find comment position by searching backwards from command
-                                let comment_offset = source[..cmd_start]
-                                    .rfind(&lc.text[..])
-                                    .unwrap_or(cmd_start);
+                                let comment_offset =
+                                    source[..cmd_start].rfind(&lc.text[..]).unwrap_or(cmd_start);
                                 let line = line_number_at_offset(source, comment_offset);
 
                                 // Handle style directives separately
@@ -235,14 +238,19 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                         }
 
                         // Check if any leading comments will actually be emitted
-                        let has_emittable_leading = leading_comments.iter()
+                        let has_emittable_leading = leading_comments
+                            .iter()
                             .any(|lc| !trailing_comments.contains(&lc.text));
 
                         // Emit accumulated blank lines before command/comments
                         // When leading comments exist, blank_line_before handles all gaps
                         // (including before the first comment), so skip blank_line_count.
-                        if blank_line_count >= 2 && (!docs.is_empty() || !batch_strings.is_empty()) && !has_emittable_leading {
-                            let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, config.max_blank_lines);
+                        if blank_line_count >= 2
+                            && (!docs.is_empty() || !batch_strings.is_empty())
+                            && !has_emittable_leading
+                        {
+                            let blank_lines_to_emit =
+                                std::cmp::min(blank_line_count - 1, config.max_blank_lines);
                             for _ in 0..blank_lines_to_emit {
                                 docs.push(RcDoc::hardline());
                             }
@@ -258,7 +266,9 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                 let indent_str = indent_string(current_indent, &config);
                                 for lc in &leading_comments {
                                     if !trailing_comments.contains(&lc.text) {
-                                        if lc.blank_line_before && (!docs.is_empty() || !batch_strings.is_empty()) {
+                                        if lc.blank_line_before
+                                            && (!docs.is_empty() || !batch_strings.is_empty())
+                                        {
                                             docs.push(RcDoc::hardline());
                                         }
                                         // Normalize line comments, but skip block comments and bracket comments
@@ -266,8 +276,13 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                             .rfind(&lc.text[..])
                                             .map(|offset| line_number_at_offset(source, offset))
                                             .unwrap_or(0);
-                                        let text = if !lc.text.starts_with("#[") && !block_comment_lines.contains(&lc_line) {
-                                            cmake_rules::normalize_comment_whitespace(&lc.text, config.comment_style)
+                                        let text = if !lc.text.starts_with("#[")
+                                            && !block_comment_lines.contains(&lc_line)
+                                        {
+                                            cmake_rules::normalize_comment_whitespace(
+                                                &lc.text,
+                                                config.comment_style,
+                                            )
                                         } else {
                                             lc.text.clone()
                                         };
@@ -280,7 +295,9 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                 let indent_str = indent_string(current_indent, &config);
                                 for lc in &leading_comments {
                                     if !trailing_comments.contains(&lc.text) {
-                                        if lc.blank_line_before && (!docs.is_empty() || !batch_strings.is_empty()) {
+                                        if lc.blank_line_before
+                                            && (!docs.is_empty() || !batch_strings.is_empty())
+                                        {
                                             docs.push(RcDoc::hardline());
                                         }
                                         // Suppressed: preserve comment text as-is
@@ -293,7 +310,8 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
                             // Emit blank lines between last leading comment and command
                             if has_emittable_leading && blank_line_count >= 2 {
-                                let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, config.max_blank_lines);
+                                let blank_lines_to_emit =
+                                    std::cmp::min(blank_line_count - 1, config.max_blank_lines);
                                 for _ in 0..blank_lines_to_emit {
                                     docs.push(RcDoc::hardline());
                                 }
@@ -302,13 +320,20 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                             // Emit the command itself as raw text
                             let raw_text = child_node.text().to_string();
                             let indent_str = indent_string(current_indent, &config);
-                            let mut raw_doc = RcDoc::text(format!("{}{}", indent_str, raw_text.trim()));
+                            let mut raw_doc =
+                                RcDoc::text(format!("{}{}", indent_str, raw_text.trim()));
 
                             // Preserve trailing comment (not part of command node)
-                            if let Some(trailing_comment) = comments::extract_trailing_comment(&child_node) {
+                            if let Some(trailing_comment) =
+                                comments::extract_trailing_comment(&child_node)
+                            {
                                 // Normalize line comments, but not when suppressed
-                                let text = if !is_suppressed && !trailing_comment.starts_with("#[") {
-                                    cmake_rules::normalize_comment_whitespace(&trailing_comment, config.comment_style)
+                                let text = if !is_suppressed && !trailing_comment.starts_with("#[")
+                                {
+                                    cmake_rules::normalize_comment_whitespace(
+                                        &trailing_comment,
+                                        config.comment_style,
+                                    )
                                 } else {
                                     trailing_comment
                                 };
@@ -326,7 +351,9 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                         for lc in &leading_comments {
                             // Only emit if not already handled as a trailing comment
                             if !trailing_comments.contains(&lc.text) {
-                                if lc.blank_line_before && (!docs.is_empty() || !batch_strings.is_empty()) {
+                                if lc.blank_line_before
+                                    && (!docs.is_empty() || !batch_strings.is_empty())
+                                {
                                     docs.push(RcDoc::hardline());
                                 }
                                 // Normalize line comments, but skip block comments and bracket comments
@@ -334,8 +361,13 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                                     .rfind(&lc.text[..])
                                     .map(|offset| line_number_at_offset(source, offset))
                                     .unwrap_or(0);
-                                let text = if !lc.text.starts_with("#[") && !block_comment_lines.contains(&lc_line) {
-                                    cmake_rules::normalize_comment_whitespace(&lc.text, config.comment_style)
+                                let text = if !lc.text.starts_with("#[")
+                                    && !block_comment_lines.contains(&lc_line)
+                                {
+                                    cmake_rules::normalize_comment_whitespace(
+                                        &lc.text,
+                                        config.comment_style,
+                                    )
                                 } else {
                                     lc.text.clone()
                                 };
@@ -346,7 +378,8 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
                         // Emit blank lines between last leading comment and command
                         if has_emittable_leading && blank_line_count >= 2 {
-                            let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, config.max_blank_lines);
+                            let blank_lines_to_emit =
+                                std::cmp::min(blank_line_count - 1, config.max_blank_lines);
                             for _ in 0..blank_lines_to_emit {
                                 docs.push(RcDoc::hardline());
                             }
@@ -354,7 +387,8 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
                         // Determine command name and adjust indentation
                         if let Some(cmd) = CommandInvocation::cast(child_node.clone()) {
-                            let cmd_name = cmd.name_text()
+                            let cmd_name = cmd
+                                .name_text()
                                 .map(|s| s.to_lowercase())
                                 .unwrap_or_default();
 
@@ -414,13 +448,19 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                             };
 
                             // Format and emit command
-                            let mut cmd_doc = format_command(&cmd, &cmd_ctx, closer_context.as_ref());
+                            let mut cmd_doc =
+                                format_command(&cmd, &cmd_ctx, closer_context.as_ref());
 
                             // Check for trailing comment
-                            if let Some(trailing_comment) = comments::extract_trailing_comment(&child_node) {
+                            if let Some(trailing_comment) =
+                                comments::extract_trailing_comment(&child_node)
+                            {
                                 // Normalize line comments (not bracket comments)
                                 let text = if !trailing_comment.starts_with("#[") {
-                                    cmake_rules::normalize_comment_whitespace(&trailing_comment, config.comment_style)
+                                    cmake_rules::normalize_comment_whitespace(
+                                        &trailing_comment,
+                                        config.comment_style,
+                                    )
                                 } else {
                                     trailing_comment
                                 };
@@ -432,7 +472,8 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
                             // Check if we should render a batch to prevent deep nesting
                             if docs.len() >= BATCH_SIZE {
-                                let batch = render_batch(std::mem::take(&mut docs), config.max_line_length);
+                                let batch =
+                                    render_batch(std::mem::take(&mut docs), config.max_line_length);
                                 batch_strings.push(batch);
                             }
 
@@ -440,10 +481,11 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                             if is_block_opener(&cmd_name) {
                                 current_indent += 1;
                                 // Extract opener arguments for scope tracking
-                                let opener_args: Vec<String> = cmd.argument_list()
-                                    .map(|al| al.arguments()
-                                        .map(|t| t.text().to_string())
-                                        .collect())
+                                let opener_args: Vec<String> = cmd
+                                    .argument_list()
+                                    .map(|al| {
+                                        al.arguments().map(|t| t.text().to_string()).collect()
+                                    })
                                     .unwrap_or_default();
                                 scope_stack.push(ScopeFrame { opener_args });
                             }
@@ -454,8 +496,10 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                     SyntaxKind::ERROR => {
                         // Emit accumulated blank lines before error
                         // But only if not first content
-                        if blank_line_count >= 2 && (!docs.is_empty() || !batch_strings.is_empty()) {
-                            let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, config.max_blank_lines);
+                        if blank_line_count >= 2 && (!docs.is_empty() || !batch_strings.is_empty())
+                        {
+                            let blank_lines_to_emit =
+                                std::cmp::min(blank_line_count - 1, config.max_blank_lines);
                             for _ in 0..blank_lines_to_emit {
                                 docs.push(RcDoc::hardline());
                             }
@@ -481,7 +525,10 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                         if !handled_comments.contains(&comment_text) {
                             // Process directives in standalone comments (not leading/trailing)
                             if let Some(directive) = parse_directive(&comment_text) {
-                                let line = line_number_at_offset(source, token.text_range().start().into());
+                                let line = line_number_at_offset(
+                                    source,
+                                    token.text_range().start().into(),
+                                );
 
                                 // Handle style directives separately
                                 match &directive {
@@ -498,8 +545,11 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
                             }
                             // Emit accumulated blank lines before standalone comment
                             // But only if not first content
-                            if blank_line_count >= 2 && (!docs.is_empty() || !batch_strings.is_empty()) {
-                                let blank_lines_to_emit = std::cmp::min(blank_line_count - 1, config.max_blank_lines);
+                            if blank_line_count >= 2
+                                && (!docs.is_empty() || !batch_strings.is_empty())
+                            {
+                                let blank_lines_to_emit =
+                                    std::cmp::min(blank_line_count - 1, config.max_blank_lines);
                                 for _ in 0..blank_lines_to_emit {
                                     docs.push(RcDoc::hardline());
                                 }
@@ -507,12 +557,16 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
                             let indent_str = indent_string(current_indent, &config);
                             // Normalize line comments (not bracket comments), but not when suppressed or in a comment block
-                            let comment_line = line_number_at_offset(source, token.text_range().start().into());
+                            let comment_line =
+                                line_number_at_offset(source, token.text_range().start().into());
                             let text = if token.kind() == SyntaxKind::COMMENT
                                 && !tracker.is_suppressed()
                                 && !block_comment_lines.contains(&comment_line)
                             {
-                                cmake_rules::normalize_comment_whitespace(&comment_text, config.comment_style)
+                                cmake_rules::normalize_comment_whitespace(
+                                    &comment_text,
+                                    config.comment_style,
+                                )
                             } else {
                                 comment_text
                             };
@@ -550,7 +604,8 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 
     // Join all batch strings and apply post-processing
     let result = batch_strings.join("");
-    let result = post_process_rendered_output(&result, config.final_newline, source.ends_with('\n'));
+    let result =
+        post_process_rendered_output(&result, config.final_newline, source.ends_with('\n'));
 
     (result, warnings)
 }
@@ -559,7 +614,7 @@ fn format_file(node: &SyntaxNode, ctx: &FormatContext, source: &str) -> (String,
 fn format_command(
     cmd: &CommandInvocation,
     ctx: &FormatContext,
-    closer_context: Option<&CloserContext>
+    closer_context: Option<&CloserContext>,
 ) -> RcDoc<'static, ()> {
     let indent_str = ctx.indent_str();
 
@@ -579,7 +634,10 @@ fn format_command(
             UserCommandCase::Preserve => name.clone(),
             UserCommandCase::Infer => {
                 // Look up from function()/macro() definitions; if not found, leave as-is
-                ctx.user_defs.get(&name_lower).cloned().unwrap_or(name.clone())
+                ctx.user_defs
+                    .get(&name_lower)
+                    .cloned()
+                    .unwrap_or(name.clone())
             }
         }
     };
@@ -602,10 +660,12 @@ fn format_command(
                     if let Some(arg_list) = cmd.argument_list() {
                         let grammar_enum = GrammarRegistry::global().get(&name_lower);
                         // Resolve multi-mode grammar
-                        let first_keyword = grammar_enum.as_ref()
+                        let first_keyword = grammar_enum
+                            .as_ref()
                             .filter(|g| g.is_multi_mode())
                             .and_then(|_| detect_mode_keyword(&arg_list));
-                        let grammar = grammar_enum.and_then(|g| g.resolve(first_keyword.as_deref()));
+                        let grammar =
+                            grammar_enum.and_then(|g| g.resolve(first_keyword.as_deref()));
                         // If no builtin grammar, check user grammars
                         let user_grammar = if grammar.is_none() {
                             ctx.user_grammars.get(&name_lower)
@@ -614,15 +674,37 @@ fn format_command(
                         };
                         let effective_grammar = grammar.or(user_grammar);
                         // Skip keyword-aware formatting for unrecognized modes in multi-mode commands
-                        let is_unrecognized_mode = grammar_enum.as_ref()
-                            .map_or(false, |g| g.is_multi_mode() && grammar.is_none());
-                        if !is_unrecognized_mode && (effective_grammar.is_some() || cmake_rules::is_keyword_aware_command(&name)) {
-                            let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, effective_grammar, ctx.config.comment_style);
-                            let is_multi_mode = grammar_enum.as_ref().map_or(false, |g| g.is_multi_mode());
+                        let is_unrecognized_mode = grammar_enum
+                            .as_ref()
+                            .is_some_and(|g| g.is_multi_mode() && grammar.is_none());
+                        if !is_unrecognized_mode
+                            && (effective_grammar.is_some()
+                                || cmake_rules::is_keyword_aware_command(&name))
+                        {
+                            let sections = cmake_rules::parse_keyword_sections_with_grammar(
+                                &arg_list,
+                                effective_grammar,
+                                ctx.config.comment_style,
+                            );
+                            let is_multi_mode =
+                                grammar_enum.as_ref().is_some_and(|g| g.is_multi_mode());
                             let has_builtin_grammar = grammar.is_some();
-                            let force_args_on_new_line = effective_grammar.map_or(false, |g| g.force_args_on_new_line);
-                            let sub_kws = effective_grammar.map(|g| &g.sub_keywords).filter(|s| !s.is_empty());
-                            cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level, is_multi_mode, has_builtin_grammar, force_args_on_new_line, sub_kws, name.len())
+                            let force_args_on_new_line =
+                                effective_grammar.is_some_and(|g| g.force_args_on_new_line);
+                            let sub_kws = effective_grammar
+                                .map(|g| &g.sub_keywords)
+                                .filter(|s| !s.is_empty());
+                            cmake_rules::format_keyword_aware_args(
+                                &arg_list,
+                                sections,
+                                ctx.config,
+                                ctx.indent_level,
+                                is_multi_mode,
+                                has_builtin_grammar,
+                                force_args_on_new_line,
+                                sub_kws,
+                                name.len(),
+                            )
                         } else {
                             let is_custom = !builtins::is_builtin_command(&name_lower);
                             format_argument_list(&arg_list, ctx, is_custom)
@@ -651,7 +733,8 @@ fn format_command(
             // Check if this command should use keyword-aware formatting
             let grammar_enum = GrammarRegistry::global().get(&name_lower);
             // Resolve multi-mode grammar
-            let first_keyword = grammar_enum.as_ref()
+            let first_keyword = grammar_enum
+                .as_ref()
                 .filter(|g| g.is_multi_mode())
                 .and_then(|_| detect_mode_keyword(&arg_list));
             let grammar = grammar_enum.and_then(|g| g.resolve(first_keyword.as_deref()));
@@ -663,15 +746,35 @@ fn format_command(
             };
             let effective_grammar = grammar.or(user_grammar);
             // Skip keyword-aware formatting for unrecognized modes in multi-mode commands
-            let is_unrecognized_mode = grammar_enum.as_ref()
-                .map_or(false, |g| g.is_multi_mode() && grammar.is_none());
-            if !is_unrecognized_mode && (effective_grammar.is_some() || cmake_rules::is_keyword_aware_command(&name)) {
-                let sections = cmake_rules::parse_keyword_sections_with_grammar(&arg_list, effective_grammar, ctx.config.comment_style);
-                let is_multi_mode = grammar_enum.as_ref().map_or(false, |g| g.is_multi_mode());
+            let is_unrecognized_mode = grammar_enum
+                .as_ref()
+                .is_some_and(|g| g.is_multi_mode() && grammar.is_none());
+            if !is_unrecognized_mode
+                && (effective_grammar.is_some() || cmake_rules::is_keyword_aware_command(&name))
+            {
+                let sections = cmake_rules::parse_keyword_sections_with_grammar(
+                    &arg_list,
+                    effective_grammar,
+                    ctx.config.comment_style,
+                );
+                let is_multi_mode = grammar_enum.as_ref().is_some_and(|g| g.is_multi_mode());
                 let has_builtin_grammar = grammar.is_some();
-                let force_args_on_new_line = effective_grammar.map_or(false, |g| g.force_args_on_new_line);
-                let sub_kws = effective_grammar.map(|g| &g.sub_keywords).filter(|s| !s.is_empty());
-                cmake_rules::format_keyword_aware_args(&arg_list, sections, ctx.config, ctx.indent_level, is_multi_mode, has_builtin_grammar, force_args_on_new_line, sub_kws, name.len())
+                let force_args_on_new_line =
+                    effective_grammar.is_some_and(|g| g.force_args_on_new_line);
+                let sub_kws = effective_grammar
+                    .map(|g| &g.sub_keywords)
+                    .filter(|s| !s.is_empty());
+                cmake_rules::format_keyword_aware_args(
+                    &arg_list,
+                    sections,
+                    ctx.config,
+                    ctx.indent_level,
+                    is_multi_mode,
+                    has_builtin_grammar,
+                    force_args_on_new_line,
+                    sub_kws,
+                    name.len(),
+                )
             } else {
                 let is_custom = !builtins::is_builtin_command(&name_lower);
                 format_argument_list(&arg_list, ctx, is_custom)
@@ -684,20 +787,24 @@ fn format_command(
     // Format as: indent + name + ( + args + )
     // Conditionally insert a space before ( for block/control-flow commands
     // and a space after ( if space_between_command_parens is enabled
-    let space_before = if ctx.config.control_flow_space_before_paren && is_block_command(&name_lower) {
-        " "
-    } else {
-        ""
-    };
-    let has_args = cmd.argument_list().map_or(false, |al| {
+    let space_before =
+        if ctx.config.control_flow_space_before_paren && is_block_command(&name_lower) {
+            " "
+        } else {
+            ""
+        };
+    let has_args = cmd.argument_list().is_some_and(|al| {
         al.syntax().children_with_tokens().any(|c| {
-            matches!(c.kind(), SyntaxKind::UNQUOTED_ARGUMENT
-                | SyntaxKind::QUOTED_ARGUMENT
-                | SyntaxKind::BRACKET_ARGUMENT
-                | SyntaxKind::VARIABLE_REF
-                | SyntaxKind::ENV_VAR_REF
-                | SyntaxKind::CACHE_VAR_REF
-                | SyntaxKind::GENERATOR_EXPR)
+            matches!(
+                c.kind(),
+                SyntaxKind::UNQUOTED_ARGUMENT
+                    | SyntaxKind::QUOTED_ARGUMENT
+                    | SyntaxKind::BRACKET_ARGUMENT
+                    | SyntaxKind::VARIABLE_REF
+                    | SyntaxKind::ENV_VAR_REF
+                    | SyntaxKind::CACHE_VAR_REF
+                    | SyntaxKind::GENERATOR_EXPR
+            )
         })
     });
     let space_after = if ctx.config.space_between_command_parens && has_args {
@@ -754,13 +861,15 @@ pub(crate) fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> Arg
 
     let force_multiline = has_comments || has_blank_lines || has_newlines;
 
-    ArgumentFormatSignals {
-        force_multiline,
-    }
+    ArgumentFormatSignals { force_multiline }
 }
 
 /// Format an argument list with intelligent line breaking
-fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_command: bool) -> RcDoc<'static, ()> {
+fn format_argument_list(
+    arg_list: &ArgumentList,
+    ctx: &FormatContext,
+    is_custom_command: bool,
+) -> RcDoc<'static, ()> {
     let args = collect_logical_args(arg_list);
 
     if args.is_empty() {
@@ -835,11 +944,7 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
 
             // When flat: "first rest1 rest2"
             // When broken: "first\n<inner>rest1\n<inner>rest2\n<base>"
-            return RcDoc::text(first_text)
-                .append(
-                    RcDoc::concat(rest_docs)
-                        .group()
-                );
+            return RcDoc::text(first_text).append(RcDoc::concat(rest_docs).group());
         }
     }
 
@@ -893,7 +998,8 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
                             // If there were blank lines before this arg, emit extra newlines
                             if consecutive_newline_count >= 2 {
                                 let blank_lines = consecutive_newline_count - 1;
-                                let blank_lines_to_emit = std::cmp::min(blank_lines, ctx.config.max_blank_lines);
+                                let blank_lines_to_emit =
+                                    std::cmp::min(blank_lines, ctx.config.max_blank_lines);
                                 for _ in 0..blank_lines_to_emit {
                                     rest_parts.push('\n');
                                 }
@@ -913,7 +1019,8 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
                         // If there were blank lines before this comment, emit extra newlines
                         if consecutive_newline_count >= 2 {
                             let blank_lines = consecutive_newline_count - 1;
-                            let blank_lines_to_emit = std::cmp::min(blank_lines, ctx.config.max_blank_lines);
+                            let blank_lines_to_emit =
+                                std::cmp::min(blank_lines, ctx.config.max_blank_lines);
                             for _ in 0..blank_lines_to_emit {
                                 rest_parts.push('\n');
                             }
@@ -955,25 +1062,21 @@ fn format_argument_list(arg_list: &ArgumentList, ctx: &FormatContext, is_custom_
     // Using RcDoc::text with pre-rendered content avoids deeply-nested concat trees
     if is_custom_command {
         if !rest_parts.is_empty() {
-            RcDoc::text(rest_parts)
+            RcDoc::text(rest_parts).append(RcDoc::text(format!("\n{}", closing_indent)))
+        } else {
+            RcDoc::nil()
+        }
+    } else if let Some(first) = first_arg {
+        if !rest_parts.is_empty() {
+            RcDoc::text(first)
+                .append(RcDoc::text(rest_parts))
                 .append(RcDoc::text(format!("\n{}", closing_indent)))
         } else {
-            RcDoc::nil()
+            // Single-arg force-multiline builtin: still need closing paren on its own line
+            RcDoc::text(first).append(RcDoc::text(format!("\n{}", closing_indent)))
         }
     } else {
-        if let Some(first) = first_arg {
-            if !rest_parts.is_empty() {
-                RcDoc::text(first)
-                    .append(RcDoc::text(rest_parts))
-                    .append(RcDoc::text(format!("\n{}", closing_indent)))
-            } else {
-                // Single-arg force-multiline builtin: still need closing paren on its own line
-                RcDoc::text(first)
-                    .append(RcDoc::text(format!("\n{}", closing_indent)))
-            }
-        } else {
-            RcDoc::nil()
-        }
+        RcDoc::nil()
     }
 }
 
@@ -1032,7 +1135,10 @@ fn detect_mode_keyword(arg_list: &ArgumentList) -> Option<String> {
                     // Variable reference in mode position - fallback to simple formatting
                     return None;
                 }
-                SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
+                SyntaxKind::WHITESPACE
+                | SyntaxKind::NEWLINE
+                | SyntaxKind::COMMENT
+                | SyntaxKind::BRACKET_COMMENT => {
                     // Skip whitespace and comments
                     continue;
                 }

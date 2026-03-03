@@ -1,13 +1,11 @@
-use cmake_fmt::formatter::{format_text_with_diagnostics, format_text_with_diagnostics_and_path, FormatConfig};
+use cmake_fmt::formatter::{
+    FormatConfig, format_text_with_diagnostics, format_text_with_diagnostics_and_path,
+};
 use std::fs;
 use tempfile::TempDir;
 
 /// Helper to set up a temporary project with CMake files and format a file within it
-fn setup_and_format(
-    files: &[(&str, &str)],
-    file_to_format: &str,
-    config: &FormatConfig,
-) -> String {
+fn setup_and_format(files: &[(&str, &str)], file_to_format: &str, config: &FormatConfig) -> String {
     // Clear caches for test isolation
     cmake_fmt::formatter::grammar::clear_project_scan_cache();
     cmake_fmt::formatter::grammar::clear_project_grammar_cache();
@@ -31,7 +29,8 @@ fn setup_and_format(
     // Format the specified file
     let file_path = project_root.join(file_to_format);
     let content = fs::read_to_string(&file_path).unwrap();
-    let (formatted, _warnings) = format_text_with_diagnostics_and_path(&content, config, Some(&file_path), false);
+    let (formatted, _warnings) =
+        format_text_with_diagnostics_and_path(&content, config, Some(&file_path), false);
     formatted
 }
 
@@ -230,10 +229,9 @@ my_build(VERBOSE SOURCES main.cpp util.cpp HEADERS main.h OUTPUT_DIR build)
 
 #[test]
 fn test_same_file_cmake_parse_arguments_grammar() {
-    let files = vec![
-        (
-            "CMakeLists.txt",
-            r#"function(mevi_ConfigureExample)
+    let files = vec![(
+        "CMakeLists.txt",
+        r#"function(mevi_ConfigureExample)
     cmake_parse_arguments(PARSED "" "TARGET" "SOURCES;LINK_TARGETS" ${ARGN})
 
     mevi_ConfigureApplication(
@@ -249,8 +247,7 @@ mevi_ConfigureExample(
     SOURCES "${sourceFiles}"
 )
 "#,
-        ),
-    ];
+    )];
 
     let mut config = FormatConfig::default();
     config.max_line_length = 40; // Force breaking

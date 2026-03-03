@@ -1,7 +1,7 @@
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
-use std::path::{Path, PathBuf};
-use std::fs;
 
 /// Get the path to the cmake-fmt binary
 fn cmake_fmt_bin() -> PathBuf {
@@ -58,7 +58,12 @@ fn test_parallel_inplace_formats_multiple_files() {
     // Verify all files are formatted correctly
     for file in &files {
         let content = fs::read_to_string(file).expect("Failed to read formatted file");
-        assert_eq!(content, expected_formatted_content(), "File {} should be formatted", file.display());
+        assert_eq!(
+            content,
+            expected_formatted_content(),
+            "File {} should be formatted",
+            file.display()
+        );
     }
 }
 
@@ -81,7 +86,11 @@ fn test_parallel_check_detects_changes() {
         .expect("Failed to execute cmake-fmt");
 
     // Should return exit code 1 (changes needed)
-    assert_eq!(output.status.code(), Some(1), "cmake-fmt --check should return 1 for unformatted files");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "cmake-fmt --check should return 1 for unformatted files"
+    );
 
     // Format them
     let format_output = Command::new(cmake_fmt_bin())
@@ -99,7 +108,11 @@ fn test_parallel_check_detects_changes() {
         .output()
         .expect("Failed to execute cmake-fmt");
 
-    assert_eq!(check_output.status.code(), Some(0), "cmake-fmt --check should return 0 for formatted files");
+    assert_eq!(
+        check_output.status.code(),
+        Some(0),
+        "cmake-fmt --check should return 0 for formatted files"
+    );
 }
 
 #[test]
@@ -121,7 +134,11 @@ fn test_parallel_check_no_changes() {
         .expect("Failed to execute cmake-fmt");
 
     // Should return exit code 0 (no changes needed)
-    assert_eq!(output.status.code(), Some(0), "cmake-fmt --check should return 0 for already-formatted files");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "cmake-fmt --check should return 0 for already-formatted files"
+    );
 }
 
 #[test]
@@ -146,9 +163,21 @@ fn test_parallel_progress_on_stderr() {
 
     // Check that stderr contains progress information
     // Should contain "Formatted" and file count
-    assert!(stderr.contains("Formatted"), "stderr should contain progress message: {}", stderr);
-    assert!(stderr.contains("10"), "stderr should contain total file count: {}", stderr);
-    assert!(stderr.contains("files"), "stderr should contain 'files': {}", stderr);
+    assert!(
+        stderr.contains("Formatted"),
+        "stderr should contain progress message: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("10"),
+        "stderr should contain total file count: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("files"),
+        "stderr should contain 'files': {}",
+        stderr
+    );
 }
 
 #[test]
@@ -176,7 +205,11 @@ fn test_stdout_mode_sequential_no_interleaving() {
     // Each file should contain its formatted SET command
     for i in 1..=5 {
         let expected_line = format!("set(VAR_{} value_{})", i, i);
-        assert!(stdout.contains(&expected_line), "stdout should contain formatted content for file {}", i);
+        assert!(
+            stdout.contains(&expected_line),
+            "stdout should contain formatted content for file {}",
+            i
+        );
     }
 
     // Verify file 1's content appears before file 2's content
@@ -184,8 +217,14 @@ fn test_stdout_mode_sequential_no_interleaving() {
     let var2_pos = stdout.find("VAR_2").expect("Should find VAR_2");
     let var3_pos = stdout.find("VAR_3").expect("Should find VAR_3");
 
-    assert!(var1_pos < var2_pos, "File 1 content should appear before File 2");
-    assert!(var2_pos < var3_pos, "File 2 content should appear before File 3");
+    assert!(
+        var1_pos < var2_pos,
+        "File 1 content should appear before File 2"
+    );
+    assert!(
+        var2_pos < var3_pos,
+        "File 2 content should appear before File 3"
+    );
 }
 
 #[test]
@@ -202,7 +241,8 @@ fn test_exit_code_aggregation_mixed_files() {
 
     // Create 5 unformatted files
     for i in 1..=5 {
-        let file = create_unformatted_cmake_file(temp_dir.path(), &format!("unformatted{}.cmake", i));
+        let file =
+            create_unformatted_cmake_file(temp_dir.path(), &format!("unformatted{}.cmake", i));
         files.push(file);
     }
 
@@ -214,7 +254,11 @@ fn test_exit_code_aggregation_mixed_files() {
         .expect("Failed to execute cmake-fmt");
 
     // Should return exit code 1 (at least one needs formatting)
-    assert_eq!(output.status.code(), Some(1), "cmake-fmt --check should return 1 when any file needs formatting");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "cmake-fmt --check should return 1 when any file needs formatting"
+    );
 }
 
 #[test]
@@ -233,7 +277,10 @@ fn test_small_file_set_still_works() {
         .output()
         .expect("Failed to execute cmake-fmt");
 
-    assert!(output.status.success(), "cmake-fmt should succeed on small file sets");
+    assert!(
+        output.status.success(),
+        "cmake-fmt should succeed on small file sets"
+    );
 
     // Verify both files are formatted correctly
     let content1 = fs::read_to_string(&file1).expect("Failed to read file1");
@@ -262,12 +309,20 @@ fn test_diff_mode_multiple_files() {
         .expect("Failed to execute cmake-fmt");
 
     // Should return exit code 1 (changes needed)
-    assert_eq!(output.status.code(), Some(1), "cmake-fmt --diff should return 1 for unformatted files");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "cmake-fmt --diff should return 1 for unformatted files"
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Verify diff output contains markers for multiple files
     // Diff output should contain "---" markers
     let marker_count = stdout.matches("---").count();
-    assert!(marker_count >= 5, "Diff output should contain markers for multiple files, found {} markers", marker_count);
+    assert!(
+        marker_count >= 5,
+        "Diff output should contain markers for multiple files, found {} markers",
+        marker_count
+    );
 }

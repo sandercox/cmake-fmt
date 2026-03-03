@@ -1,5 +1,5 @@
 use cmake_fmt::formatter::grammar::{clear_project_scan_cache, user_scanner};
-use cmake_fmt::formatter::{format_text_with_diagnostics_and_path, FormatConfig};
+use cmake_fmt::formatter::{FormatConfig, format_text_with_diagnostics_and_path};
 use std::fs;
 use tempfile::TempDir;
 
@@ -41,7 +41,8 @@ fn test_cross_file_user_command_discovery() {
     let input = fs::read_to_string(&src_file).unwrap();
     let config = FormatConfig::default();
 
-    let (output, _warnings) = format_text_with_diagnostics_and_path(&input, &config, Some(&src_file), false);
+    let (output, _warnings) =
+        format_text_with_diagnostics_and_path(&input, &config, Some(&src_file), false);
 
     // Verify the user command is recognized (name preserved with case)
     assert!(
@@ -59,11 +60,7 @@ fn test_unreferenced_files_not_scanned() {
 
     // Create project where build/ is not referenced by CMake dependency graph
     create_file(&temp_dir, ".cmake-fmt.toml", "");
-    create_file(
-        &temp_dir,
-        "CMakeLists.txt",
-        "add_subdirectory(src)\n",
-    );
+    create_file(&temp_dir, "CMakeLists.txt", "add_subdirectory(src)\n");
     create_file(
         &temp_dir,
         "build/CMakeLists.txt",
@@ -95,7 +92,11 @@ fn test_config_file_determines_project_root() {
         "project/CMakeLists.txt",
         "add_subdirectory(sub)\nfunction(project_func)\nendfunction()\n",
     );
-    create_file(&temp_dir, "project/sub/CMakeLists.txt", "project_func(arg1)\n");
+    create_file(
+        &temp_dir,
+        "project/sub/CMakeLists.txt",
+        "project_func(arg1)\n",
+    );
     create_file(
         &temp_dir,
         "outside/CMakeLists.txt",
@@ -202,11 +203,7 @@ fn test_idempotency_with_project_scanning() {
     let temp_dir = TempDir::new().unwrap();
 
     // Create root CMakeLists.txt that includes helpers.cmake
-    create_file(
-        &temp_dir,
-        "CMakeLists.txt",
-        "include(helpers.cmake)\n",
-    );
+    create_file(&temp_dir, "CMakeLists.txt", "include(helpers.cmake)\n");
     // Create project with user command definition
     create_file(&temp_dir, ".cmake-fmt.toml", "");
     create_file(
@@ -221,10 +218,12 @@ fn test_idempotency_with_project_scanning() {
     let config = FormatConfig::default();
 
     // Format once
-    let (first_pass, _) = format_text_with_diagnostics_and_path(&input, &config, Some(&main_file), false);
+    let (first_pass, _) =
+        format_text_with_diagnostics_and_path(&input, &config, Some(&main_file), false);
 
     // Format again (should be idempotent)
-    let (second_pass, _) = format_text_with_diagnostics_and_path(&first_pass, &config, Some(&main_file), false);
+    let (second_pass, _) =
+        format_text_with_diagnostics_and_path(&first_pass, &config, Some(&main_file), false);
 
     assert_eq!(
         first_pass, second_pass,
@@ -279,11 +278,7 @@ fn test_include_chain() {
     let temp_dir = TempDir::new().unwrap();
 
     // Create root that includes a.cmake
-    create_file(
-        &temp_dir,
-        "CMakeLists.txt",
-        "include(cmake/a.cmake)\n",
-    );
+    create_file(&temp_dir, "CMakeLists.txt", "include(cmake/a.cmake)\n");
     create_file(&temp_dir, ".cmake-fmt.toml", "");
     // a.cmake has an unresolvable include (with variable) and a function
     create_file(
@@ -337,11 +332,7 @@ fn test_root_true_isolates_subdirectory_definitions() {
     let temp_dir = TempDir::new().unwrap();
 
     // Root project: CMakeLists.txt references sub/
-    create_file(
-        &temp_dir,
-        "CMakeLists.txt",
-        "add_subdirectory(sub)\n",
-    );
+    create_file(&temp_dir, "CMakeLists.txt", "add_subdirectory(sub)\n");
     create_file(&temp_dir, ".cmake-fmt.toml", "indent_width = 2\n");
 
     // Sub-project with root = true — should be isolated from parent scan
@@ -369,11 +360,7 @@ fn test_without_root_true_subdirectory_definitions_visible() {
     let temp_dir = TempDir::new().unwrap();
 
     // Root project: CMakeLists.txt references sub/
-    create_file(
-        &temp_dir,
-        "CMakeLists.txt",
-        "add_subdirectory(sub)\n",
-    );
+    create_file(&temp_dir, "CMakeLists.txt", "add_subdirectory(sub)\n");
     create_file(&temp_dir, ".cmake-fmt.toml", "indent_width = 2\n");
 
     // Sub-project WITHOUT root = true — definitions should leak into parent

@@ -22,71 +22,76 @@ pub fn extract_command_grammars_from_body(
 
     // Step 2: Find cmake_parse_arguments() call
     for cmd in body_commands {
-        if let Some(cmd_name) = cmd.name_text() {
-            if cmd_name.eq_ignore_ascii_case("cmake_parse_arguments") {
-                // Step 3: Extract keyword lists
-                if let Some(arg_list) = cmd.argument_list() {
-                    let args: Vec<_> = arg_list.arguments().collect();
+        if let Some(cmd_name) = cmd.name_text()
+            && cmd_name.eq_ignore_ascii_case("cmake_parse_arguments")
+        {
+            // Step 3: Extract keyword lists
+            if let Some(arg_list) = cmd.argument_list() {
+                let args: Vec<_> = arg_list.arguments().collect();
 
-                    // Determine which form: standard or PARSE_ARGV
-                    let (options_idx, single_idx, multi_idx, prefix_idx) =
-                        if args.len() > 1 && args[0].text() == "PARSE_ARGV" {
-                            // PARSE_ARGV form: positions 3, 4, 5 are keyword lists
-                            // Position 2 is prefix
-                            (3, 4, 5, Some(2))
-                        } else {
-                            // Standard form: positions 1, 2, 3 are keyword lists
-                            // Position 0 is prefix
-                            (1, 2, 3, Some(0))
-                        };
-
-                    // Extract prefix for variable resolution fallback
-                    let prefix = if let Some(idx) = prefix_idx {
-                        args.get(idx).map(|t| {
-                            let text = t.text();
-                            strip_quotes(text)
-                        })
+                // Determine which form: standard or PARSE_ARGV
+                let (options_idx, single_idx, multi_idx, prefix_idx) =
+                    if args.len() > 1 && args[0].text() == "PARSE_ARGV" {
+                        // PARSE_ARGV form: positions 3, 4, 5 are keyword lists
+                        // Position 2 is prefix
+                        (3, 4, 5, Some(2))
                     } else {
-                        None
+                        // Standard form: positions 1, 2, 3 are keyword lists
+                        // Position 0 is prefix
+                        (1, 2, 3, Some(0))
                     };
 
-                    // Extract keyword lists
-                    let options = if let Some(arg) = args.get(options_idx) {
-                        resolve_keyword_list(arg.text(), &set_vars, prefix.as_deref())
-                    } else {
-                        vec![]
-                    };
+                // Extract prefix for variable resolution fallback
+                let prefix = if let Some(idx) = prefix_idx {
+                    args.get(idx).map(|t| {
+                        let text = t.text();
+                        strip_quotes(text)
+                    })
+                } else {
+                    None
+                };
 
-                    let single_value = if let Some(arg) = args.get(single_idx) {
-                        resolve_keyword_list(arg.text(), &set_vars, prefix.as_deref())
-                    } else {
-                        vec![]
-                    };
+                // Extract keyword lists
+                let options = if let Some(arg) = args.get(options_idx) {
+                    resolve_keyword_list(arg.text(), &set_vars, prefix.as_deref())
+                } else {
+                    vec![]
+                };
 
-                    let multi_value = if let Some(arg) = args.get(multi_idx) {
-                        resolve_keyword_list(arg.text(), &set_vars, prefix.as_deref())
-                    } else {
-                        vec![]
-                    };
+                let single_value = if let Some(arg) = args.get(single_idx) {
+                    resolve_keyword_list(arg.text(), &set_vars, prefix.as_deref())
+                } else {
+                    vec![]
+                };
 
-                    // Step 4: Build CommandGrammar
-                    let mut keywords = HashMap::new();
+                let multi_value = if let Some(arg) = args.get(multi_idx) {
+                    resolve_keyword_list(arg.text(), &set_vars, prefix.as_deref())
+                } else {
+                    vec![]
+                };
 
-                    for kw in options {
-                        keywords.insert(kw, KeywordType::Flag);
-                    }
+                // Step 4: Build CommandGrammar
+                let mut keywords = HashMap::new();
 
-                    for kw in single_value {
-                        keywords.insert(kw, KeywordType::SingleValue);
-                    }
+                for kw in options {
+                    keywords.insert(kw, KeywordType::Flag);
+                }
 
-                    for kw in multi_value {
-                        keywords.insert(kw, KeywordType::MultiValue);
-                    }
+                for kw in single_value {
+                    keywords.insert(kw, KeywordType::SingleValue);
+                }
 
-                    if !keywords.is_empty() {
-                        return Some(CommandGrammar { keywords, force_args_on_new_line: false, sub_keywords: HashSet::new(), collection_keywords: HashSet::new() });
-                    }
+                for kw in multi_value {
+                    keywords.insert(kw, KeywordType::MultiValue);
+                }
+
+                if !keywords.is_empty() {
+                    return Some(CommandGrammar {
+                        keywords,
+                        force_args_on_new_line: false,
+                        sub_keywords: HashSet::new(),
+                        collection_keywords: HashSet::new(),
+                    });
                 }
             }
         }
@@ -100,31 +105,32 @@ fn collect_set_variables(commands: &[CommandInvocation]) -> HashMap<String, Vec<
     let mut vars = HashMap::new();
 
     for cmd in commands {
-        if let Some(cmd_name) = cmd.name_text() {
-            if cmd_name.eq_ignore_ascii_case("set") {
-                if let Some(arg_list) = cmd.argument_list() {
-                    let args: Vec<_> = arg_list.arguments().collect();
+        if let Some(cmd_name) = cmd.name_text()
+            && cmd_name.eq_ignore_ascii_case("set")
+            && let Some(arg_list) = cmd.argument_list()
+        {
+            let args: Vec<_> = arg_list.arguments().collect();
 
-                    // set(VAR_NAME val1 val2 val3 ...)
-                    // First arg must be an unquoted identifier (no variable refs)
-                    if let Some(first_arg) = args.first() {
-                        let var_name = first_arg.text();
+            // set(VAR_NAME val1 val2 val3 ...)
+            // First arg must be an unquoted identifier (no variable refs)
+            if let Some(first_arg) = args.first() {
+                let var_name = first_arg.text();
 
-                        // Only accept unquoted arguments as variable names
-                        if first_arg.kind() == crate::syntax_kind::SyntaxKind::UNQUOTED_ARGUMENT
-                            && !var_name.contains("${") {
+                // Only accept unquoted arguments as variable names
+                if first_arg.kind() == crate::syntax_kind::SyntaxKind::UNQUOTED_ARGUMENT
+                    && !var_name.contains("${")
+                {
+                    // Collect remaining arguments as values
+                    let values: Vec<String> = args
+                        .iter()
+                        .skip(1)
+                        .map(|t| {
+                            let text = t.text();
+                            strip_quotes(text)
+                        })
+                        .collect();
 
-                            // Collect remaining arguments as values
-                            let values: Vec<String> = args.iter().skip(1)
-                                .map(|t| {
-                                    let text = t.text();
-                                    strip_quotes(text)
-                                })
-                                .collect();
-
-                            vars.insert(var_name.to_string(), values);
-                        }
-                    }
+                    vars.insert(var_name.to_string(), values);
                 }
             }
         }
@@ -154,7 +160,7 @@ fn resolve_keyword_list(
 
     // Check for variable reference: ${VAR_NAME}
     if text.starts_with("${") && text.ends_with("}") {
-        let var_name = &text[2..text.len()-1];
+        let var_name = &text[2..text.len() - 1];
 
         // Try direct lookup
         if let Some(values) = set_vars.get(var_name) {
@@ -183,7 +189,7 @@ fn resolve_keyword_list(
 /// Strip surrounding quotes from a string if present
 fn strip_quotes(s: &str) -> String {
     if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-        s[1..s.len()-1].to_string()
+        s[1..s.len() - 1].to_string()
     } else {
         s.to_string()
     }

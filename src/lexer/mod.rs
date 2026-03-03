@@ -1,7 +1,7 @@
 mod cursor;
 
-use cursor::Cursor;
 use crate::SyntaxKind;
+use cursor::Cursor;
 use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

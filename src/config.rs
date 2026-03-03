@@ -48,16 +48,11 @@ fn load_config_as_table(path: &Path) -> Result<toml::Table> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
-    let extension = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     match extension {
-        "toml" | "tml" => {
-            toml::from_str::<toml::Table>(&content)
-                .with_context(|| format!("Failed to parse TOML config: {}", path.display()))
-        }
+        "toml" | "tml" => toml::from_str::<toml::Table>(&content)
+            .with_context(|| format!("Failed to parse TOML config: {}", path.display())),
         "yaml" | "yml" | _ => {
             // YAML or extensionless - parse and convert to TOML table
             let yaml_value: serde_yml::Value = serde_yml::from_str(&content)
@@ -215,7 +210,9 @@ pub fn resolve_config(
         match load_config_as_table(config_path) {
             Ok(mut file_table) => {
                 // Resolve grammar_files paths BEFORE merging
-                if let Some(toml::Value::Array(grammar_files_array)) = file_table.get_mut("grammar_files") {
+                if let Some(toml::Value::Array(grammar_files_array)) =
+                    file_table.get_mut("grammar_files")
+                {
                     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
 
                     for item in grammar_files_array.iter_mut() {
@@ -240,7 +237,11 @@ pub fn resolve_config(
                 merge_tables(&mut merged_table, &file_table);
             }
             Err(e) => {
-                eprintln!("Warning: Failed to load config file {}: {:#}", config_path.display(), e);
+                eprintln!(
+                    "Warning: Failed to load config file {}: {:#}",
+                    config_path.display(),
+                    e
+                );
                 // Skip this config and continue
             }
         }
@@ -249,15 +250,13 @@ pub fn resolve_config(
     // Deserialize merged table to FormatConfig
     // This applies #[serde(default)] for any unspecified fields
     let config = match toml::to_string(&merged_table) {
-        Ok(toml_str) => {
-            match toml::from_str::<FormatConfig>(&toml_str) {
-                Ok(cfg) => cfg,
-                Err(e) => {
-                    eprintln!("Warning: Failed to deserialize merged config: {:#}", e);
-                    FormatConfig::default()
-                }
+        Ok(toml_str) => match toml::from_str::<FormatConfig>(&toml_str) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!("Warning: Failed to deserialize merged config: {:#}", e);
+                FormatConfig::default()
             }
-        }
+        },
         Err(e) => {
             eprintln!("Warning: Failed to serialize merged config: {:#}", e);
             FormatConfig::default()
@@ -290,7 +289,10 @@ fn apply_style_overrides(config: &mut FormatConfig, style: &str) {
 
         let parts: Vec<&str> = pair.splitn(2, '=').collect();
         if parts.len() != 2 {
-            eprintln!("Warning: Invalid style override (expected key=value): {}", pair);
+            eprintln!(
+                "Warning: Invalid style override (expected key=value): {}",
+                pair
+            );
             continue;
         }
 

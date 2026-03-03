@@ -27,7 +27,10 @@ const CONFIG_FILENAMES: &[&str] = &[
 /// Returns the directory containing the highest config file, or the start_path if none found.
 pub fn find_project_root(start_path: &Path, verbose: bool) -> PathBuf {
     if verbose {
-        eprintln!("verbose: find_project_root starting from {}", start_path.display());
+        eprintln!(
+            "verbose: find_project_root starting from {}",
+            start_path.display()
+        );
     }
 
     let mut highest_config_dir: Option<PathBuf> = None;
@@ -55,14 +58,23 @@ pub fn find_project_root(start_path: &Path, verbose: bool) -> PathBuf {
             // If this config has root:true, stop — hard boundary
             if has_root_config(ancestor) {
                 if verbose {
-                    eprintln!("verbose: find_project_root found root:true config in {} — stopping", ancestor.display());
-                    eprintln!("verbose: find_project_root result: {} (highest config dir)", ancestor.display());
+                    eprintln!(
+                        "verbose: find_project_root found root:true config in {} — stopping",
+                        ancestor.display()
+                    );
+                    eprintln!(
+                        "verbose: find_project_root result: {} (highest config dir)",
+                        ancestor.display()
+                    );
                 }
                 return ancestor.to_path_buf();
             }
 
             if verbose {
-                eprintln!("verbose: find_project_root found config in {} (no root:true)", ancestor.display());
+                eprintln!(
+                    "verbose: find_project_root found config in {} (no root:true)",
+                    ancestor.display()
+                );
             }
 
             // Track this as the highest config dir seen so far
@@ -74,9 +86,15 @@ pub fn find_project_root(start_path: &Path, verbose: bool) -> PathBuf {
     let result = highest_config_dir.unwrap_or_else(|| start_path.to_path_buf());
     if verbose {
         if result == start_path {
-            eprintln!("verbose: find_project_root result: {} (no config found, using start_path)", start_path.display());
+            eprintln!(
+                "verbose: find_project_root result: {} (no config found, using start_path)",
+                start_path.display()
+            );
         } else {
-            eprintln!("verbose: find_project_root result: {} (highest config dir)", result.display());
+            eprintln!(
+                "verbose: find_project_root result: {} (highest config dir)",
+                result.display()
+            );
         }
     }
     result
@@ -130,16 +148,16 @@ fn is_cmake_file(path: &Path) -> bool {
         return false;
     }
 
-    if let Some(filename) = path.file_name() {
-        if filename == "CMakeLists.txt" {
-            return true;
-        }
+    if let Some(filename) = path.file_name()
+        && filename == "CMakeLists.txt"
+    {
+        return true;
     }
 
-    if let Some(ext) = path.extension() {
-        if ext == "cmake" {
-            return true;
-        }
+    if let Some(ext) = path.extension()
+        && ext == "cmake"
+    {
+        return true;
     }
 
     false
@@ -154,10 +172,10 @@ pub fn find_cmake_files(project_root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
 
     let walker = ignore::WalkBuilder::new(project_root)
-        .git_ignore(true)      // Respect .gitignore
-        .git_exclude(true)     // Respect .git/info/exclude
-        .hidden(false)         // Include hidden files
-        .follow_links(false)   // Don't follow symlinks (prevent infinite loops)
+        .git_ignore(true) // Respect .gitignore
+        .git_exclude(true) // Respect .git/info/exclude
+        .hidden(false) // Include hidden files
+        .follow_links(false) // Don't follow symlinks (prevent infinite loops)
         .build();
 
     for entry_result in walker {
@@ -187,7 +205,10 @@ pub fn follow_cmake_dependencies(project_root: &Path, verbose: bool) -> Vec<Path
 
     if !root_cmake.exists() {
         if verbose {
-            eprintln!("verbose: no CMakeLists.txt found in {}", project_root.display());
+            eprintln!(
+                "verbose: no CMakeLists.txt found in {}",
+                project_root.display()
+            );
         }
         return Vec::new();
     }
@@ -236,84 +257,95 @@ pub fn follow_cmake_dependencies(project_root: &Path, verbose: bool) -> Vec<Path
 
             if cmd_name_lower == "add_subdirectory" {
                 // Extract first argument
-                if let Some(arg_list) = cmd.argument_list() {
-                    if let Some(first_arg) = arg_list.arguments().next() {
-                        let arg_text = first_arg.text();
-                        let dirname = arg_text.trim_matches('"');
+                if let Some(arg_list) = cmd.argument_list()
+                    && let Some(first_arg) = arg_list.arguments().next()
+                {
+                    let arg_text = first_arg.text();
+                    let dirname = arg_text.trim_matches('"');
 
-                        // Skip if contains variable references
-                        if dirname.contains("${") || dirname.contains("$ENV{") {
+                    // Skip if contains variable references
+                    if dirname.contains("${") || dirname.contains("$ENV{") {
+                        continue;
+                    }
+
+                    // Try relative to project root first
+                    let mut candidate = project_root.join(dirname).join("CMakeLists.txt");
+
+                    // If not found, try relative to current file's directory
+                    if !candidate.exists() {
+                        candidate = current_dir.join(dirname).join("CMakeLists.txt");
+                    }
+
+                    if candidate.exists()
+                        && let Ok(canonical) = candidate.canonicalize()
+                    {
+                        // Check if subdirectory has root:true config — isolate sub-project
+                        let subdir = canonical.parent().unwrap_or(project_root);
+                        if subdir != project_root && has_root_config(subdir) {
+                            if verbose {
+                                eprintln!(
+                                    "verbose: skipping add_subdirectory({}) — has root:true config",
+                                    dirname
+                                );
+                            }
                             continue;
                         }
 
-                        // Try relative to project root first
-                        let mut candidate = project_root.join(dirname).join("CMakeLists.txt");
-
-                        // If not found, try relative to current file's directory
-                        if !candidate.exists() {
-                            candidate = current_dir.join(dirname).join("CMakeLists.txt");
-                        }
-
-                        if candidate.exists() {
-                            if let Ok(canonical) = candidate.canonicalize() {
-                                // Check if subdirectory has root:true config — isolate sub-project
-                                let subdir = canonical.parent().unwrap_or(project_root);
-                                if subdir != project_root && has_root_config(subdir) {
-                                    if verbose {
-                                        eprintln!("verbose: skipping add_subdirectory({}) — has root:true config", dirname);
-                                    }
-                                    continue;
-                                }
-
-                                if visited.insert(canonical.clone()) {
-                                    if verbose {
-                                        eprintln!("verbose: add_subdirectory({}) -> {}", dirname, canonical.display());
-                                    }
-                                    queue.push_back(canonical.clone());
-                                    result.push(canonical);
-                                }
+                        if visited.insert(canonical.clone()) {
+                            if verbose {
+                                eprintln!(
+                                    "verbose: add_subdirectory({}) -> {}",
+                                    dirname,
+                                    canonical.display()
+                                );
                             }
+                            queue.push_back(canonical.clone());
+                            result.push(canonical);
                         }
                     }
                 }
             } else if cmd_name_lower == "include" {
                 // Extract first argument
-                if let Some(arg_list) = cmd.argument_list() {
-                    if let Some(first_arg) = arg_list.arguments().next() {
-                        let arg_text = first_arg.text();
-                        let mut filename = arg_text.trim_matches('"').to_string();
+                if let Some(arg_list) = cmd.argument_list()
+                    && let Some(first_arg) = arg_list.arguments().next()
+                {
+                    let arg_text = first_arg.text();
+                    let mut filename = arg_text.trim_matches('"').to_string();
 
-                        // Skip if contains variable references
-                        if filename.contains("${") || filename.contains("$ENV{") {
-                            continue;
-                        }
+                    // Skip if contains variable references
+                    if filename.contains("${") || filename.contains("$ENV{") {
+                        continue;
+                    }
 
-                        // If no .cmake extension, add it
-                        if !filename.ends_with(".cmake") {
-                            filename.push_str(".cmake");
-                        }
+                    // If no .cmake extension, add it
+                    if !filename.ends_with(".cmake") {
+                        filename.push_str(".cmake");
+                    }
 
-                        // Try multiple resolution strategies
-                        let candidates = vec![
-                            current_dir.join(&filename),                    // Relative to current file
-                            project_root.join(&filename),                   // Relative to project root
-                            project_root.join("cmake").join(&filename),     // Common cmake/ subdirectory
-                        ];
+                    // Try multiple resolution strategies
+                    let candidates = vec![
+                        current_dir.join(&filename),                // Relative to current file
+                        project_root.join(&filename),               // Relative to project root
+                        project_root.join("cmake").join(&filename), // Common cmake/ subdirectory
+                    ];
 
-                        for candidate in candidates {
-                            if candidate.exists() {
-                                if let Ok(canonical) = candidate.canonicalize() {
-                                    if visited.insert(canonical.clone()) {
-                                        if verbose {
-                                            eprintln!("verbose: include({}) -> {}", arg_text.trim_matches('"'), canonical.display());
-                                        }
-                                        queue.push_back(canonical.clone());
-                                        result.push(canonical);
-                                        break; // Found it, don't try other candidates
-                                    }
+                    for candidate in candidates {
+                        if candidate.exists() {
+                            if let Ok(canonical) = candidate.canonicalize()
+                                && visited.insert(canonical.clone())
+                            {
+                                if verbose {
+                                    eprintln!(
+                                        "verbose: include({}) -> {}",
+                                        arg_text.trim_matches('"'),
+                                        canonical.display()
+                                    );
                                 }
-                                break; // Already visited but valid, don't try other candidates
+                                queue.push_back(canonical.clone());
+                                result.push(canonical);
+                                break; // Found it, don't try other candidates
                             }
+                            break; // Already visited but valid, don't try other candidates
                         }
                     }
                 }
@@ -357,7 +389,11 @@ pub fn scan_project(project_root: &Path, verbose: bool) -> ProjectScanResult {
         let file_defs = crate::formatter::user_commands::scan_user_command_definitions(&cst.root);
 
         if verbose && !file_defs.is_empty() {
-            eprintln!("verbose: found {} function/macro definitions in {}", file_defs.len(), file_path.display());
+            eprintln!(
+                "verbose: found {} function/macro definitions in {}",
+                file_defs.len(),
+                file_path.display()
+            );
             for name in file_defs.values() {
                 eprintln!("verbose:   - {}", name);
             }
@@ -370,8 +406,12 @@ pub fn scan_project(project_root: &Path, verbose: bool) -> ProjectScanResult {
         let file_grammars = extract_grammars_from_file(&cst.root);
 
         if verbose {
-            for (name, _grammar) in &file_grammars {
-                eprintln!("verbose: extracted grammar for {} from {}", name, file_path.display());
+            for name in file_grammars.keys() {
+                eprintln!(
+                    "verbose: extracted grammar for {} from {}",
+                    name,
+                    file_path.display()
+                );
             }
         }
 
@@ -401,14 +441,19 @@ pub fn scan_project_commands(project_root: &Path, verbose: bool) -> HashMap<Stri
 /// Later definitions win (matching CMake's last-definition-wins behavior).
 #[deprecated(note = "Use scan_project() instead")]
 #[allow(deprecated)]
-pub fn scan_project_grammars(project_root: &Path, verbose: bool) -> HashMap<String, super::CommandGrammar> {
+pub fn scan_project_grammars(
+    project_root: &Path,
+    verbose: bool,
+) -> HashMap<String, super::CommandGrammar> {
     scan_project(project_root, verbose).grammars
 }
 
 /// Extract command grammars from a single CMake file
 ///
 /// Finds function()/macro() definitions and extracts grammars from their bodies
-pub fn extract_grammars_from_file(root: &crate::SyntaxNode) -> HashMap<String, super::CommandGrammar> {
+pub fn extract_grammars_from_file(
+    root: &crate::SyntaxNode,
+) -> HashMap<String, super::CommandGrammar> {
     use crate::cst::CommandInvocation;
 
     let mut grammars = HashMap::new();
@@ -430,9 +475,7 @@ pub fn extract_grammars_from_file(root: &crate::SyntaxNode) -> HashMap<String, s
         if name_lower == "function" || name_lower == "macro" {
             // Extract the function/macro name from the first argument
             let func_name = if let Some(arg_list) = cmd.argument_list() {
-                arg_list.arguments()
-                    .next()
-                    .map(|t| t.text().to_string())
+                arg_list.arguments().next().map(|t| t.text().to_string())
             } else {
                 None
             };
@@ -452,7 +495,7 @@ pub fn extract_grammars_from_file(root: &crate::SyntaxNode) -> HashMap<String, s
             let mut nesting_depth = 1; // Start at 1 for the current function/macro
 
             // Collect body commands
-            while let Some(body_child) = children_iter.next() {
+            for body_child in children_iter.by_ref() {
                 let Some(body_cmd) = CommandInvocation::cast(body_child) else {
                     continue;
                 };
@@ -483,7 +526,7 @@ pub fn extract_grammars_from_file(root: &crate::SyntaxNode) -> HashMap<String, s
             // Extract grammar from the body
             if let Some(grammar) = super::argparse_extractor::extract_command_grammars_from_body(
                 &func_name,
-                &body_commands
+                &body_commands,
             ) {
                 grammars.insert(func_name.to_lowercase(), grammar);
             }

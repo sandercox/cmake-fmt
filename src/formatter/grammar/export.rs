@@ -252,7 +252,12 @@ pub fn import_grammar_file(content: &str) -> Result<HashMap<String, CommandGramm
         // Store with lowercase command name
         result.insert(
             entry.command.to_lowercase(),
-            CommandGrammar { keywords, force_args_on_new_line: false, sub_keywords: HashSet::new(), collection_keywords: HashSet::new() },
+            CommandGrammar {
+                keywords,
+                force_args_on_new_line: false,
+                sub_keywords: HashSet::new(),
+                collection_keywords: HashSet::new(),
+            },
         );
     }
 

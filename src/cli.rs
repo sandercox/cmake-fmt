@@ -1,13 +1,16 @@
 use anyhow::Result;
 use clap::Parser;
+use rayon::prelude::*;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use rayon::prelude::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use cmake_fmt::formatter::{format_text_with_diagnostics_and_path, format_with_line_ranges, parse_line_ranges, LineRange, FormatConfig, SuppressionWarning};
+use cmake_fmt::formatter::{
+    FormatConfig, LineRange, SuppressionWarning, format_text_with_diagnostics_and_path,
+    format_with_line_ranges, parse_line_ranges,
+};
 
 /// Format CMake files
 #[derive(Parser)]
@@ -91,29 +94,81 @@ fn print_warnings(warnings: &[SuppressionWarning], file_label: &str) {
 
 /// Print all available style settings
 fn print_style_help() {
-    println!("Available style settings for --style and config files (.cmake-fmt.toml / .cmake-fmt.yaml / .cmake-fmt):");
+    println!(
+        "Available style settings for --style and config files (.cmake-fmt.toml / .cmake-fmt.yaml / .cmake-fmt):"
+    );
     println!();
-    println!("  {:<25} {:<15} {:<15} {}", "Setting", "Type", "Default", "Values");
-    println!("  {:<25} {:<15} {:<15} {}", "-------", "----", "-------", "------");
-    println!("  {:<25} {:<15} {:<15} {}", "disable_format", "boolean", "false", "true, false — skip formatting entirely");
-    println!("  {:<25} {:<15} {:<15} {}", "indent_width", "integer", "4", "Number of spaces per indent level");
-    println!("  {:<25} {:<15} {:<15} {}", "max_line_length", "integer", "80", "Max line length (0 = unlimited)");
-    println!("  {:<25} {:<15} {:<15} {}", "use_tabs", "boolean", "true", "true, false");
-    println!("  {:<25} {:<15} {:<15} {}", "command_case", "enum", "lowercase", "lowercase, uppercase, preserve");
-    println!("  {:<25} {:<15} {:<15} {}", "user_command_case", "enum", "infer", "lowercase, uppercase, preserve, infer");
-    println!("  {:<25} {:<15} {:<15} {}", "max_blank_lines", "integer", "1", "Maximum consecutive blank lines allowed");
-    println!("  {:<25} {:<15} {:<15} {}", "line_ending", "enum", "auto", "auto, lf, crlf");
-    println!("  {:<25} {:<15} {:<15} {}", "closing_style", "enum", "remove", "preserve, remove, force");
-    println!("  {:<25} {:<15} {:<15} {}", "force_break_keywords", "boolean", "false", "true, false");
-    println!("  {:<25} {:<15} {:<15} {}", "final_newline", "enum", "force", "preserve, remove, force (also accepts true/false)");
-    println!("  {:<25} {:<15} {:<15} {}", "comment_style", "enum", "hash_space", "preserve, hash_space, hash_no_space");
-    println!("  {:<25} {:<15} {:<15} {}", "source_grouping", "enum", "none", "none, headers_first, sources_first");
-    println!("  {:<25} {:<15} {:<15} {}", "sort_sources", "enum", "none", "none, alphabetical");
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "Setting", "Type", "Default", "Values"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "-------", "----", "-------", "------"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "disable_format", "boolean", "false", "true, false — skip formatting entirely"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "indent_width", "integer", "4", "Number of spaces per indent level"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "max_line_length", "integer", "80", "Max line length (0 = unlimited)"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "use_tabs", "boolean", "true", "true, false"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "command_case", "enum", "lowercase", "lowercase, uppercase, preserve"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "user_command_case", "enum", "infer", "lowercase, uppercase, preserve, infer"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "max_blank_lines", "integer", "1", "Maximum consecutive blank lines allowed"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "line_ending", "enum", "auto", "auto, lf, crlf"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "closing_style", "enum", "remove", "preserve, remove, force"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "force_break_keywords", "boolean", "false", "true, false"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "final_newline", "enum", "force", "preserve, remove, force (also accepts true/false)"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "comment_style", "enum", "hash_space", "preserve, hash_space, hash_no_space"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "source_grouping", "enum", "none", "none, headers_first, sources_first"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "sort_sources", "enum", "none", "none, alphabetical"
+    );
     println!();
     println!("CLI usage:  cmake-fmt --style \"indent_width=4,max_line_length=120\" <file>");
     println!();
     println!("Config file only (not available via --style):");
-    println!("  command_grammars        map            {{}}              Custom command grammar definitions");
+    println!(
+        "  command_grammars        map            {{}}              Custom command grammar definitions"
+    );
     println!();
     println!("Example .cmake-fmt.toml:");
     println!("  indent_width = 2");
@@ -144,11 +199,26 @@ fn print_grammar_help() {
     println!();
     println!("  {:<15} {}", "Type", "Description");
     println!("  {:<15} {}", "----", "-----------");
-    println!("  {:<15} {}", "Flag", "No value consumed (e.g., REQUIRED, QUIET)");
-    println!("  {:<15} {}", "SingleValue", "Consumes exactly one value (e.g., VERSION 1.0, DESTINATION /usr/lib)");
-    println!("  {:<15} {}", "MultiValue", "Consumes all values until next keyword (e.g., SOURCES a.cpp b.cpp c.cpp)");
-    println!("  {:<15} {}", "BinPack", "Packs values to fill lines (e.g., COMMAND echo hello world)");
-    println!("  {:<15} {}", "PairValue", "Consumes alternating key/value pairs (e.g., PROPERTIES CXX_STANDARD 17)");
+    println!(
+        "  {:<15} {}",
+        "Flag", "No value consumed (e.g., REQUIRED, QUIET)"
+    );
+    println!(
+        "  {:<15} {}",
+        "SingleValue", "Consumes exactly one value (e.g., VERSION 1.0, DESTINATION /usr/lib)"
+    );
+    println!(
+        "  {:<15} {}",
+        "MultiValue", "Consumes all values until next keyword (e.g., SOURCES a.cpp b.cpp c.cpp)"
+    );
+    println!(
+        "  {:<15} {}",
+        "BinPack", "Packs values to fill lines (e.g., COMMAND echo hello world)"
+    );
+    println!(
+        "  {:<15} {}",
+        "PairValue", "Consumes alternating key/value pairs (e.g., PROPERTIES CXX_STANDARD 17)"
+    );
     println!();
     println!("Multi-mode commands:");
     println!("  For commands like install() that have different keyword sets per sub-command,");
@@ -201,7 +271,10 @@ fn export_custom_grammar_to_file(
     verbose: bool,
 ) -> Result<ExitCode> {
     use anyhow::Context;
-    use cmake_fmt::formatter::grammar::{builtin_grammars, config_grammars_to_map, get_project_user_commands, get_project_user_grammars};
+    use cmake_fmt::formatter::grammar::{
+        builtin_grammars, config_grammars_to_map, get_project_user_commands,
+        get_project_user_grammars,
+    };
     use cmake_fmt::formatter::{detect_grammar_format, export_command_grammars};
     use std::collections::{HashMap, HashSet};
     use std::fs;
@@ -255,9 +328,15 @@ fn export_custom_grammar_to_file(
     // Warn about grammarless commands
     if !grammarless_commands.is_empty() {
         for cmd in &grammarless_commands {
-            eprintln!("warning: no grammar found for custom command '{}' (define in config or grammar file)", cmd);
+            eprintln!(
+                "warning: no grammar found for custom command '{}' (define in config or grammar file)",
+                cmd
+            );
         }
-        eprintln!("{} custom command(s) have no grammar definition", grammarless_commands.len());
+        eprintln!(
+            "{} custom command(s) have no grammar definition",
+            grammarless_commands.len()
+        );
     }
 
     let format = detect_grammar_format(path);
@@ -269,7 +348,11 @@ fn export_custom_grammar_to_file(
     if merged_grammars.is_empty() {
         eprintln!("No custom grammars detected in input files");
     } else {
-        eprintln!("Exported {} custom grammars to {}", merged_grammars.len(), path.display());
+        eprintln!(
+            "Exported {} custom grammars to {}",
+            merged_grammars.len(),
+            path.display()
+        );
     }
 
     Ok(ExitCode::SUCCESS)
@@ -312,7 +395,8 @@ pub fn run() -> Result<ExitCode> {
     // Handle interactive mode first (if --interactive flag is set)
     if cli.interactive {
         // Determine if stdin input is specified
-        let is_stdin = cli.files.is_empty() || (cli.files.len() == 1 && cli.files[0] == PathBuf::from("-"));
+        let is_stdin =
+            cli.files.is_empty() || (cli.files.len() == 1 && cli.files[0] == PathBuf::from("-"));
 
         // Validate exactly one file is provided (no stdin, no multi-file)
         // Do this BEFORE TTY check so error messages are more specific
@@ -332,7 +416,11 @@ pub fn run() -> Result<ExitCode> {
         }
 
         // Resolve config for the file
-        let config = crate::config::resolve_config(Some(&cli.files[0]), cli.style.as_deref(), &cli.grammar_files);
+        let config = crate::config::resolve_config(
+            Some(&cli.files[0]),
+            cli.style.as_deref(),
+            &cli.grammar_files,
+        );
 
         // Run interactive mode
         match cmake_fmt::interactive::run_interactive(&cli.files[0], &config) {
@@ -381,8 +469,18 @@ pub fn run() -> Result<ExitCode> {
         });
 
         // For stdin, resolve config from assume_filename path or current directory
-        let config = crate::config::resolve_config(assume_path.as_deref(), cli.style.as_deref(), &cli.grammar_files);
-        process_stdin(&config, check_mode, diff_mode, assume_path.as_deref(), parsed_line_ranges.as_deref())
+        let config = crate::config::resolve_config(
+            assume_path.as_deref(),
+            cli.style.as_deref(),
+            &cli.grammar_files,
+        );
+        process_stdin(
+            &config,
+            check_mode,
+            diff_mode,
+            assume_path.as_deref(),
+            parsed_line_ranges.as_deref(),
+        )
     } else {
         // Determine the paths to process.
         // If no paths given and stdin is a terminal, default to current directory ".".
@@ -393,11 +491,8 @@ pub fn run() -> Result<ExitCode> {
         };
 
         // Collect files, expanding directories and glob patterns
-        let collected = collect_cmake_files(
-            &paths_to_search,
-            cli.recursive,
-            cli.ignore_file.as_deref(),
-        )?;
+        let collected =
+            collect_cmake_files(&paths_to_search, cli.recursive, cli.ignore_file.as_deref())?;
 
         // Handle case where no files found
         if collected.is_empty() {
@@ -429,7 +524,16 @@ pub fn run() -> Result<ExitCode> {
             );
         }
 
-        process_files(&collected, cli.style.as_deref(), &cli.grammar_files, cli.in_place, check_mode, diff_mode, cli.verbose, parsed_line_ranges.as_deref())
+        process_files(
+            &collected,
+            cli.style.as_deref(),
+            &cli.grammar_files,
+            cli.in_place,
+            check_mode,
+            diff_mode,
+            cli.verbose,
+            parsed_line_ranges.as_deref(),
+        )
     }
 }
 
@@ -568,7 +672,7 @@ fn process_stdin(
     assume_path: Option<&std::path::Path>,
     line_ranges: Option<&[LineRange]>,
 ) -> Result<ExitCode> {
-    use std::io::{stdin, stdout, Read, Write};
+    use std::io::{Read, Write, stdin, stdout};
 
     let mut input = String::new();
     stdin().lock().read_to_string(&mut input)?;
@@ -615,8 +719,8 @@ fn process_files(
     verbose: bool,
     line_ranges: Option<&[LineRange]>,
 ) -> Result<ExitCode> {
-    use std::io::{stdout, Write};
     use std::collections::HashMap;
+    use std::io::{Write, stdout};
 
     // Detect stdout mode - this must remain sequential to avoid interleaved output
     let stdout_mode = !in_place && !check_mode && !diff_mode;
@@ -649,7 +753,12 @@ fn process_files(
             let (formatted, warnings) = if let Some(ranges) = line_ranges {
                 format_with_line_ranges(&content, config, ranges, Some(file.as_path()), verbose)
             } else {
-                format_text_with_diagnostics_and_path(&content, config, Some(file.as_path()), verbose)
+                format_text_with_diagnostics_and_path(
+                    &content,
+                    config,
+                    Some(file.as_path()),
+                    verbose,
+                )
             };
             print_warnings(&warnings, &file.display().to_string());
             write!(stdout_handle, "{}", formatted)?;
@@ -663,7 +772,10 @@ fn process_files(
     // Step 1: Pre-populate config cache (by parent directory)
     let mut config_cache: HashMap<PathBuf, FormatConfig> = HashMap::new();
     for file in files {
-        let parent = file.parent().unwrap_or_else(|| std::path::Path::new(".")).to_path_buf();
+        let parent = file
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
         config_cache.entry(parent).or_insert_with(|| {
             crate::config::resolve_config(Some(file), style_override, grammar_files)
         });
@@ -682,14 +794,20 @@ fn process_files(
                     .map(|cwd| cwd.join(parent))
                     .unwrap_or_else(|_| parent.to_path_buf())
             };
-            let project_root = cmake_fmt::formatter::grammar::user_scanner::find_project_root(&abs_parent, verbose);
+            let project_root = cmake_fmt::formatter::grammar::user_scanner::find_project_root(
+                &abs_parent,
+                verbose,
+            );
             project_roots.insert(project_root);
         }
     }
 
     // Populate grammar cache for each unique project root
     for project_root in &project_roots {
-        let _ = cmake_fmt::formatter::grammar::get_project_user_grammars(&project_root.join("CMakeLists.txt"), verbose);
+        let _ = cmake_fmt::formatter::grammar::get_project_user_grammars(
+            &project_root.join("CMakeLists.txt"),
+            verbose,
+        );
     }
 
     // Step 3: Determine if we should use parallel processing
@@ -735,15 +853,32 @@ fn process_files(
 
         // Look up config from pre-populated cache
         let parent = file.parent().unwrap_or_else(|| std::path::Path::new("."));
-        let config = config_cache.get(&parent.to_path_buf())
+        let config = config_cache
+            .get(&parent.to_path_buf())
             .expect("Config should be pre-populated");
 
         // For diff mode, serialize output to prevent interleaving
         let result = if diff_mode {
             let _guard = diff_lock.lock().unwrap();
-            process_file(file, config, in_place, check_mode, diff_mode, verbose, line_ranges)
+            process_file(
+                file,
+                config,
+                in_place,
+                check_mode,
+                diff_mode,
+                verbose,
+                line_ranges,
+            )
         } else {
-            process_file(file, config, in_place, check_mode, diff_mode, verbose, line_ranges)
+            process_file(
+                file,
+                config,
+                in_place,
+                check_mode,
+                diff_mode,
+                verbose,
+                line_ranges,
+            )
         };
 
         completed.fetch_add(1, Ordering::Relaxed);

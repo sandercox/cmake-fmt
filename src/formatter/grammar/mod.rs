@@ -8,13 +8,13 @@ pub mod user_scanner;
 
 pub use self::builtins::*;
 pub use self::export::{
-    detect_grammar_format, export_command_grammars, export_command_grammars_to_toml,
-    export_command_grammars_to_yaml, export_grammars, export_grammars_to_toml,
-    export_grammars_to_yaml, import_grammar_file, GrammarFile, GrammarFormat,
+    GrammarFile, GrammarFormat, detect_grammar_format, export_command_grammars,
+    export_command_grammars_to_toml, export_command_grammars_to_yaml, export_grammars,
+    export_grammars_to_toml, export_grammars_to_yaml, import_grammar_file,
 };
 pub use self::resolver::{
-    clear_project_grammar_cache, clear_project_scan_cache, config_grammars_to_map,
-    get_project_user_commands, get_project_user_grammars, GrammarRegistry,
+    GrammarRegistry, clear_project_grammar_cache, clear_project_scan_cache, config_grammars_to_map,
+    get_project_user_commands, get_project_user_grammars,
 };
 
 /// Classification of CMake command keywords
@@ -50,9 +50,7 @@ impl Grammar {
     pub fn resolve(&self, first_keyword: Option<&str>) -> Option<&CommandGrammar> {
         match self {
             Grammar::Simple(grammar) => Some(grammar),
-            Grammar::Modes { modes } => {
-                first_keyword.and_then(|kw| modes.get(kw))
-            }
+            Grammar::Modes { modes } => first_keyword.and_then(|kw| modes.get(kw)),
         }
     }
 
@@ -96,7 +94,12 @@ impl CommandGrammar {
         for (kw, ty) in keywords {
             map.insert(kw.to_string(), *ty);
         }
-        Self { keywords: map, force_args_on_new_line: false, sub_keywords: HashSet::new(), collection_keywords: HashSet::new() }
+        Self {
+            keywords: map,
+            force_args_on_new_line: false,
+            sub_keywords: HashSet::new(),
+            collection_keywords: HashSet::new(),
+        }
     }
 
     /// Get the type of a keyword (case-sensitive lookup - CMake keywords are case-sensitive)

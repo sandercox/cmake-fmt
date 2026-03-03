@@ -20,7 +20,10 @@ pub fn generate_diff(original: &str, formatted: &str, path: &str) -> Option<Stri
     let diff_output = diff
         .unified_diff()
         .context_radius(3)
-        .header(&format!("a/{}", normalized_path), &format!("b/{}", normalized_path))
+        .header(
+            &format!("a/{}", normalized_path),
+            &format!("b/{}", normalized_path),
+        )
         .missing_newline_hint(true)
         .to_string();
 
@@ -45,16 +48,28 @@ pub fn print_colored_diff(original: &str, formatted: &str, path: &str) {
     let diff = TextDiff::from_lines(original, formatted);
 
     // Print file headers
-    println!("{}", format!("--- a/{}", normalized_path).if_supports_color(Stream::Stdout, |t| t.dimmed()));
-    println!("{}", format!("+++ b/{}", normalized_path).if_supports_color(Stream::Stdout, |t| t.dimmed()));
+    println!(
+        "{}",
+        format!("--- a/{}", normalized_path).if_supports_color(Stream::Stdout, |t| t.dimmed())
+    );
+    println!(
+        "{}",
+        format!("+++ b/{}", normalized_path).if_supports_color(Stream::Stdout, |t| t.dimmed())
+    );
 
     // Process each hunk
     for hunk in diff.unified_diff().context_radius(3).iter_hunks() {
         // Print hunk header
-        println!("{}", format!("{}", hunk.header()).if_supports_color(Stream::Stdout, |t| t.cyan()));
+        println!(
+            "{}",
+            format!("{}", hunk.header()).if_supports_color(Stream::Stdout, |t| t.cyan())
+        );
 
         // Collect all changes so we can process runs of deletes/inserts together
-        let changes: Vec<_> = hunk.iter_changes().map(|c| (c.tag(), c.value().to_string())).collect();
+        let changes: Vec<_> = hunk
+            .iter_changes()
+            .map(|c| (c.tag(), c.value().to_string()))
+            .collect();
         let mut i = 0;
 
         while i < changes.len() {
@@ -116,7 +131,11 @@ fn print_inline_side(del_text: &str, ins_text: &str, is_delete: bool) {
 
     for change in inline_diff.iter_all_changes() {
         let tag = change.tag();
-        let dominated = if is_delete { ChangeTag::Insert } else { ChangeTag::Delete };
+        let dominated = if is_delete {
+            ChangeTag::Insert
+        } else {
+            ChangeTag::Delete
+        };
         if tag == dominated {
             continue;
         }
@@ -168,9 +187,15 @@ fn flush_inline_buf(buf: &str, emphasized: bool, is_delete: bool, stream: Stream
     }
     if emphasized {
         if is_delete {
-            print!("{}", buf.if_supports_color(stream, |t| t.bright_white().on_red()));
+            print!(
+                "{}",
+                buf.if_supports_color(stream, |t| t.bright_white().on_red())
+            );
         } else {
-            print!("{}", buf.if_supports_color(stream, |t| t.bright_white().on_green()));
+            print!(
+                "{}",
+                buf.if_supports_color(stream, |t| t.bright_white().on_green())
+            );
         }
     } else if is_delete {
         print!("{}", buf.if_supports_color(stream, |t| t.red()));
@@ -183,9 +208,17 @@ fn flush_inline_buf(buf: &str, emphasized: bool, is_delete: bool, stream: Stream
 fn print_plain_line(prefix: &str, value: &str, is_delete: bool) {
     let expanded = expand_tabs(value.trim_end_matches('\n'), prefix.len());
     if is_delete {
-        print!("{}{}", prefix, expanded.if_supports_color(Stream::Stdout, |t| t.red()));
+        print!(
+            "{}{}",
+            prefix,
+            expanded.if_supports_color(Stream::Stdout, |t| t.red())
+        );
     } else {
-        print!("{}{}", prefix, expanded.if_supports_color(Stream::Stdout, |t| t.green()));
+        print!(
+            "{}{}",
+            prefix,
+            expanded.if_supports_color(Stream::Stdout, |t| t.green())
+        );
     }
     println!();
 }

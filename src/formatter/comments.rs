@@ -1,5 +1,5 @@
-use crate::syntax_kind::SyntaxKind;
 use crate::SyntaxNode;
+use crate::syntax_kind::SyntaxKind;
 use rowan::NodeOrToken;
 
 /// A leading comment with its text and whether a blank line preceded it
@@ -114,4 +114,3 @@ pub fn extract_trailing_comment(node: &SyntaxNode) -> Option<String> {
 
     None
 }
-

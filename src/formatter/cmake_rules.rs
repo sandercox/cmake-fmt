@@ -15,12 +15,16 @@ const SOURCE_EXTS: &[&str] = &["c", "cc", "cpp", "cxx", "c++", "C", "m", "mm", "
 
 /// Check if a filename has a header extension
 fn is_header_file(name: &str) -> bool {
-    name.rsplit('.').next().map_or(false, |ext| HEADER_EXTS.contains(&ext))
+    name.rsplit('.')
+        .next()
+        .is_some_and(|ext| HEADER_EXTS.contains(&ext))
 }
 
 /// Check if a filename has a source extension
 fn is_source_file(name: &str) -> bool {
-    name.rsplit('.').next().map_or(false, |ext| SOURCE_EXTS.contains(&ext))
+    name.rsplit('.')
+        .next()
+        .is_some_and(|ext| SOURCE_EXTS.contains(&ext))
 }
 
 /// Normalize whitespace in line comments according to the specified style.
@@ -137,7 +141,7 @@ pub fn group_source_pairs(
             let base_lower = base.to_lowercase();
             // Only include files that are recognized headers or sources
             if is_header_file(arg) || is_source_file(arg) {
-                base_map.entry(base_lower).or_insert_with(Vec::new).push(i);
+                base_map.entry(base_lower).or_default().push(i);
             }
         }
     }
@@ -146,7 +150,7 @@ pub fn group_source_pairs(
     let mut is_grouped = vec![false; args.len()];
     let mut groups: Vec<Vec<usize>> = Vec::new();
 
-    for (_base, indices) in &base_map {
+    for indices in base_map.values() {
         if indices.len() >= 2 {
             // Mark all indices as grouped
             for &idx in indices {
@@ -183,9 +187,8 @@ pub fn group_source_pairs(
             let earliest = *group.iter().min().unwrap();
             if i == earliest {
                 // Collect all files in the group
-                let mut group_files: Vec<(usize, &String)> = group.iter()
-                    .map(|&idx| (idx, &args[idx]))
-                    .collect();
+                let mut group_files: Vec<(usize, &String)> =
+                    group.iter().map(|&idx| (idx, &args[idx])).collect();
 
                 // Sort by extension priority
                 match grouping {
@@ -195,15 +198,14 @@ pub fn group_source_pairs(
                     }
                     SourceGrouping::SourcesFirst => {
                         // Higher priority numbers first (sources before headers)
-                        group_files.sort_by(|(_, a), (_, b)| {
-                            ext_priority(b).cmp(&ext_priority(a))
-                        });
+                        group_files.sort_by(|(_, a), (_, b)| ext_priority(b).cmp(&ext_priority(a)));
                     }
                     SourceGrouping::None => unreachable!(),
                 }
 
                 // Join the group as a space-separated string
-                let group_str = group_files.iter()
+                let group_str = group_files
+                    .iter()
                     .map(|(_, file)| file.as_str())
                     .collect::<Vec<_>>()
                     .join(" ");
@@ -239,20 +241,35 @@ fn group_source_pairs_preserving_blanks(
     post_comment_blanks: &[usize],
     comment_blank_indices: &[usize],
     grouping: super::config::SourceGrouping,
-) -> (Vec<String>, Vec<usize>, Vec<(usize, String)>, Vec<usize>, Vec<usize>) {
+) -> (
+    Vec<String>,
+    Vec<usize>,
+    Vec<(usize, String)>,
+    Vec<usize>,
+    Vec<usize>,
+) {
     if blank_lines.is_empty() {
         let (grouped_args, old_to_new) = group_source_pairs(args, grouping);
         // Remap comment positions using the index mapping
-        let new_comments = comments.iter().map(|(pos, text)| {
-            let new_pos = if *pos < old_to_new.len() {
-                old_to_new[*pos]
-            } else {
-                // Comment after last arg - map to new length
-                grouped_args.len()
-            };
-            (new_pos, text.clone())
-        }).collect();
-        return (grouped_args, Vec::new(), new_comments, Vec::new(), comment_blank_indices.to_vec());
+        let new_comments = comments
+            .iter()
+            .map(|(pos, text)| {
+                let new_pos = if *pos < old_to_new.len() {
+                    old_to_new[*pos]
+                } else {
+                    // Comment after last arg - map to new length
+                    grouped_args.len()
+                };
+                (new_pos, text.clone())
+            })
+            .collect();
+        return (
+            grouped_args,
+            Vec::new(),
+            new_comments,
+            Vec::new(),
+            comment_blank_indices.to_vec(),
+        );
     }
 
     // Split args into segments at blank line boundaries
@@ -301,23 +318,34 @@ fn group_source_pairs_preserving_blanks(
     }
 
     // Remap comment positions using the global index mapping
-    let new_comments = comments.iter().map(|(pos, text)| {
-        let new_pos = if *pos < global_old_to_new.len() {
-            global_old_to_new[*pos]
-        } else {
-            // Comment after last arg - map to new length
-            result.len()
-        };
-        (new_pos, text.clone())
-    }).collect();
+    let new_comments = comments
+        .iter()
+        .map(|(pos, text)| {
+            let new_pos = if *pos < global_old_to_new.len() {
+                global_old_to_new[*pos]
+            } else {
+                // Comment after last arg - map to new length
+                result.len()
+            };
+            (new_pos, text.clone())
+        })
+        .collect();
 
-    (result, new_blank_lines, new_comments, new_post_comment_blanks, comment_blank_indices.to_vec())
+    (
+        result,
+        new_blank_lines,
+        new_comments,
+        new_post_comment_blanks,
+        comment_blank_indices.to_vec(),
+    )
 }
 
 /// Check if a command name requires keyword-aware formatting
 pub fn is_keyword_aware_command(name: &str) -> bool {
     use super::grammar::GrammarRegistry;
-    GrammarRegistry::global().get(&name.to_lowercase()).is_some()
+    GrammarRegistry::global()
+        .get(&name.to_lowercase())
+        .is_some()
 }
 
 /// Check if a text token is a CMake keyword (case-sensitive)
@@ -460,15 +488,17 @@ pub fn parse_keyword_sections_with_grammar(
                     // Check if this keyword should be consumed by the current BinPack or MultiValue section
                     // (e.g., DESTINATION inside LIBRARY BinPack, or PATTERN inside FILES_MATCHING MultiValue)
                     let consumed_as_sub_keyword = is_kw
-                        && grammar.map_or(false, |g| g.sub_keywords.contains(&text))
+                        && grammar.is_some_and(|g| g.sub_keywords.contains(&text))
                         && match current_section.keyword_type {
                             Some(KeywordType::BinPack) => true,
                             Some(KeywordType::MultiValue) => {
                                 // Only consume sub_keywords in MultiValue sections that are
                                 // explicitly marked as collection keywords (e.g., FILES_MATCHING)
-                                current_section.keyword.as_ref().map_or(false, |kw|
-                                    grammar.map_or(false, |g| g.collection_keywords.contains(kw.as_str()))
-                                )
+                                current_section.keyword.as_ref().is_some_and(|kw| {
+                                    grammar.is_some_and(|g| {
+                                        g.collection_keywords.contains(kw.as_str())
+                                    })
+                                })
                             }
                             _ => false,
                         };
@@ -504,10 +534,9 @@ pub fn parse_keyword_sections_with_grammar(
                         // SingleValue and already has its one value, overflow to a new
                         // positional section. This mirrors cmake_parse_arguments behavior
                         // where one_value_keywords consume exactly one argument.
-                        let at_capacity = matches!(
-                            current_section.keyword_type,
-                            Some(KeywordType::SingleValue)
-                        ) && current_section.args.len() >= 1;
+                        let at_capacity =
+                            matches!(current_section.keyword_type, Some(KeywordType::SingleValue))
+                                && !current_section.args.is_empty();
 
                         if at_capacity {
                             sections.push(current_section);
@@ -524,7 +553,10 @@ pub fn parse_keyword_sections_with_grammar(
                             };
                         } else {
                             // Track if first value is on a new line from its keyword
-                            if current_section.args.is_empty() && current_section.keyword.is_some() && saw_newline_since_keyword {
+                            if current_section.args.is_empty()
+                                && current_section.keyword.is_some()
+                                && saw_newline_since_keyword
+                            {
                                 current_section.values_on_new_line = true;
                             }
                             // Add as argument to current section
@@ -565,7 +597,11 @@ pub fn parse_keyword_sections_with_grammar(
                             current_section.blank_lines.push(position);
                             // Check if comments already exist at this position
                             // If so, the blank line comes AFTER those comments in the source
-                            if current_section.comments.iter().any(|(pos, _)| *pos == position) {
+                            if current_section
+                                .comments
+                                .iter()
+                                .any(|(pos, _)| *pos == position)
+                            {
                                 current_section.post_comment_blanks.push(position);
                             }
                         } else {
@@ -606,14 +642,19 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
 fn looks_like_filename(s: &str) -> bool {
     // Must contain a dot with extension, or path separators
     // Exclude CMake variables like ${VAR}, generator expressions $<...>
-    if s.starts_with("${") || s.starts_with("$<") || s.starts_with("$ENV{") || s.starts_with("$CACHE{") {
+    if s.starts_with("${")
+        || s.starts_with("$<")
+        || s.starts_with("$ENV{")
+        || s.starts_with("$CACHE{")
+    {
         return false;
     }
     // Check for file extension (dot followed by at least 1 char, not at start)
-    if let Some(dot_pos) = s.rfind('.') {
-        if dot_pos > 0 && dot_pos < s.len() - 1 {
-            return true;
-        }
+    if let Some(dot_pos) = s.rfind('.')
+        && dot_pos > 0
+        && dot_pos < s.len() - 1
+    {
+        return true;
     }
     // Check for path separators
     s.contains('/') || s.contains('\\')
@@ -693,7 +734,9 @@ pub fn sort_source_args(section: &mut KeywordSection) {
 
     // First, preserve args before sort_start (e.g., target name in add_executable)
     for idx in 0..sort_start {
-        let comments_at_pos: Vec<String> = section.comments.iter()
+        let comments_at_pos: Vec<String> = section
+            .comments
+            .iter()
             .filter(|(pos, _)| *pos == idx)
             .map(|(_, text)| text.clone())
             .collect();
@@ -723,13 +766,17 @@ pub fn sort_source_args(section: &mut KeywordSection) {
 
         for idx in seg.clone() {
             // Collect comments at this position (positioned before this arg)
-            let comments_at_pos: Vec<String> = section.comments.iter()
+            let comments_at_pos: Vec<String> = section
+                .comments
+                .iter()
                 .filter(|(pos, _)| *pos == idx)
                 .map(|(_, text)| text.clone())
                 .collect();
 
             // Collect trailing comment at this arg index
-            let trailing_comment = section.trailing_comments.iter()
+            let trailing_comment = section
+                .trailing_comments
+                .iter()
                 .find(|(tc_idx, _)| *tc_idx == idx)
                 .map(|(_, text)| text.clone());
 
@@ -883,7 +930,13 @@ pub fn format_keyword_aware_args(
 
     if !has_keywords {
         // No keywords found, fall back to simple formatting
-        return format_simple_args(&sections, config, signals.force_multiline, indent_level, force_args_on_new_line);
+        return format_simple_args(
+            &sections,
+            config,
+            signals.force_multiline,
+            indent_level,
+            force_args_on_new_line,
+        );
     }
 
     // Explicit indentation strings for correct tab/space handling at any nesting depth
@@ -904,7 +957,11 @@ pub fn format_keyword_aware_args(
         let pre_kw_fits = if let Some(pre_section) = pre_kw_section {
             // Check: would "indent + cmd_name( + pre_args_joined_by_space + space + keyword" fit?
             let indent_width = config.indent_width; // used for both tab and space modes
-            let paren_extra = if config.space_between_command_parens { 2 } else { 1 }; // '(' plus optional space
+            let paren_extra = if config.space_between_command_parens {
+                2
+            } else {
+                1
+            }; // '(' plus optional space
             let prefix_len = indent_level * indent_width + command_name_len + paren_extra;
             let pre_args_len: usize = pre_section.args.iter().map(|a| a.len()).sum::<usize>()
                 + pre_section.args.len().saturating_sub(1); // spaces between args
@@ -972,13 +1029,15 @@ pub fn format_keyword_aware_args(
                             sections.get(i.saturating_sub(1)),
                             Some(prev) if prev.keyword_type == Some(KeywordType::Flag)
                         );
-                        let prev_is_pre_keyword = builtin_grammar && matches!(
-                            sections.get(i.saturating_sub(1)),
-                            Some(prev) if prev.keyword.is_none()
-                        );
+                        let prev_is_pre_keyword = builtin_grammar
+                            && matches!(
+                                sections.get(i.saturating_sub(1)),
+                                Some(prev) if prev.keyword.is_none()
+                            );
                         let flag_has_trailing_args = !section.args.is_empty();
                         if (prev_is_pre_keyword && flag_has_trailing_args)
-                            || ((prev_is_flag || prev_is_pre_keyword) && config.collapse_empty_flags)
+                            || ((prev_is_flag || prev_is_pre_keyword)
+                                && config.collapse_empty_flags)
                         {
                             docs.push(RcDoc::space());
                         } else if signals.force_multiline {
@@ -1007,13 +1066,16 @@ pub fn format_keyword_aware_args(
                             let mut comment_index = 0usize;
                             for (arg_idx, arg) in section.args.iter().enumerate() {
                                 // Blank line before comments to preserve ordering
-                                if section.blank_lines.contains(&arg_idx) && signals.force_multiline {
+                                if section.blank_lines.contains(&arg_idx) && signals.force_multiline
+                                {
                                     docs.push(RcDoc::hardline());
                                 }
                                 while let Some((pos, comment)) = comment_iter.peek() {
                                     if *pos == arg_idx {
                                         // Blank line between comment groups at same position
-                                        if section.comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                                        if section.comment_blank_indices.contains(&comment_index)
+                                            && signals.force_multiline
+                                        {
                                             docs.push(RcDoc::hardline());
                                         }
                                         if signals.force_multiline {
@@ -1021,7 +1083,8 @@ pub fn format_keyword_aware_args(
                                             docs.push(RcDoc::text(keyword_indent.clone()));
                                         } else {
                                             docs.push(RcDoc::flat_alt(
-                                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                                                RcDoc::hardline()
+                                                    .append(RcDoc::text(keyword_indent.clone())),
                                                 RcDoc::space(),
                                             ));
                                         }
@@ -1037,7 +1100,8 @@ pub fn format_keyword_aware_args(
                                     docs.push(RcDoc::text(keyword_indent.clone()));
                                 } else {
                                     docs.push(RcDoc::flat_alt(
-                                        RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                                        RcDoc::hardline()
+                                            .append(RcDoc::text(keyword_indent.clone())),
                                         RcDoc::space(),
                                     ));
                                 }
@@ -1050,12 +1114,17 @@ pub fn format_keyword_aware_args(
                                 }
                             }
                             // Blank line before trailing comments at end of section
-                            if comment_iter.peek().is_some() && section.blank_lines.contains(&section.args.len()) && signals.force_multiline {
+                            if comment_iter.peek().is_some()
+                                && section.blank_lines.contains(&section.args.len())
+                                && signals.force_multiline
+                            {
                                 docs.push(RcDoc::hardline());
                             }
-                            while let Some((_, comment)) = comment_iter.next() {
+                            for (_, comment) in comment_iter {
                                 // Blank line between comment groups at same position
-                                if section.comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                                if section.comment_blank_indices.contains(&comment_index)
+                                    && signals.force_multiline
+                                {
                                     docs.push(RcDoc::hardline());
                                 }
                                 if signals.force_multiline {
@@ -1063,7 +1132,8 @@ pub fn format_keyword_aware_args(
                                     docs.push(RcDoc::text(keyword_indent.clone()));
                                 } else {
                                     docs.push(RcDoc::flat_alt(
-                                        RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
+                                        RcDoc::hardline()
+                                            .append(RcDoc::text(keyword_indent.clone())),
                                         RcDoc::space(),
                                     ));
                                 }
@@ -1115,7 +1185,7 @@ pub fn format_keyword_aware_args(
                         let prev_is_first_empty_flag = first_keyword_inline
                             && i == 1
                             && matches!(
-                                sections.get(0),
+                                sections.first(),
                                 Some(first) if first.keyword_type == Some(KeywordType::Flag) && first.args.is_empty()
                             );
                         if prev_is_first_empty_flag {
@@ -1265,7 +1335,9 @@ pub fn format_keyword_aware_args(
 
                     // Values: bin-pack using per-value groups
                     if !section.args.is_empty() {
-                        let has_annotations = !section.comments.is_empty() || !section.trailing_comments.is_empty() || !section.blank_lines.is_empty();
+                        let has_annotations = !section.comments.is_empty()
+                            || !section.trailing_comments.is_empty()
+                            || !section.blank_lines.is_empty();
 
                         if has_annotations {
                             // Path A: per-line with full comment support (same pattern as MultiValue use_per_line)
@@ -1274,15 +1346,21 @@ pub fn format_keyword_aware_args(
 
                             for (arg_idx, arg) in section.args.iter().enumerate() {
                                 // Blank line BEFORE comments (unless this is a post-comment blank line)
-                                let is_post_comment = section.post_comment_blanks.contains(&arg_idx);
-                                if !is_post_comment && section.blank_lines.contains(&arg_idx) && signals.force_multiline {
+                                let is_post_comment =
+                                    section.post_comment_blanks.contains(&arg_idx);
+                                if !is_post_comment
+                                    && section.blank_lines.contains(&arg_idx)
+                                    && signals.force_multiline
+                                {
                                     docs.push(RcDoc::hardline());
                                 }
 
                                 while let Some((pos, comment)) = comment_iter.peek() {
                                     if *pos == arg_idx {
                                         // Blank line between comment groups at same position
-                                        if section.comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                                        if section.comment_blank_indices.contains(&comment_index)
+                                            && signals.force_multiline
+                                        {
                                             docs.push(RcDoc::hardline());
                                         }
                                         if signals.force_multiline {
@@ -1290,7 +1368,8 @@ pub fn format_keyword_aware_args(
                                             docs.push(RcDoc::text(value_indent.clone()));
                                         } else {
                                             docs.push(RcDoc::flat_alt(
-                                                RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                                RcDoc::hardline()
+                                                    .append(RcDoc::text(value_indent.clone())),
                                                 RcDoc::space(),
                                             ));
                                         }
@@ -1303,7 +1382,10 @@ pub fn format_keyword_aware_args(
                                 }
 
                                 // Blank line AFTER comments (when comments preceded the blank line in source)
-                                if is_post_comment && section.blank_lines.contains(&arg_idx) && signals.force_multiline {
+                                if is_post_comment
+                                    && section.blank_lines.contains(&arg_idx)
+                                    && signals.force_multiline
+                                {
                                     docs.push(RcDoc::hardline());
                                 }
 
@@ -1326,12 +1408,17 @@ pub fn format_keyword_aware_args(
                             }
 
                             // Trailing comments at end of section
-                            if comment_iter.peek().is_some() && section.blank_lines.contains(&section.args.len()) && signals.force_multiline {
+                            if comment_iter.peek().is_some()
+                                && section.blank_lines.contains(&section.args.len())
+                                && signals.force_multiline
+                            {
                                 docs.push(RcDoc::hardline());
                             }
-                            while let Some((_, comment)) = comment_iter.next() {
+                            for (_, comment) in comment_iter {
                                 // Blank line between comment groups at same position
-                                if section.comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                                if section.comment_blank_indices.contains(&comment_index)
+                                    && signals.force_multiline
+                                {
                                     docs.push(RcDoc::hardline());
                                 }
                                 if signals.force_multiline {
@@ -1370,15 +1457,13 @@ pub fn format_keyword_aware_args(
                             // if flat form (space + arg) fits remaining line width, stays flat;
                             // otherwise breaks to new line with value_indent
                             for arg in &section.args {
-                                docs.push(
-                                    RcDoc::group(
-                                        RcDoc::flat_alt(
-                                            RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
-                                            RcDoc::space(),
-                                        )
-                                        .append(RcDoc::text(arg.clone()))
+                                docs.push(RcDoc::group(
+                                    RcDoc::flat_alt(
+                                        RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                        RcDoc::space(),
                                     )
-                                );
+                                    .append(RcDoc::text(arg.clone())),
+                                ));
                             }
                         }
                     }
@@ -1444,7 +1529,8 @@ pub fn format_keyword_aware_args(
                                         docs.push(RcDoc::text(value_indent.clone()));
                                     } else {
                                         docs.push(RcDoc::flat_alt(
-                                            RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                            RcDoc::hardline()
+                                                .append(RcDoc::text(value_indent.clone())),
                                             RcDoc::space(),
                                         ));
                                     }
@@ -1458,13 +1544,35 @@ pub fn format_keyword_aware_args(
                         // Disable grouping only when trailing comments are present (can't merge inline comments)
                         // Leading comments can be remapped to their new positions
                         // Blank lines are preserved as segment boundaries
-                        let (effective_args, effective_blank_lines, effective_comments, effective_post_comment_blanks, effective_comment_blank_indices) = if config.source_grouping != super::config::SourceGrouping::None
-                            && matches!(section.keyword_type, Some(KeywordType::MultiValue) | Some(KeywordType::BinPack) | None)
+                        let (
+                            effective_args,
+                            effective_blank_lines,
+                            effective_comments,
+                            effective_post_comment_blanks,
+                            effective_comment_blank_indices,
+                        ) = if config.source_grouping != super::config::SourceGrouping::None
+                            && matches!(
+                                section.keyword_type,
+                                Some(KeywordType::MultiValue) | Some(KeywordType::BinPack) | None
+                            )
                             && section.trailing_comments.is_empty()
                         {
-                            group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, &section.comments, &section.post_comment_blanks, &section.comment_blank_indices, config.source_grouping)
+                            group_source_pairs_preserving_blanks(
+                                &section.args,
+                                &section.blank_lines,
+                                &section.comments,
+                                &section.post_comment_blanks,
+                                &section.comment_blank_indices,
+                                config.source_grouping,
+                            )
                         } else {
-                            (section.args.clone(), section.blank_lines.clone(), section.comments.clone(), section.post_comment_blanks.clone(), section.comment_blank_indices.clone())
+                            (
+                                section.args.clone(),
+                                section.blank_lines.clone(),
+                                section.comments.clone(),
+                                section.post_comment_blanks.clone(),
+                                section.comment_blank_indices.clone(),
+                            )
                         };
 
                         // Use per-line when values were explicitly on new lines,
@@ -1480,15 +1588,21 @@ pub fn format_keyword_aware_args(
 
                             for (arg_idx, arg) in effective_args.iter().enumerate() {
                                 // Blank line BEFORE comments (unless this is a post-comment blank line)
-                                let is_post_comment = effective_post_comment_blanks.contains(&arg_idx);
-                                if !is_post_comment && effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                                let is_post_comment =
+                                    effective_post_comment_blanks.contains(&arg_idx);
+                                if !is_post_comment
+                                    && effective_blank_lines.contains(&arg_idx)
+                                    && signals.force_multiline
+                                {
                                     docs.push(RcDoc::hardline());
                                 }
 
                                 while let Some((pos, comment)) = comment_iter.peek() {
                                     if *pos == arg_idx {
                                         // Blank line between comment groups at same position
-                                        if effective_comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                                        if effective_comment_blank_indices.contains(&comment_index)
+                                            && signals.force_multiline
+                                        {
                                             docs.push(RcDoc::hardline());
                                         }
                                         if signals.force_multiline {
@@ -1496,7 +1610,8 @@ pub fn format_keyword_aware_args(
                                             docs.push(RcDoc::text(value_indent.clone()));
                                         } else {
                                             docs.push(RcDoc::flat_alt(
-                                                RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
+                                                RcDoc::hardline()
+                                                    .append(RcDoc::text(value_indent.clone())),
                                                 RcDoc::space(),
                                             ));
                                         }
@@ -1509,7 +1624,10 @@ pub fn format_keyword_aware_args(
                                 }
 
                                 // Blank line AFTER comments (when comments preceded the blank line in source)
-                                if is_post_comment && effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                                if is_post_comment
+                                    && effective_blank_lines.contains(&arg_idx)
+                                    && signals.force_multiline
+                                {
                                     docs.push(RcDoc::hardline());
                                 }
 
@@ -1532,12 +1650,17 @@ pub fn format_keyword_aware_args(
                             }
 
                             // Blank line before trailing comments at end of section
-                            if comment_iter.peek().is_some() && effective_blank_lines.contains(&effective_args.len()) && signals.force_multiline {
+                            if comment_iter.peek().is_some()
+                                && effective_blank_lines.contains(&effective_args.len())
+                                && signals.force_multiline
+                            {
                                 docs.push(RcDoc::hardline());
                             }
-                            while let Some((_, comment)) = comment_iter.next() {
+                            for (_, comment) in comment_iter {
                                 // Blank line between comment groups at same position
-                                if effective_comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                                if effective_comment_blank_indices.contains(&comment_index)
+                                    && signals.force_multiline
+                                {
                                     docs.push(RcDoc::hardline());
                                 }
                                 if signals.force_multiline {
@@ -1581,12 +1704,31 @@ pub fn format_keyword_aware_args(
             // Disable grouping only when trailing comments are present (can't merge inline comments)
             // Leading comments can be remapped to their new positions
             // Blank lines are preserved as segment boundaries
-            let (effective_args, effective_blank_lines, effective_comments, effective_post_comment_blanks, effective_comment_blank_indices) = if config.source_grouping != super::config::SourceGrouping::None
+            let (
+                effective_args,
+                effective_blank_lines,
+                effective_comments,
+                effective_post_comment_blanks,
+                effective_comment_blank_indices,
+            ) = if config.source_grouping != super::config::SourceGrouping::None
                 && section.trailing_comments.is_empty()
             {
-                group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, &section.comments, &section.post_comment_blanks, &section.comment_blank_indices, config.source_grouping)
+                group_source_pairs_preserving_blanks(
+                    &section.args,
+                    &section.blank_lines,
+                    &section.comments,
+                    &section.post_comment_blanks,
+                    &section.comment_blank_indices,
+                    config.source_grouping,
+                )
             } else {
-                (section.args.clone(), section.blank_lines.clone(), section.comments.clone(), section.post_comment_blanks.clone(), section.comment_blank_indices.clone())
+                (
+                    section.args.clone(),
+                    section.blank_lines.clone(),
+                    section.comments.clone(),
+                    section.post_comment_blanks.clone(),
+                    section.comment_blank_indices.clone(),
+                )
             };
 
             let is_list = effective_args.len() > 1 || force_args_on_new_line;
@@ -1596,7 +1738,10 @@ pub fn format_keyword_aware_args(
             for (arg_idx, arg) in effective_args.iter().enumerate() {
                 // Blank line BEFORE comments (unless this is a post-comment blank line)
                 let is_post_comment = effective_post_comment_blanks.contains(&arg_idx);
-                if !is_post_comment && effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                if !is_post_comment
+                    && effective_blank_lines.contains(&arg_idx)
+                    && signals.force_multiline
+                {
                     docs.push(RcDoc::hardline());
                     is_first_arg = false;
                 }
@@ -1605,7 +1750,9 @@ pub fn format_keyword_aware_args(
                 while let Some((pos, comment)) = comment_iter.peek() {
                     if *pos == arg_idx {
                         // Blank line between comment groups at same position
-                        if effective_comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                        if effective_comment_blank_indices.contains(&comment_index)
+                            && signals.force_multiline
+                        {
                             docs.push(RcDoc::hardline());
                         }
                         if signals.force_multiline {
@@ -1627,7 +1774,10 @@ pub fn format_keyword_aware_args(
                 }
 
                 // Blank line AFTER comments (when comments preceded the blank line in source)
-                if is_post_comment && effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                if is_post_comment
+                    && effective_blank_lines.contains(&arg_idx)
+                    && signals.force_multiline
+                {
                     docs.push(RcDoc::hardline());
                     is_first_arg = false;
                 }
@@ -1669,13 +1819,18 @@ pub fn format_keyword_aware_args(
             }
 
             // Blank line before trailing comments at end of section
-            if comment_iter.peek().is_some() && effective_blank_lines.contains(&effective_args.len()) && signals.force_multiline {
+            if comment_iter.peek().is_some()
+                && effective_blank_lines.contains(&effective_args.len())
+                && signals.force_multiline
+            {
                 docs.push(RcDoc::hardline());
             }
             // Emit trailing comments (after last argument)
-            while let Some((_, comment)) = comment_iter.next() {
+            for (_, comment) in comment_iter {
                 // Blank line between comment groups at same position
-                if effective_comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                if effective_comment_blank_indices.contains(&comment_index)
+                    && signals.force_multiline
+                {
                     docs.push(RcDoc::hardline());
                 }
                 if signals.force_multiline {
@@ -1694,7 +1849,11 @@ pub fn format_keyword_aware_args(
     }
 
     // Closing paren position
-    docs.push(super::cst_to_doc::closing_paren_position(config, indent_level, signals.force_multiline));
+    docs.push(super::cst_to_doc::closing_paren_position(
+        config,
+        indent_level,
+        signals.force_multiline,
+    ));
 
     let combined = RcDoc::concat(docs);
 
@@ -1751,7 +1910,8 @@ fn format_keyword_aware_args_inline_single(
             // For SingleValue keywords with exactly one arg, render the value inline (same line as
             // the keyword) rather than indented below. This keeps "APPEND SOURCES" together on the
             // opening line when the overflow positional args follow in the next section.
-            let is_single_value_with_one_arg = section.keyword_type == Some(KeywordType::SingleValue)
+            let is_single_value_with_one_arg = section.keyword_type
+                == Some(KeywordType::SingleValue)
                 && section.args.len() == 1
                 && section.comments.is_empty()
                 && section.trailing_comments.is_empty()
@@ -1782,7 +1942,8 @@ fn format_keyword_aware_args_inline_single(
                     }
                 } else if use_per_line || signals.force_multiline {
                     for (pair_idx, chunk) in pairs.iter().enumerate() {
-                        if section.blank_lines.contains(&(pair_idx * 2)) && signals.force_multiline {
+                        if section.blank_lines.contains(&(pair_idx * 2)) && signals.force_multiline
+                        {
                             docs.push(RcDoc::hardline());
                         }
                         if signals.force_multiline {
@@ -1822,27 +1983,32 @@ fn format_keyword_aware_args_inline_single(
                 }
             } else if !section.args.is_empty() {
                 // Apply source grouping to keyword section args (e.g., source files after PUBLIC)
-                let (effective_args, effective_blank_lines, effective_comments, _effective_post_comment_blanks, effective_comment_blank_indices) =
-                    if config.source_grouping != super::config::SourceGrouping::None
-                        && section.trailing_comments.is_empty()
-                    {
-                        group_source_pairs_preserving_blanks(
-                            &section.args,
-                            &section.blank_lines,
-                            &section.comments,
-                            &section.post_comment_blanks,
-                            &section.comment_blank_indices,
-                            config.source_grouping,
-                        )
-                    } else {
-                        (
-                            section.args.clone(),
-                            section.blank_lines.clone(),
-                            section.comments.clone(),
-                            section.post_comment_blanks.clone(),
-                            section.comment_blank_indices.clone(),
-                        )
-                    };
+                let (
+                    effective_args,
+                    effective_blank_lines,
+                    effective_comments,
+                    _effective_post_comment_blanks,
+                    effective_comment_blank_indices,
+                ) = if config.source_grouping != super::config::SourceGrouping::None
+                    && section.trailing_comments.is_empty()
+                {
+                    group_source_pairs_preserving_blanks(
+                        &section.args,
+                        &section.blank_lines,
+                        &section.comments,
+                        &section.post_comment_blanks,
+                        &section.comment_blank_indices,
+                        config.source_grouping,
+                    )
+                } else {
+                    (
+                        section.args.clone(),
+                        section.blank_lines.clone(),
+                        section.comments.clone(),
+                        section.post_comment_blanks.clone(),
+                        section.comment_blank_indices.clone(),
+                    )
+                };
 
                 // Values are indented at keyword_indent level (single indent, not double)
                 let use_per_line = section.values_on_new_line
@@ -1859,7 +2025,9 @@ fn format_keyword_aware_args_inline_single(
                         }
                         while let Some((pos, comment)) = comment_iter.peek() {
                             if *pos == arg_idx {
-                                if effective_comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                                if effective_comment_blank_indices.contains(&comment_index)
+                                    && signals.force_multiline
+                                {
                                     docs.push(RcDoc::hardline());
                                 }
                                 if signals.force_multiline {
@@ -1867,7 +2035,8 @@ fn format_keyword_aware_args_inline_single(
                                     docs.push(RcDoc::text(keyword_indent.to_string()));
                                 } else {
                                     docs.push(RcDoc::flat_alt(
-                                        RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
+                                        RcDoc::hardline()
+                                            .append(RcDoc::text(keyword_indent.to_string())),
                                         RcDoc::space(),
                                     ));
                                 }
@@ -1894,11 +2063,16 @@ fn format_keyword_aware_args_inline_single(
                             }
                         }
                     }
-                    if comment_iter.peek().is_some() && effective_blank_lines.contains(&effective_args.len()) && signals.force_multiline {
+                    if comment_iter.peek().is_some()
+                        && effective_blank_lines.contains(&effective_args.len())
+                        && signals.force_multiline
+                    {
                         docs.push(RcDoc::hardline());
                     }
-                    while let Some((_, comment)) = comment_iter.next() {
-                        if effective_comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                    for (_, comment) in comment_iter {
+                        if effective_comment_blank_indices.contains(&comment_index)
+                            && signals.force_multiline
+                        {
                             docs.push(RcDoc::hardline());
                         }
                         if signals.force_multiline {
@@ -1931,27 +2105,32 @@ fn format_keyword_aware_args_inline_single(
             }
         } else {
             // Pre-keyword section: same as the main loop's pre-keyword handling
-            let (effective_args, effective_blank_lines, effective_comments, effective_post_comment_blanks, effective_comment_blank_indices) =
-                if config.source_grouping != super::config::SourceGrouping::None
-                    && section.trailing_comments.is_empty()
-                {
-                    group_source_pairs_preserving_blanks(
-                        &section.args,
-                        &section.blank_lines,
-                        &section.comments,
-                        &section.post_comment_blanks,
-                        &section.comment_blank_indices,
-                        config.source_grouping,
-                    )
-                } else {
-                    (
-                        section.args.clone(),
-                        section.blank_lines.clone(),
-                        section.comments.clone(),
-                        section.post_comment_blanks.clone(),
-                        section.comment_blank_indices.clone(),
-                    )
-                };
+            let (
+                effective_args,
+                effective_blank_lines,
+                effective_comments,
+                effective_post_comment_blanks,
+                effective_comment_blank_indices,
+            ) = if config.source_grouping != super::config::SourceGrouping::None
+                && section.trailing_comments.is_empty()
+            {
+                group_source_pairs_preserving_blanks(
+                    &section.args,
+                    &section.blank_lines,
+                    &section.comments,
+                    &section.post_comment_blanks,
+                    &section.comment_blank_indices,
+                    config.source_grouping,
+                )
+            } else {
+                (
+                    section.args.clone(),
+                    section.blank_lines.clone(),
+                    section.comments.clone(),
+                    section.post_comment_blanks.clone(),
+                    section.comment_blank_indices.clone(),
+                )
+            };
 
             let is_list = effective_args.len() > 1;
             let mut comment_iter = effective_comments.iter().peekable();
@@ -1959,14 +2138,19 @@ fn format_keyword_aware_args_inline_single(
 
             for (arg_idx, arg) in effective_args.iter().enumerate() {
                 let is_post_comment = effective_post_comment_blanks.contains(&arg_idx);
-                if !is_post_comment && effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                if !is_post_comment
+                    && effective_blank_lines.contains(&arg_idx)
+                    && signals.force_multiline
+                {
                     docs.push(RcDoc::hardline());
                     is_first_arg = false;
                 }
 
                 while let Some((pos, comment)) = comment_iter.peek() {
                     if *pos == arg_idx {
-                        if effective_comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+                        if effective_comment_blank_indices.contains(&comment_index)
+                            && signals.force_multiline
+                        {
                             docs.push(RcDoc::hardline());
                         }
                         if signals.force_multiline {
@@ -1987,7 +2171,10 @@ fn format_keyword_aware_args_inline_single(
                     }
                 }
 
-                if is_post_comment && effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
+                if is_post_comment
+                    && effective_blank_lines.contains(&arg_idx)
+                    && signals.force_multiline
+                {
                     docs.push(RcDoc::hardline());
                     is_first_arg = false;
                 }
@@ -2005,16 +2192,14 @@ fn format_keyword_aware_args_inline_single(
                             RcDoc::nil(),
                         ));
                     }
+                } else if signals.force_multiline {
+                    docs.push(RcDoc::hardline());
+                    docs.push(RcDoc::text(keyword_indent.to_string()));
                 } else {
-                    if signals.force_multiline {
-                        docs.push(RcDoc::hardline());
-                        docs.push(RcDoc::text(keyword_indent.to_string()));
-                    } else {
-                        docs.push(RcDoc::flat_alt(
-                            RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
-                            RcDoc::space(),
-                        ));
-                    }
+                    docs.push(RcDoc::flat_alt(
+                        RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
+                        RcDoc::space(),
+                    ));
                 }
                 docs.push(RcDoc::text(arg.clone()));
                 for (tc_idx, tc_text) in &section.trailing_comments {
@@ -2024,11 +2209,16 @@ fn format_keyword_aware_args_inline_single(
                 }
             }
 
-            if comment_iter.peek().is_some() && effective_blank_lines.contains(&effective_args.len()) && signals.force_multiline {
+            if comment_iter.peek().is_some()
+                && effective_blank_lines.contains(&effective_args.len())
+                && signals.force_multiline
+            {
                 docs.push(RcDoc::hardline());
             }
-            while let Some((_, comment)) = comment_iter.next() {
-                if effective_comment_blank_indices.contains(&comment_index) && signals.force_multiline {
+            for (_, comment) in comment_iter {
+                if effective_comment_blank_indices.contains(&comment_index)
+                    && signals.force_multiline
+                {
                     docs.push(RcDoc::hardline());
                 }
                 if signals.force_multiline {
@@ -2087,7 +2277,13 @@ fn format_keyword_aware_args_inline_single(
 }
 
 /// Format arguments without keyword awareness (simple line breaking)
-fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_multiline: bool, indent_level: usize, force_args_on_new_line: bool) -> RcDoc<'static, ()> {
+fn format_simple_args(
+    sections: &[KeywordSection],
+    config: &FormatConfig,
+    force_multiline: bool,
+    indent_level: usize,
+    force_args_on_new_line: bool,
+) -> RcDoc<'static, ()> {
     let inner_indent = super::cst_to_doc::indent_string(indent_level + 1, config);
 
     let mut docs = Vec::new();
@@ -2113,12 +2309,31 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
         // Disable grouping only when trailing comments are present (can't merge inline comments)
         // Leading comments can be remapped to their new positions
         // Blank lines are preserved as segment boundaries
-        let (effective_args, effective_blank_lines, effective_comments, effective_post_comment_blanks, effective_comment_blank_indices) = if config.source_grouping != super::config::SourceGrouping::None
+        let (
+            effective_args,
+            effective_blank_lines,
+            effective_comments,
+            effective_post_comment_blanks,
+            effective_comment_blank_indices,
+        ) = if config.source_grouping != super::config::SourceGrouping::None
             && section.trailing_comments.is_empty()
         {
-            group_source_pairs_preserving_blanks(&section.args, &section.blank_lines, &section.comments, &section.post_comment_blanks, &section.comment_blank_indices, config.source_grouping)
+            group_source_pairs_preserving_blanks(
+                &section.args,
+                &section.blank_lines,
+                &section.comments,
+                &section.post_comment_blanks,
+                &section.comment_blank_indices,
+                config.source_grouping,
+            )
         } else {
-            (section.args.clone(), section.blank_lines.clone(), section.comments.clone(), section.post_comment_blanks.clone(), section.comment_blank_indices.clone())
+            (
+                section.args.clone(),
+                section.blank_lines.clone(),
+                section.comments.clone(),
+                section.post_comment_blanks.clone(),
+                section.comment_blank_indices.clone(),
+            )
         };
 
         let mut comment_iter = effective_comments.iter().peekable();
@@ -2171,7 +2386,11 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
                 } else {
                     // For the first arg with force_args_on_new_line, use nil in flat mode
                     // (no space before first arg when everything fits on one line)
-                    let flat = if is_first_arg { RcDoc::nil() } else { RcDoc::space() };
+                    let flat = if is_first_arg {
+                        RcDoc::nil()
+                    } else {
+                        RcDoc::space()
+                    };
                     docs.push(RcDoc::flat_alt(
                         RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
                         flat,
@@ -2189,11 +2408,14 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
         }
 
         // Blank line before trailing comments at end of section
-        if comment_iter.peek().is_some() && effective_blank_lines.contains(&effective_args.len()) && force_multiline {
+        if comment_iter.peek().is_some()
+            && effective_blank_lines.contains(&effective_args.len())
+            && force_multiline
+        {
             docs.push(RcDoc::hardline());
         }
         // Emit trailing comments (after last argument)
-        while let Some((_, comment)) = comment_iter.next() {
+        for (_, comment) in comment_iter {
             // Blank line between comment groups at same position
             if effective_comment_blank_indices.contains(&comment_index) && force_multiline {
                 docs.push(RcDoc::hardline());
@@ -2214,7 +2436,11 @@ fn format_simple_args(sections: &[KeywordSection], config: &FormatConfig, force_
     }
 
     // Closing paren position
-    docs.push(super::cst_to_doc::closing_paren_position(config, indent_level, force_multiline));
+    docs.push(super::cst_to_doc::closing_paren_position(
+        config,
+        indent_level,
+        force_multiline,
+    ));
 
     let combined = RcDoc::concat(docs);
 

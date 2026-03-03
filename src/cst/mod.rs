@@ -2,8 +2,8 @@ pub mod nodes;
 
 pub use nodes::*;
 
-use crate::parser::ParseError;
 use crate::SyntaxNode;
+use crate::parser::ParseError;
 
 /// Root of the Concrete Syntax Tree
 pub struct CSTRoot {
@@ -24,9 +24,7 @@ impl CSTRoot {
 
     /// Iterate over all top-level commands (convenience wrapper)
     pub fn commands(&self) -> impl Iterator<Item = CommandInvocation> + '_ {
-        self.root
-            .children()
-            .filter_map(CommandInvocation::cast)
+        self.root.children().filter_map(CommandInvocation::cast)
     }
 
     /// Format all errors as human-readable strings with line:column info

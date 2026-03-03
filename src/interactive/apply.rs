@@ -27,7 +27,9 @@ pub fn apply_decisions(original: &str, decisions: &[(DiffHunk, UserChoice)]) -> 
         // Compute where this hunk starts in the original, including leading context.
         // old_start is the index of the first Delete, but the hunk's changes may
         // begin with Equal (context) lines before that.
-        let leading_context = hunk.changes.iter()
+        let leading_context = hunk
+            .changes
+            .iter()
             .take_while(|c| matches!(c, Change::Equal(_)))
             .count();
         let span_start = hunk.old_start.saturating_sub(leading_context);
@@ -82,19 +84,17 @@ pub fn apply_decisions(original: &str, decisions: &[(DiffHunk, UserChoice)]) -> 
                 let changes = &hunk.changes;
 
                 // Find index of first and last Delete in the changes list
-                let first_delete_idx = changes.iter()
-                    .position(|c| matches!(c, Change::Delete(_)));
-                let last_delete_idx = changes.iter()
-                    .rposition(|c| matches!(c, Change::Delete(_)));
+                let first_delete_idx = changes.iter().position(|c| matches!(c, Change::Delete(_)));
+                let last_delete_idx = changes.iter().rposition(|c| matches!(c, Change::Delete(_)));
 
                 if let (Some(first_del), Some(last_del)) = (first_delete_idx, last_delete_idx) {
                     // Emit leading context (Equal lines before first Delete)
                     for change in &changes[..first_del] {
-                        if let Change::Equal(_) = change {
-                            if orig_idx < orig_lines.len() {
-                                result.push(orig_lines[orig_idx].to_string());
-                                orig_idx += 1;
-                            }
+                        if let Change::Equal(_) = change
+                            && orig_idx < orig_lines.len()
+                        {
+                            result.push(orig_lines[orig_idx].to_string());
+                            orig_idx += 1;
                         }
                     }
 
@@ -126,11 +126,11 @@ pub fn apply_decisions(original: &str, decisions: &[(DiffHunk, UserChoice)]) -> 
                         // Multiple lines: use off/on pair, keep all original lines
                         result.push(format!("{}# cmake-fmt: off", indent));
                         for change in &changes[first_del..=last_del] {
-                            if matches!(change, Change::Delete(_) | Change::Equal(_)) {
-                                if orig_idx < orig_lines.len() {
-                                    result.push(orig_lines[orig_idx].to_string());
-                                    orig_idx += 1;
-                                }
+                            if matches!(change, Change::Delete(_) | Change::Equal(_))
+                                && orig_idx < orig_lines.len()
+                            {
+                                result.push(orig_lines[orig_idx].to_string());
+                                orig_idx += 1;
                             }
                         }
                         result.push(format!("{}# cmake-fmt: on", indent));
@@ -138,21 +138,21 @@ pub fn apply_decisions(original: &str, decisions: &[(DiffHunk, UserChoice)]) -> 
 
                     // Emit trailing context (Equal lines after last Delete)
                     for change in &changes[last_del + 1..] {
-                        if let Change::Equal(_) = change {
-                            if orig_idx < orig_lines.len() {
-                                result.push(orig_lines[orig_idx].to_string());
-                                orig_idx += 1;
-                            }
+                        if let Change::Equal(_) = change
+                            && orig_idx < orig_lines.len()
+                        {
+                            result.push(orig_lines[orig_idx].to_string());
+                            orig_idx += 1;
                         }
                     }
                 } else {
                     // No Delete changes in hunk (shouldn't happen), treat as reject
                     for change in changes {
-                        if matches!(change, Change::Equal(_) | Change::Delete(_)) {
-                            if orig_idx < orig_lines.len() {
-                                result.push(orig_lines[orig_idx].to_string());
-                                orig_idx += 1;
-                            }
+                        if matches!(change, Change::Equal(_) | Change::Delete(_))
+                            && orig_idx < orig_lines.len()
+                        {
+                            result.push(orig_lines[orig_idx].to_string());
+                            orig_idx += 1;
                         }
                     }
                 }

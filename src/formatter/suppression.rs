@@ -235,8 +235,14 @@ mod tests {
 
     #[test]
     fn test_parse_directive_no_sort() {
-        assert_eq!(parse_directive("# cmake-fmt: no-sort"), Some(Directive::NoSort));
-        assert_eq!(parse_directive("# cmake-fmt:no-sort"), Some(Directive::NoSort));
+        assert_eq!(
+            parse_directive("# cmake-fmt: no-sort"),
+            Some(Directive::NoSort)
+        );
+        assert_eq!(
+            parse_directive("# cmake-fmt:no-sort"),
+            Some(Directive::NoSort)
+        );
     }
 
     #[test]

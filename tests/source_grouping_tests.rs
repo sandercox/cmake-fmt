@@ -1,4 +1,4 @@
-use cmake_fmt::formatter::{format_text, FormatConfig, SourceGrouping};
+use cmake_fmt::formatter::{FormatConfig, SourceGrouping, format_text};
 
 #[test]
 fn test_source_grouping_disabled_by_default() {
@@ -208,8 +208,7 @@ max_line_length = 100
 
 #[test]
 fn test_source_grouping_vert_frag_pairs() {
-    let input =
-        "target_sources(mylib\n\tPUBLIC\n\t\tshader.frag\n\t\tshader.vert\n\t\teffect.frag\n\t\teffect.vert\n)";
+    let input = "target_sources(mylib\n\tPUBLIC\n\t\tshader.frag\n\t\tshader.vert\n\t\teffect.frag\n\t\teffect.vert\n)";
     let config = FormatConfig {
         source_grouping: SourceGrouping::HeadersFirst,
         max_line_length: 100,
@@ -268,7 +267,8 @@ fn test_source_grouping_triplet_h_hpp_cpp() {
 
 #[test]
 fn test_source_grouping_quad_h_hpp_cpp_ipp() {
-    let input = "target_sources(mylib\n\tPUBLIC\n\t\tcore.cpp\n\t\tcore.h\n\t\tcore.hpp\n\t\tcore.ipp\n)";
+    let input =
+        "target_sources(mylib\n\tPUBLIC\n\t\tcore.cpp\n\t\tcore.h\n\t\tcore.hpp\n\t\tcore.ipp\n)";
     let config = FormatConfig {
         source_grouping: SourceGrouping::HeadersFirst,
         max_line_length: 100,
@@ -408,7 +408,11 @@ fn test_source_grouping_with_leading_comments() {
         output
     );
     // Comment should be preserved
-    assert!(output.contains("# Generators"), "Expected comment preserved:\n{}", output);
+    assert!(
+        output.contains("# Generators"),
+        "Expected comment preserved:\n{}",
+        output
+    );
     // Generators files should be grouped
     assert!(
         output.contains("Generators/baz.h Generators/baz.cpp"),
@@ -422,10 +426,16 @@ fn test_source_grouping_with_leading_comments() {
     );
     // Blank line should be preserved (comment should come after it)
     let lines: Vec<&str> = output.lines().collect();
-    let comment_line = lines.iter().position(|l| l.contains("# Generators")).unwrap();
+    let comment_line = lines
+        .iter()
+        .position(|l| l.contains("# Generators"))
+        .unwrap();
     let bar_line = lines.iter().position(|l| l.contains("bar.h")).unwrap();
     // There should be at least one line between bar and comment
-    assert!(comment_line > bar_line + 1, "Expected blank line before comment");
+    assert!(
+        comment_line > bar_line + 1,
+        "Expected blank line before comment"
+    );
 }
 
 #[test]
@@ -450,7 +460,10 @@ fn test_source_grouping_with_multiple_comment_sections() {
     let output = format_text(input, &config);
 
     // All comments should be preserved
-    assert!(output.contains("# Generators"), "Expected '# Generators' comment");
+    assert!(
+        output.contains("# Generators"),
+        "Expected '# Generators' comment"
+    );
     assert!(output.contains("# Effects"), "Expected '# Effects' comment");
     assert!(output.contains("# Mixers"), "Expected '# Mixers' comment");
 
@@ -485,8 +498,14 @@ fn test_source_grouping_with_multiple_comment_sections() {
     let gen_pos = output.find("# Generators").unwrap();
     let eff_pos = output.find("# Effects").unwrap();
     let mix_pos = output.find("# Mixers").unwrap();
-    assert!(gen_pos < eff_pos, "Generators comment should come before Effects");
-    assert!(eff_pos < mix_pos, "Effects comment should come before Mixers");
+    assert!(
+        gen_pos < eff_pos,
+        "Generators comment should come before Effects"
+    );
+    assert!(
+        eff_pos < mix_pos,
+        "Effects comment should come before Mixers"
+    );
 }
 
 #[test]
@@ -547,20 +566,41 @@ fn test_source_grouping_blank_line_after_comments_preserved() {
     assert!(output.contains("AlleyColours.h"), "Expected AlleyColours.h");
 
     // Comments should be preserved
-    assert!(output.contains("# ChristMas.cpp"), "Expected '# ChristMas.cpp' comment");
-    assert!(output.contains("# ChristMas.h"), "Expected '# ChristMas.h' comment");
+    assert!(
+        output.contains("# ChristMas.cpp"),
+        "Expected '# ChristMas.cpp' comment"
+    );
+    assert!(
+        output.contains("# ChristMas.h"),
+        "Expected '# ChristMas.h' comment"
+    );
 
     // Critical: The blank line should appear AFTER the comments, not before them
     // In the source, the order is: comments, then blank line, then AboutComponent
     // This ordering must be preserved after source_grouping remapping
     let lines: Vec<&str> = output.lines().collect();
-    let christmas_cpp_line = lines.iter().position(|l| l.contains("# ChristMas.cpp")).unwrap();
-    let christmas_h_line = lines.iter().position(|l| l.contains("# ChristMas.h")).unwrap();
-    let about_line = lines.iter().position(|l| l.contains("AboutComponent")).unwrap();
+    let christmas_cpp_line = lines
+        .iter()
+        .position(|l| l.contains("# ChristMas.cpp"))
+        .unwrap();
+    let christmas_h_line = lines
+        .iter()
+        .position(|l| l.contains("# ChristMas.h"))
+        .unwrap();
+    let about_line = lines
+        .iter()
+        .position(|l| l.contains("AboutComponent"))
+        .unwrap();
 
     // Comments should come before AboutComponent
-    assert!(christmas_cpp_line < about_line, "Comments should come before AboutComponent");
-    assert!(christmas_h_line < about_line, "Comments should come before AboutComponent");
+    assert!(
+        christmas_cpp_line < about_line,
+        "Comments should come before AboutComponent"
+    );
+    assert!(
+        christmas_h_line < about_line,
+        "Comments should come before AboutComponent"
+    );
 
     // There should be a blank line between the last comment and AboutComponent
     // (The blank line appears AFTER the comments, not before them)
@@ -609,14 +649,20 @@ fn test_source_grouping_blank_line_before_comment_preserved() {
     );
 
     // Comment should be preserved
-    assert!(output.contains("# Section header"), "Expected '# Section header' comment");
+    assert!(
+        output.contains("# Section header"),
+        "Expected '# Section header' comment"
+    );
 
     // Critical: The blank line should appear BEFORE the comment (the default case)
     // In the source, the order is: foo, blank line, comment, bar
     // This ordering must be preserved (no regression from our fix)
     let lines: Vec<&str> = output.lines().collect();
     let foo_line = lines.iter().position(|l| l.contains("foo.h")).unwrap();
-    let comment_line = lines.iter().position(|l| l.contains("# Section header")).unwrap();
+    let comment_line = lines
+        .iter()
+        .position(|l| l.contains("# Section header"))
+        .unwrap();
     let bar_line = lines.iter().position(|l| l.contains("bar.h")).unwrap();
 
     // Comment should come after foo and before bar

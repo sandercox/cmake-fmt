@@ -1,4 +1,8 @@
-use crate::formatter::{FormatConfig, SuppressionWarning, detect_line_ending, format_text_with_diagnostics_and_path, config::{FinalNewline, LineEnding}};
+use crate::formatter::{
+    FormatConfig, SuppressionWarning,
+    config::{FinalNewline, LineEnding},
+    detect_line_ending, format_text_with_diagnostics_and_path,
+};
 use std::path::Path;
 
 /// Represents a line range (1-based, inclusive)
@@ -35,16 +39,21 @@ pub fn parse_line_ranges(input: &str) -> Result<Vec<LineRange>, String> {
         let components: Vec<&str> = part.split(':').collect();
 
         if components.len() != 2 {
-            return Err(format!("Invalid range format '{}'. Expected START:END", part));
+            return Err(format!(
+                "Invalid range format '{}'. Expected START:END",
+                part
+            ));
         }
 
         let start_str = components[0].trim();
         let end_str = components[1].trim();
 
-        let start = start_str.parse::<usize>()
+        let start = start_str
+            .parse::<usize>()
             .map_err(|_| format!("Invalid start line '{}' in range '{}'", start_str, part))?;
 
-        let end = end_str.parse::<usize>()
+        let end = end_str
+            .parse::<usize>()
             .map_err(|_| format!("Invalid end line '{}' in range '{}'", end_str, part))?;
 
         if start < 1 {
@@ -80,7 +89,8 @@ pub fn format_with_line_ranges(
     verbose: bool,
 ) -> (String, Vec<SuppressionWarning>) {
     // Step 1: Format the full file
-    let (formatted, warnings) = format_text_with_diagnostics_and_path(input, config, file_path, verbose);
+    let (formatted, warnings) =
+        format_text_with_diagnostics_and_path(input, config, file_path, verbose);
 
     // Step 2: Split into lines
     let original_lines: Vec<&str> = input.lines().collect();
@@ -204,7 +214,7 @@ mod tests {
         let config = FormatConfig::default();
         let ranges = vec![LineRange { start: 1, end: 1 }];
 
-        let (result, _warnings) = format_with_line_ranges(&input, &config, &ranges, None, false);
+        let (result, _warnings) = format_with_line_ranges(input, &config, &ranges, None, false);
 
         // First line should be formatted, others unchanged
         let lines: Vec<&str> = result.lines().collect();
@@ -219,7 +229,7 @@ mod tests {
         let config = FormatConfig::default();
         let ranges = vec![LineRange { start: 1, end: 1 }];
 
-        let (result, _warnings) = format_with_line_ranges(&input, &config, &ranges, None, false);
+        let (result, _warnings) = format_with_line_ranges(input, &config, &ranges, None, false);
 
         assert!(result.ends_with('\n'), "Should preserve final newline");
     }
@@ -232,9 +242,12 @@ mod tests {
         config.final_newline = FinalNewline::Preserve;
         let ranges = vec![LineRange { start: 1, end: 1 }];
 
-        let (result, _warnings) = format_with_line_ranges(&input, &config, &ranges, None, false);
+        let (result, _warnings) = format_with_line_ranges(input, &config, &ranges, None, false);
 
-        assert!(!result.ends_with('\n'), "Preserve mode should not add final newline if original didn't have one");
+        assert!(
+            !result.ends_with('\n'),
+            "Preserve mode should not add final newline if original didn't have one"
+        );
     }
 
     #[test]
@@ -244,9 +257,12 @@ mod tests {
         config.final_newline = FinalNewline::Force;
         let ranges = vec![LineRange { start: 1, end: 1 }];
 
-        let (result, _warnings) = format_with_line_ranges(&input, &config, &ranges, None, false);
+        let (result, _warnings) = format_with_line_ranges(input, &config, &ranges, None, false);
 
-        assert!(result.ends_with('\n'), "Force mode should add trailing newline even if original didn't have one");
+        assert!(
+            result.ends_with('\n'),
+            "Force mode should add trailing newline even if original didn't have one"
+        );
     }
 
     #[test]
@@ -256,8 +272,11 @@ mod tests {
         config.final_newline = FinalNewline::Remove;
         let ranges = vec![LineRange { start: 1, end: 1 }];
 
-        let (result, _warnings) = format_with_line_ranges(&input, &config, &ranges, None, false);
+        let (result, _warnings) = format_with_line_ranges(input, &config, &ranges, None, false);
 
-        assert!(!result.ends_with('\n'), "Remove mode should strip trailing newline");
+        assert!(
+            !result.ends_with('\n'),
+            "Remove mode should strip trailing newline"
+        );
     }
 }

@@ -1,5 +1,5 @@
-use std::fmt;
 use miette::Diagnostic;
+use std::fmt;
 
 /// Error encountered during parsing
 #[derive(Debug, Clone, PartialEq, Eq)]

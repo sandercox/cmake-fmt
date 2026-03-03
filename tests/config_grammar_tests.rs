@@ -1,4 +1,6 @@
-use cmake_fmt::formatter::{CommandGrammarConfig, FormatConfig, format_text, format_text_with_diagnostics_and_path};
+use cmake_fmt::formatter::{
+    CommandGrammarConfig, FormatConfig, format_text, format_text_with_diagnostics_and_path,
+};
 use std::collections::HashMap;
 use std::fs;
 use tempfile::TempDir;
@@ -98,7 +100,8 @@ multi_value_keywords = ["CONFIG_MULTI"]
     let config = crate::config::load_config_file(&config_file).unwrap();
 
     // Format the file - config grammar should be used, not auto-detected
-    let (output, _) = format_text_with_diagnostics_and_path(cmake_content, &config, Some(&cmake_file), false);
+    let (output, _) =
+        format_text_with_diagnostics_and_path(cmake_content, &config, Some(&cmake_file), false);
 
     // Verify the config keywords are recognized (not the auto-detected ones)
     assert!(output.contains("CONFIG_FLAG") || output.contains("config_flag"));
@@ -175,7 +178,7 @@ fn test_extensionless_config_file_parsed_as_yaml() {
     // Load and verify
     let config = crate::config::load_config_file(&config_file).unwrap();
     assert_eq!(config.indent_width, 2);
-    assert_eq!(config.use_tabs, false);
+    assert!(!config.use_tabs);
 }
 
 #[test]
@@ -211,7 +214,7 @@ use_tabs: true
     // Load and verify
     let config = crate::config::load_config_file(&config_file).unwrap();
     assert_eq!(config.indent_width, 4);
-    assert_eq!(config.use_tabs, true);
+    assert!(config.use_tabs);
 }
 
 #[test]
@@ -227,7 +230,7 @@ fn test_config_file_priority_toml_over_extensionless() {
     fs::write(&extensionless_config, "indent_width: 8\n").unwrap();
 
     // Test priority via formatting - the config that gets loaded affects output
-    let input = "set(MY_VAR_WITH_A_LONG_NAME value1 value2 value3 value4 value5 value6)";
+    let _input = "set(MY_VAR_WITH_A_LONG_NAME value1 value2 value3 value4 value5 value6)";
 
     // Load toml config explicitly
     let toml_loaded = crate::config::load_config_file(&toml_config).unwrap();
@@ -285,7 +288,7 @@ fn test_recursive_config_merges_root_first() {
 
     // Should have both: indent_width from root, use_tabs from child
     assert_eq!(config.indent_width, 2);
-    assert_eq!(config.use_tabs, false);
+    assert!(!config.use_tabs);
     // Default value for unset key
     assert_eq!(config.max_line_length, 80);
 }
@@ -323,20 +326,28 @@ fn test_recursive_config_command_grammars_merge() {
 
     // Root config defines my_cmd
     let root_config = root_dir.join(".cmake-fmt.toml");
-    fs::write(&root_config, r#"
+    fs::write(
+        &root_config,
+        r#"
 [command_grammars.my_cmd]
 options = ["OPT_A"]
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     // Child config defines other_cmd and overrides my_cmd
     let child_config = sub_dir.join(".cmake-fmt.toml");
-    fs::write(&child_config, r#"
+    fs::write(
+        &child_config,
+        r#"
 [command_grammars.other_cmd]
 options = ["OPT_B"]
 
 [command_grammars.my_cmd]
 options = ["OPT_X"]
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     // Resolve from child directory
     let cmake_file = sub_dir.join("CMakeLists.txt");
@@ -360,15 +371,23 @@ fn test_recursive_config_grammar_files_concatenate() {
 
     // Root config has grammar_files
     let root_config = root_dir.join(".cmake-fmt.toml");
-    fs::write(&root_config, r#"
+    fs::write(
+        &root_config,
+        r#"
 grammar_files = ["root.toml"]
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     // Child config has different grammar_files
     let child_config = sub_dir.join(".cmake-fmt.toml");
-    fs::write(&child_config, r#"
+    fs::write(
+        &child_config,
+        r#"
 grammar_files = ["child.toml"]
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     // Resolve from child directory
     let cmake_file = sub_dir.join("CMakeLists.txt");
@@ -378,10 +397,12 @@ grammar_files = ["child.toml"]
     assert_eq!(config.grammar_files.len(), 2);
 
     // Check that paths are resolved relative to their config directories
-    let root_grammar = root_dir.join("root.toml");
-    let child_grammar = sub_dir.join("child.toml");
+    let _root_grammar = root_dir.join("root.toml");
+    let _child_grammar = sub_dir.join("child.toml");
 
-    let config_paths: Vec<String> = config.grammar_files.iter()
+    let config_paths: Vec<String> = config
+        .grammar_files
+        .iter()
         .map(|p| p.to_string_lossy().to_string())
         .collect();
 
@@ -390,11 +411,13 @@ grammar_files = ["child.toml"]
 
     // Verify one contains root dir, other contains sub dir
     let has_root_path = config.grammar_files.iter().any(|p| {
-        p.to_string_lossy().contains(&root_dir.file_name().unwrap().to_string_lossy().to_string())
+        p.to_string_lossy()
+            .contains(&root_dir.file_name().unwrap().to_string_lossy().to_string())
     });
-    let has_sub_path = config.grammar_files.iter().any(|p| {
-        p.to_string_lossy().contains("sub")
-    });
+    let has_sub_path = config
+        .grammar_files
+        .iter()
+        .any(|p| p.to_string_lossy().contains("sub"));
 
     assert!(has_root_path || has_sub_path);
 }
@@ -437,7 +460,7 @@ fn test_recursive_config_single_file_backward_compatible() {
 
     // Should work exactly as before
     assert_eq!(config.indent_width, 2);
-    assert_eq!(config.use_tabs, false);
+    assert!(!config.use_tabs);
 }
 
 #[test]
@@ -463,7 +486,7 @@ fn test_root_true_stops_parent_inheritance_toml() {
     // max_line_length at default (80), not 100 from parent (parent was discarded)
     assert_eq!(config.max_line_length, 80);
     // use_tabs at default (true), proving fresh start from defaults
-    assert_eq!(config.use_tabs, true);
+    assert!(config.use_tabs);
 }
 
 #[test]
@@ -489,7 +512,7 @@ fn test_root_true_stops_parent_inheritance_yaml() {
     // max_line_length at default (80), not 100 from parent
     assert_eq!(config.max_line_length, 80);
     // use_tabs at default (true)
-    assert_eq!(config.use_tabs, true);
+    assert!(config.use_tabs);
 }
 
 #[test]
@@ -544,7 +567,7 @@ fn test_root_true_middle_directory() {
     // max_line_length from mid config
     assert_eq!(config.max_line_length, 100);
     // use_tabs from deep config
-    assert_eq!(config.use_tabs, false);
+    assert!(!config.use_tabs);
 }
 
 #[test]
@@ -556,21 +579,33 @@ fn test_root_true_command_grammars_not_inherited() {
 
     // Root config with custom command grammar
     let root_config = root_dir.join(".cmake-fmt.toml");
-    fs::write(&root_config, "[command_grammars.parent_cmd]\noptions = [\"OPT_A\"]\n").unwrap();
+    fs::write(
+        &root_config,
+        "[command_grammars.parent_cmd]\noptions = [\"OPT_A\"]\n",
+    )
+    .unwrap();
 
     // Sub config with root=true and different command grammar
     let sub_config = sub_dir.join(".cmake-fmt.toml");
-    fs::write(&sub_config, "root = true\n[command_grammars.child_cmd]\noptions = [\"OPT_B\"]\n").unwrap();
+    fs::write(
+        &sub_config,
+        "root = true\n[command_grammars.child_cmd]\noptions = [\"OPT_B\"]\n",
+    )
+    .unwrap();
 
     let cmake_file = sub_dir.join("CMakeLists.txt");
     let config = config::resolve_config(Some(&cmake_file), None, &[]);
 
     // child_cmd grammar should be present
-    assert!(config.command_grammars.contains_key("child_cmd"),
-        "Expected child_cmd grammar to be present");
+    assert!(
+        config.command_grammars.contains_key("child_cmd"),
+        "Expected child_cmd grammar to be present"
+    );
     // parent_cmd grammar should NOT be present (discarded by root=true)
-    assert!(!config.command_grammars.contains_key("parent_cmd"),
-        "Expected parent_cmd grammar to be absent (discarded by root=true)");
+    assert!(
+        !config.command_grammars.contains_key("parent_cmd"),
+        "Expected parent_cmd grammar to be absent (discarded by root=true)"
+    );
 }
 
 // Module for accessing config loading functions
@@ -584,20 +619,13 @@ mod config {
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
-        let extension = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         match extension {
-            "toml" | "tml" => {
-                toml::from_str(&content)
-                    .with_context(|| format!("Failed to parse TOML config: {}", path.display()))
-            }
-            "yaml" | "yml" => {
-                serde_yml::from_str(&content)
-                    .with_context(|| format!("Failed to parse YAML config: {}", path.display()))
-            }
+            "toml" | "tml" => toml::from_str(&content)
+                .with_context(|| format!("Failed to parse TOML config: {}", path.display())),
+            "yaml" | "yml" => serde_yml::from_str(&content)
+                .with_context(|| format!("Failed to parse YAML config: {}", path.display())),
             _ => {
                 // Extensionless config files (like .cmake-fmt) default to YAML
                 serde_yml::from_str(&content)
@@ -646,7 +674,9 @@ mod config {
         for config_path in config_paths.iter().rev() {
             if let Ok(mut file_table) = load_config_as_table(config_path) {
                 // Resolve grammar_files paths BEFORE merging
-                if let Some(toml::Value::Array(grammar_files_array)) = file_table.get_mut("grammar_files") {
+                if let Some(toml::Value::Array(grammar_files_array)) =
+                    file_table.get_mut("grammar_files")
+                {
                     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
 
                     for item in grammar_files_array.iter_mut() {
@@ -717,16 +747,11 @@ mod config {
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
-        let extension = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         match extension {
-            "toml" | "tml" => {
-                toml::from_str::<toml::Table>(&content)
-                    .with_context(|| format!("Failed to parse TOML config: {}", path.display()))
-            }
+            "toml" | "tml" => toml::from_str::<toml::Table>(&content)
+                .with_context(|| format!("Failed to parse TOML config: {}", path.display())),
             "yaml" | "yml" | _ => {
                 let yaml_value: serde_yml::Value = serde_yml::from_str(&content)
                     .with_context(|| format!("Failed to parse YAML config: {}", path.display()))?;
@@ -760,10 +785,10 @@ mod config {
             serde_yml::Value::Mapping(map) => {
                 let mut table = toml::Table::new();
                 for (k, v) in map {
-                    if let serde_yml::Value::String(key) = k {
-                        if let Some(value) = yml_value_to_toml_value(v) {
-                            table.insert(key, value);
-                        }
+                    if let serde_yml::Value::String(key) = k
+                        && let Some(value) = yml_value_to_toml_value(v)
+                    {
+                        table.insert(key, value);
                     }
                 }
                 Some(toml::Value::Table(table))

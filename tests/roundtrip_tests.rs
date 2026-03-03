@@ -20,8 +20,8 @@ use std::fs;
 #[case("edge_cases.cmake")]
 fn test_fixture_roundtrip(#[case] filename: &str) {
     let path = format!("tests/fixtures/{}", filename);
-    let input = fs::read_to_string(&path)
-        .unwrap_or_else(|_| panic!("Failed to read fixture: {}", path));
+    let input =
+        fs::read_to_string(&path).unwrap_or_else(|_| panic!("Failed to read fixture: {}", path));
 
     let cst = parse_text(&input);
     let reconstructed = cst.text();
@@ -84,7 +84,10 @@ fn test_error_line_column_with_crlf() {
         line == 3
     });
 
-    assert!(has_line_3_error, "CRLF line counting should result in error on line 3");
+    assert!(
+        has_line_3_error,
+        "CRLF line counting should result in error on line 3"
+    );
 }
 
 #[test]
@@ -147,7 +150,11 @@ fn test_generator_expr_3_levels() {
 )"#;
 
     let cst = parse_text(input);
-    assert_eq!(cst.text(), input, "3-level nested generator expression should round-trip");
+    assert_eq!(
+        cst.text(),
+        input,
+        "3-level nested generator expression should round-trip"
+    );
     assert!(!cst.has_errors(), "Should parse without errors");
 }
 
@@ -156,7 +163,11 @@ fn test_mixed_refs_in_quoted() {
     let input = r#"set(RESULT "${VAR}_$ENV{HOME}_${A_${B}}")"#;
 
     let cst = parse_text(input);
-    assert_eq!(cst.text(), input, "Mixed variable references should round-trip");
+    assert_eq!(
+        cst.text(),
+        input,
+        "Mixed variable references should round-trip"
+    );
     assert!(!cst.has_errors(), "Should parse without errors");
 }
 
@@ -173,7 +184,12 @@ fn test_bracket_arg_0_through_5_equals() {
 
     for input in test_cases {
         let cst = parse_text(input);
-        assert_eq!(cst.text(), input, "Bracket argument should round-trip: {}", input);
+        assert_eq!(
+            cst.text(),
+            input,
+            "Bracket argument should round-trip: {}",
+            input
+        );
         assert!(!cst.has_errors(), "Should parse without errors: {}", input);
     }
 }
@@ -183,7 +199,11 @@ fn test_adjacent_specials() {
     let input = r#"message(${A}${B}$<CONFIG:Debug>"quoted")"#;
 
     let cst = parse_text(input);
-    assert_eq!(cst.text(), input, "Adjacent special constructs should round-trip");
+    assert_eq!(
+        cst.text(),
+        input,
+        "Adjacent special constructs should round-trip"
+    );
     assert!(!cst.has_errors(), "Should parse without errors");
 }
 
@@ -206,7 +226,10 @@ fn test_whitespace_only_file() {
     let cst = parse_text(input);
 
     assert_eq!(cst.text(), input, "Whitespace-only file should round-trip");
-    assert!(!cst.has_errors(), "Whitespace-only file should parse without errors");
+    assert!(
+        !cst.has_errors(),
+        "Whitespace-only file should parse without errors"
+    );
 }
 
 #[test]
@@ -232,7 +255,11 @@ fn test_comment_after_paren() {
     let input = "message(hello)# comment\n";
     let cst = parse_text(input);
 
-    assert_eq!(cst.text(), input, "Comment immediately after paren should round-trip");
+    assert_eq!(
+        cst.text(),
+        input,
+        "Comment immediately after paren should round-trip"
+    );
     assert!(!cst.has_errors(), "Should parse without errors");
 }
 
@@ -241,7 +268,11 @@ fn test_semicolons_in_quoted() {
     let input = r#"set(LIST_VAR "a;b;c")"#;
     let cst = parse_text(input);
 
-    assert_eq!(cst.text(), input, "Semicolons in quoted strings should be preserved");
+    assert_eq!(
+        cst.text(),
+        input,
+        "Semicolons in quoted strings should be preserved"
+    );
     assert!(!cst.has_errors(), "Should parse without errors");
 }
 

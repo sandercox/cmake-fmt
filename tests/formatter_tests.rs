@@ -1,5 +1,7 @@
-use cmake_fmt::formatter::{ClosingStyle, CommandCase, CommentStyle, FinalNewline, FormatConfig, UserCommandCase};
 use cmake_fmt::formatter::format_text;
+use cmake_fmt::formatter::{
+    ClosingStyle, CommandCase, CommentStyle, FinalNewline, FormatConfig, UserCommandCase,
+};
 
 // Helper to create default config
 fn default_config() -> FormatConfig {
@@ -130,7 +132,10 @@ fn test_indent_if_else_endif() {
     let input = "if(WIN32)\nset(A b)\nelse()\nset(C d)\nendif()\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "if(WIN32)\n\tset(A b)\nelse()\n\tset(C d)\nendif()\n");
+    assert_eq!(
+        result,
+        "if(WIN32)\n\tset(A b)\nelse()\n\tset(C d)\nendif()\n"
+    );
 }
 
 #[test]
@@ -138,7 +143,10 @@ fn test_indent_if_elseif_else_endif() {
     let input = "if(WIN32)\nset(A b)\nelseif(UNIX)\nset(B c)\nelse()\nset(C d)\nendif()\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "if(WIN32)\n\tset(A b)\nelseif(UNIX)\n\tset(B c)\nelse()\n\tset(C d)\nendif()\n");
+    assert_eq!(
+        result,
+        "if(WIN32)\n\tset(A b)\nelseif(UNIX)\n\tset(B c)\nelse()\n\tset(C d)\nendif()\n"
+    );
 }
 
 #[test]
@@ -154,7 +162,10 @@ fn test_indent_foreach() {
     let input = "foreach(src ${SOURCES})\nmessage(STATUS ${src})\nendforeach()\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "foreach(src ${SOURCES})\n\tmessage(STATUS ${src})\nendforeach()\n");
+    assert_eq!(
+        result,
+        "foreach(src ${SOURCES})\n\tmessage(STATUS ${src})\nendforeach()\n"
+    );
 }
 
 #[test]
@@ -162,7 +173,10 @@ fn test_indent_function() {
     let input = "function(my_func ARG)\nmessage(${ARG})\nendfunction()\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "function(my_func ARG)\n\tmessage(${ARG})\nendfunction()\n");
+    assert_eq!(
+        result,
+        "function(my_func ARG)\n\tmessage(${ARG})\nendfunction()\n"
+    );
 }
 
 #[test]
@@ -170,7 +184,10 @@ fn test_indent_macro() {
     let input = "macro(my_macro ARG)\nmessage(${ARG})\nendmacro()\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "macro(my_macro ARG)\n\tmessage(${ARG})\nendmacro()\n");
+    assert_eq!(
+        result,
+        "macro(my_macro ARG)\n\tmessage(${ARG})\nendmacro()\n"
+    );
 }
 
 #[test]
@@ -356,10 +373,15 @@ fn test_comment_indentation_with_spaces() {
     };
     let result = format_text(input, &config);
     // Comment should be indented with 2 spaces (not tab)
-    assert!(result.contains("  # Comment inside if"),
-        "Expected '  # Comment inside if' but got: {:?}", result);
-    assert!(!result.contains("\t# Comment inside if"),
-        "Should not contain tab before comment");
+    assert!(
+        result.contains("  # Comment inside if"),
+        "Expected '  # Comment inside if' but got: {:?}",
+        result
+    );
+    assert!(
+        !result.contains("\t# Comment inside if"),
+        "Should not contain tab before comment"
+    );
 }
 
 /// Test CMNT-02: Comment indentation respects use_tabs=false with indent_width=4
@@ -373,10 +395,15 @@ fn test_comment_indentation_with_spaces_4() {
     };
     let result = format_text(input, &config);
     // Comment should be indented with 4 spaces (not tab)
-    assert!(result.contains("    # Comment inside if"),
-        "Expected '    # Comment inside if' but got: {:?}", result);
-    assert!(!result.contains("\t# Comment inside if"),
-        "Should not contain tab before comment");
+    assert!(
+        result.contains("    # Comment inside if"),
+        "Expected '    # Comment inside if' but got: {:?}",
+        result
+    );
+    assert!(
+        !result.contains("\t# Comment inside if"),
+        "Should not contain tab before comment"
+    );
 }
 
 /// Test CMNT-02: Nested comment indentation with tabs (2 levels)
@@ -389,8 +416,11 @@ fn test_nested_comment_indentation_tabs() {
     };
     let result = format_text(input, &config);
     // Comment should be indented with 2 tabs (2 levels deep)
-    assert!(result.contains("\t\t# Deep comment"),
-        "Expected '\\t\\t# Deep comment' but got: {:?}", result);
+    assert!(
+        result.contains("\t\t# Deep comment"),
+        "Expected '\\t\\t# Deep comment' but got: {:?}",
+        result
+    );
 }
 
 /// Test CMNT-02: Nested comment indentation with spaces (2 levels)
@@ -404,10 +434,15 @@ fn test_nested_comment_indentation_spaces() {
     };
     let result = format_text(input, &config);
     // Comment should be indented with 4 spaces (2 levels * 2 width)
-    assert!(result.contains("    # Deep comment"),
-        "Expected '    # Deep comment' (4 spaces) but got: {:?}", result);
-    assert!(!result.contains("\t\t# Deep comment"),
-        "Should not contain tabs before comment");
+    assert!(
+        result.contains("    # Deep comment"),
+        "Expected '    # Deep comment' (4 spaces) but got: {:?}",
+        result
+    );
+    assert!(
+        !result.contains("\t\t# Deep comment"),
+        "Should not contain tabs before comment"
+    );
 }
 
 /// Test CMNT-02: Standalone comment (not leading a command) inside if block with spaces
@@ -421,10 +456,15 @@ fn test_standalone_comment_indentation_spaces() {
     };
     let result = format_text(input, &config);
     // Standalone comment should be indented with 4 spaces
-    assert!(result.contains("    # Standalone comment"),
-        "Expected '    # Standalone comment' but got: {:?}", result);
-    assert!(!result.contains("\t# Standalone comment"),
-        "Should not contain tab before standalone comment");
+    assert!(
+        result.contains("    # Standalone comment"),
+        "Expected '    # Standalone comment' but got: {:?}",
+        result
+    );
+    assert!(
+        !result.contains("\t# Standalone comment"),
+        "Should not contain tab before standalone comment"
+    );
 }
 
 // ============================================================================
@@ -439,7 +479,11 @@ fn test_arglist_comment_inside_set() {
     let result = format_text(input, &config);
 
     // Comment should be present
-    assert!(result.contains("# Group A"), "Comment should be preserved, got: {}", result);
+    assert!(
+        result.contains("# Group A"),
+        "Comment should be preserved, got: {}",
+        result
+    );
     // All items should be present
     assert!(result.contains("item1"), "item1 should be present");
     assert!(result.contains("item2"), "item2 should be present");
@@ -449,8 +493,10 @@ fn test_arglist_comment_inside_set() {
     let item1_pos = result.find("item1").unwrap();
     let comment_pos = result.find("# Group A").unwrap();
     let item2_pos = result.find("item2").unwrap();
-    assert!(item1_pos < comment_pos && comment_pos < item2_pos,
-        "Comment should appear between item1 and item2");
+    assert!(
+        item1_pos < comment_pos && comment_pos < item2_pos,
+        "Comment should appear between item1 and item2"
+    );
 }
 
 /// Test CMNT-01: Comments are not duplicated
@@ -462,7 +508,11 @@ fn test_arglist_comment_not_duplicated() {
 
     // Count occurrences of comment
     let count = result.matches("# Comment inside").count();
-    assert_eq!(count, 1, "Comment should appear exactly once, got {} occurrences in: {}", count, result);
+    assert_eq!(
+        count, 1,
+        "Comment should appear exactly once, got {} occurrences in: {}",
+        count, result
+    );
 }
 
 /// Test ARGL-01: Blank lines are preserved in argument lists
@@ -474,8 +524,11 @@ fn test_arglist_blank_line_preserved() {
 
     // Should have a blank line between src/b.cpp and src/c.cpp
     // Look for pattern: b.cpp\n\n (two newlines)
-    assert!(result.contains("src/b.cpp\n\n"),
-        "Should have blank line after src/b.cpp, got: {}", result);
+    assert!(
+        result.contains("src/b.cpp\n\n"),
+        "Should have blank line after src/b.cpp, got: {}",
+        result
+    );
 }
 
 /// Test ARGL-01: Blank lines respect max_blank_lines config
@@ -489,11 +542,17 @@ fn test_arglist_blank_line_respects_max() {
     let result = format_text(input, &config);
 
     // Should have at most 1 blank line (2 consecutive newlines)
-    assert!(!result.contains("\n\n\n"),
-        "Should not have more than 1 blank line (max_blank_lines=1), got: {}", result);
+    assert!(
+        !result.contains("\n\n\n"),
+        "Should not have more than 1 blank line (max_blank_lines=1), got: {}",
+        result
+    );
     // Should still have 1 blank line
-    assert!(result.contains("src/a.cpp\n\n"),
-        "Should have 1 blank line preserved, got: {}", result);
+    assert!(
+        result.contains("src/a.cpp\n\n"),
+        "Should have 1 blank line preserved, got: {}",
+        result
+    );
 }
 
 /// Test ARGL-02: Multiline argument lists stay multiline
@@ -504,10 +563,21 @@ fn test_arglist_multiline_stays_multiline() {
     let result = format_text(input, &config);
 
     // Should stay multiline (not collapse to one line)
-    assert!(result.contains("a\n"), "Should have newline after 'a', got: {}", result);
-    assert!(result.contains("b\n"), "Should have newline after 'b', got: {}", result);
-    assert!(!result.eq("set(SHORT_LIST a b)\n"),
-        "Should NOT collapse to single line, got: {}", result);
+    assert!(
+        result.contains("a\n"),
+        "Should have newline after 'a', got: {}",
+        result
+    );
+    assert!(
+        result.contains("b\n"),
+        "Should have newline after 'b', got: {}",
+        result
+    );
+    assert!(
+        !result.eq("set(SHORT_LIST a b)\n"),
+        "Should NOT collapse to single line, got: {}",
+        result
+    );
 }
 
 /// Test ARGL-02: One-line argument lists stay one line
@@ -530,12 +600,17 @@ fn test_arglist_first_arg_same_line() {
 
     // First line should start with "set(MY_LIST"
     let first_line = result.lines().next().unwrap();
-    assert!(first_line.starts_with("set(MY_LIST"),
-        "First line should start with 'set(MY_LIST', got: {}", first_line);
+    assert!(
+        first_line.starts_with("set(MY_LIST"),
+        "First line should start with 'set(MY_LIST', got: {}",
+        first_line
+    );
 
     // Should NOT contain "set(\n" pattern
-    assert!(!result.contains("set(\n"),
-        "Should not have newline immediately after opening paren");
+    assert!(
+        !result.contains("set(\n"),
+        "Should not have newline immediately after opening paren"
+    );
 }
 
 /// Test ARGL-03: First argument same line even with comment
@@ -547,8 +622,11 @@ fn test_arglist_first_arg_same_line_with_comment() {
 
     // First line should start with "set(MY_LIST"
     let first_line = result.lines().next().unwrap();
-    assert!(first_line.starts_with("set(MY_LIST"),
-        "First line should start with 'set(MY_LIST' even with comment, got: {}", first_line);
+    assert!(
+        first_line.starts_with("set(MY_LIST"),
+        "First line should start with 'set(MY_LIST' even with comment, got: {}",
+        first_line
+    );
 }
 
 /// Test combined: comment and blank line in argument list
@@ -559,17 +637,20 @@ fn test_arglist_comment_and_blank_line() {
     let result = format_text(input, &config);
 
     // Comment should be preserved
-    assert!(result.contains("# Group separator"),
-        "Comment should be preserved");
+    assert!(
+        result.contains("# Group separator"),
+        "Comment should be preserved"
+    );
 
     // Blank line should be preserved
-    assert!(result.contains("\n\n"),
-        "Blank line should be preserved");
+    assert!(result.contains("\n\n"), "Blank line should be preserved");
 
     // First arg on same line
     let first_line = result.lines().next().unwrap();
-    assert!(first_line.starts_with("set(SOURCES"),
-        "First arg should be on same line as command");
+    assert!(
+        first_line.starts_with("set(SOURCES"),
+        "First arg should be on same line as command"
+    );
 }
 
 /// Test idempotency: formatting twice produces same result
@@ -587,8 +668,11 @@ fn test_arglist_idempotency() {
     for input in inputs {
         let once = format_text(input, &config);
         let twice = format_text(&once, &config);
-        assert_eq!(once, twice,
-            "Formatting should be idempotent for input: {}", input);
+        assert_eq!(
+            once, twice,
+            "Formatting should be idempotent for input: {}",
+            input
+        );
     }
 }
 
@@ -612,17 +696,24 @@ fn test_infer_with_function_definition() {
     let config = default_config();
     let result = format_text(input, &config);
     // myhelper() call should be inferred as MyHelper from the definition
-    assert!(result.contains("MyHelper(foo)"),
-        "Should infer MyHelper casing from definition, got: {}", result);
+    assert!(
+        result.contains("MyHelper(foo)"),
+        "Should infer MyHelper casing from definition, got: {}",
+        result
+    );
 }
 
 #[test]
 fn test_infer_with_macro_definition() {
-    let input = "macro(GenerateCI target)\nadd_test(NAME ${target})\nendmacro()\ngenerateci(mytest)\n";
+    let input =
+        "macro(GenerateCI target)\nadd_test(NAME ${target})\nendmacro()\ngenerateci(mytest)\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert!(result.contains("GenerateCI(mytest)"),
-        "Should infer GenerateCI casing from macro definition, got: {}", result);
+    assert!(
+        result.contains("GenerateCI(mytest)"),
+        "Should infer GenerateCI casing from macro definition, got: {}",
+        result
+    );
 }
 
 #[test]
@@ -664,8 +755,11 @@ fn test_user_command_case_leave() {
     };
     let result = format_text(input, &config);
     // Even though definition says MyHelper, Preserve mode keeps original casing
-    assert!(result.contains("myhelper(foo)"),
-        "Preserve mode should keep original casing, got: {}", result);
+    assert!(
+        result.contains("myhelper(foo)"),
+        "Preserve mode should keep original casing, got: {}",
+        result
+    );
 }
 
 #[test]
@@ -678,8 +772,16 @@ fn test_builtin_uppercase_user_infer() {
     };
     let result = format_text(input, &config);
     // Builtins uppercased, user command inferred
-    assert!(result.contains("SET(X y)"), "Builtins should be uppercase, got: {}", result);
-    assert!(result.contains("MyHelper(foo)"), "User commands should be inferred, got: {}", result);
+    assert!(
+        result.contains("SET(X y)"),
+        "Builtins should be uppercase, got: {}",
+        result
+    );
+    assert!(
+        result.contains("MyHelper(foo)"),
+        "User commands should be inferred, got: {}",
+        result
+    );
 }
 
 #[test]
@@ -694,8 +796,11 @@ fn test_user_command_casing_idempotency() {
     for input in inputs {
         let once = format_text(input, &config);
         let twice = format_text(&once, &config);
-        assert_eq!(once, twice,
-            "User command casing should be idempotent for input: {}", input);
+        assert_eq!(
+            once, twice,
+            "User command casing should be idempotent for input: {}",
+            input
+        );
     }
 }
 
@@ -719,15 +824,21 @@ fn test_large_file_no_stack_overflow() {
     assert!(!result.is_empty(), "Result should not be empty");
 
     // Verify first and last commands are present
-    assert!(result.contains("cmake_minimum_required(VERSION 3.10)"),
-        "First command should be present");
-    assert!(result.contains("set(VAR_1999 value_1999)"),
-        "Last command should be present");
+    assert!(
+        result.contains("cmake_minimum_required(VERSION 3.10)"),
+        "First command should be present"
+    );
+    assert!(
+        result.contains("set(VAR_1999 value_1999)"),
+        "Last command should be present"
+    );
 
     // Verify idempotency
     let result2 = format_text(&result, &config);
-    assert_eq!(result, result2,
-        "Formatting should be idempotent for large files");
+    assert_eq!(
+        result, result2,
+        "Formatting should be idempotent for large files"
+    );
 }
 
 #[test]
@@ -754,8 +865,7 @@ fn test_very_large_file_no_stack_overflow() {
     assert!(!result.is_empty(), "Result should not be empty");
 
     // Verify output ends with newline
-    assert!(result.ends_with('\n'),
-        "Output should end with newline");
+    assert!(result.ends_with('\n'), "Output should end with newline");
 }
 
 /// Regression test: blank lines between commands/comments must be preserved
@@ -791,7 +901,8 @@ fn test_blank_line_preserved_across_batch_boundary() {
          Expected to find: set(VAR_259 value_259)\\n\\n# Section after batch boundary\n\
          Got around boundary:\n{}",
         // Show context around the boundary for debugging
-        result.lines()
+        result
+            .lines()
             .collect::<Vec<_>>()
             .windows(5)
             .find(|w| w.iter().any(|l| l.contains("VAR_259")))
@@ -800,15 +911,21 @@ fn test_blank_line_preserved_across_batch_boundary() {
     );
 
     // The comment and final command must also be present
-    assert!(result.contains("# Section after batch boundary"),
-        "Comment after batch boundary should be present");
-    assert!(result.contains("set(FINAL_VAR final_value)"),
-        "Command after comment should be present");
+    assert!(
+        result.contains("# Section after batch boundary"),
+        "Comment after batch boundary should be present"
+    );
+    assert!(
+        result.contains("set(FINAL_VAR final_value)"),
+        "Command after comment should be present"
+    );
 
     // Verify idempotency
     let result2 = format_text(&result, &config);
-    assert_eq!(result, result2,
-        "Formatting should be idempotent across batch boundaries with blank lines");
+    assert_eq!(
+        result, result2,
+        "Formatting should be idempotent across batch boundaries with blank lines"
+    );
 }
 
 /// Regression test: blank lines between two commands (no comments) must also
@@ -832,7 +949,8 @@ fn test_blank_line_between_commands_across_batch_boundary() {
         result.contains("set(VAR_259 value_259)\n\nset(AFTER_BOUNDARY after_value)"),
         "Blank line between commands must be preserved across batch boundary.\n\
          Got around boundary:\n{}",
-        result.lines()
+        result
+            .lines()
             .collect::<Vec<_>>()
             .windows(5)
             .find(|w| w.iter().any(|l| l.contains("VAR_259")))
@@ -851,11 +969,17 @@ fn test_final_newline_leave_default() {
     let input_no_nl = "set(FOO bar)";
     let config = default_config();
     let result = format_text(input_no_nl, &config);
-    assert_eq!(result, "set(FOO bar)", "Default Preserve should not add trailing newline when input lacks one");
+    assert_eq!(
+        result, "set(FOO bar)",
+        "Default Preserve should not add trailing newline when input lacks one"
+    );
 
     let input_with_nl = "set(FOO bar)\n";
     let result = format_text(input_with_nl, &config);
-    assert_eq!(result, "set(FOO bar)\n", "Default Preserve should preserve trailing newline when input has one");
+    assert_eq!(
+        result, "set(FOO bar)\n",
+        "Default Preserve should preserve trailing newline when input has one"
+    );
 }
 
 #[test]
@@ -864,7 +988,10 @@ fn test_final_newline_false_no_trailing_newline() {
     let mut config = default_config();
     config.final_newline = FinalNewline::Remove;
     let result = format_text(input, &config);
-    assert_eq!(result, "set(FOO bar)", "final_newline=Remove should not add trailing newline");
+    assert_eq!(
+        result, "set(FOO bar)",
+        "final_newline=Remove should not add trailing newline"
+    );
 }
 
 #[test]
@@ -873,7 +1000,10 @@ fn test_final_newline_false_empty_input() {
     let mut config = default_config();
     config.final_newline = FinalNewline::Remove;
     let result = format_text(input, &config);
-    assert_eq!(result, "", "Empty input should remain empty regardless of final_newline");
+    assert_eq!(
+        result, "",
+        "Empty input should remain empty regardless of final_newline"
+    );
 }
 
 #[test]
@@ -882,7 +1012,10 @@ fn test_final_newline_false_multiline() {
     let mut config = default_config();
     config.final_newline = FinalNewline::Remove;
     let result = format_text(input, &config);
-    assert_eq!(result, "set(A b)\nset(C d)", "final_newline=Remove should not add trailing newline on multiline");
+    assert_eq!(
+        result, "set(A b)\nset(C d)",
+        "final_newline=Remove should not add trailing newline on multiline"
+    );
 }
 
 #[test]
@@ -890,7 +1023,10 @@ fn test_final_newline_true_preserves_existing_behavior() {
     let input = "set(FOO bar)\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "set(FOO bar)\n", "final_newline=true (default) should preserve single trailing newline");
+    assert_eq!(
+        result, "set(FOO bar)\n",
+        "final_newline=true (default) should preserve single trailing newline"
+    );
 }
 
 // Force mode tests
@@ -901,7 +1037,10 @@ fn test_final_newline_force_adds_newline() {
     let mut config = default_config();
     config.final_newline = FinalNewline::Force;
     let result = format_text(input, &config);
-    assert_eq!(result, "set(FOO bar)\n", "FinalNewline::Force should add trailing newline when missing");
+    assert_eq!(
+        result, "set(FOO bar)\n",
+        "FinalNewline::Force should add trailing newline when missing"
+    );
 }
 
 // Preserve mode tests
@@ -912,7 +1051,10 @@ fn test_final_newline_leave_with_trailing_newline() {
     let mut config = default_config();
     config.final_newline = FinalNewline::Preserve;
     let result = format_text(input, &config);
-    assert_eq!(result, "set(FOO bar)\n", "Preserve mode should preserve trailing newline when present");
+    assert_eq!(
+        result, "set(FOO bar)\n",
+        "Preserve mode should preserve trailing newline when present"
+    );
 }
 
 #[test]
@@ -921,7 +1063,10 @@ fn test_final_newline_leave_without_trailing_newline() {
     let mut config = default_config();
     config.final_newline = FinalNewline::Preserve;
     let result = format_text(input, &config);
-    assert_eq!(result, "set(FOO bar)", "Preserve mode should not add trailing newline when input had none");
+    assert_eq!(
+        result, "set(FOO bar)",
+        "Preserve mode should not add trailing newline when input had none"
+    );
 }
 
 #[test]
@@ -930,7 +1075,10 @@ fn test_final_newline_leave_multiline_with_newline() {
     let mut config = default_config();
     config.final_newline = FinalNewline::Preserve;
     let result = format_text(input, &config);
-    assert_eq!(result, "set(A b)\nset(C d)\n", "Preserve mode should preserve trailing newline in multiline input");
+    assert_eq!(
+        result, "set(A b)\nset(C d)\n",
+        "Preserve mode should preserve trailing newline in multiline input"
+    );
 }
 
 #[test]
@@ -939,7 +1087,10 @@ fn test_final_newline_leave_multiline_without_newline() {
     let mut config = default_config();
     config.final_newline = FinalNewline::Preserve;
     let result = format_text(input, &config);
-    assert_eq!(result, "set(A b)\nset(C d)", "Preserve mode should not add trailing newline to multiline input without one");
+    assert_eq!(
+        result, "set(A b)\nset(C d)",
+        "Preserve mode should not add trailing newline to multiline input without one"
+    );
 }
 
 #[test]
@@ -948,7 +1099,10 @@ fn test_final_newline_leave_empty_input() {
     let mut config = default_config();
     config.final_newline = FinalNewline::Preserve;
     let result = format_text(input, &config);
-    assert_eq!(result, "", "Preserve mode should return empty for empty input");
+    assert_eq!(
+        result, "",
+        "Preserve mode should return empty for empty input"
+    );
 }
 
 // Backward-compat deserialization tests
@@ -957,42 +1111,70 @@ fn test_final_newline_leave_empty_input() {
 fn test_final_newline_deserialize_bool_true() {
     let toml = "final_newline = true\n";
     let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = true");
-    assert_eq!(config.final_newline, FinalNewline::Force, "bool true should map to Force");
+    assert_eq!(
+        config.final_newline,
+        FinalNewline::Force,
+        "bool true should map to Force"
+    );
 }
 
 #[test]
 fn test_final_newline_deserialize_bool_false() {
     let toml = "final_newline = false\n";
     let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = false");
-    assert_eq!(config.final_newline, FinalNewline::Remove, "bool false should map to Remove");
+    assert_eq!(
+        config.final_newline,
+        FinalNewline::Remove,
+        "bool false should map to Remove"
+    );
 }
 
 #[test]
 fn test_final_newline_deserialize_string_leave() {
     let toml = "final_newline = \"leave\"\n";
-    let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = \"leave\"");
-    assert_eq!(config.final_newline, FinalNewline::Preserve, "string \"leave\" should map to Preserve");
+    let config: FormatConfig =
+        toml::from_str(toml).expect("Should parse final_newline = \"leave\"");
+    assert_eq!(
+        config.final_newline,
+        FinalNewline::Preserve,
+        "string \"leave\" should map to Preserve"
+    );
 }
 
 #[test]
 fn test_final_newline_deserialize_string_remove() {
     let toml = "final_newline = \"remove\"\n";
-    let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = \"remove\"");
-    assert_eq!(config.final_newline, FinalNewline::Remove, "string \"remove\" should map to Remove");
+    let config: FormatConfig =
+        toml::from_str(toml).expect("Should parse final_newline = \"remove\"");
+    assert_eq!(
+        config.final_newline,
+        FinalNewline::Remove,
+        "string \"remove\" should map to Remove"
+    );
 }
 
 #[test]
 fn test_final_newline_deserialize_string_force() {
     let toml = "final_newline = \"force\"\n";
-    let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = \"force\"");
-    assert_eq!(config.final_newline, FinalNewline::Force, "string \"force\" should map to Force");
+    let config: FormatConfig =
+        toml::from_str(toml).expect("Should parse final_newline = \"force\"");
+    assert_eq!(
+        config.final_newline,
+        FinalNewline::Force,
+        "string \"force\" should map to Force"
+    );
 }
 
 #[test]
 fn test_final_newline_deserialize_string_preserve() {
     let toml = "final_newline = \"preserve\"\n";
-    let config: FormatConfig = toml::from_str(toml).expect("Should parse final_newline = \"preserve\"");
-    assert_eq!(config.final_newline, FinalNewline::Preserve, "string \"preserve\" should map to Preserve");
+    let config: FormatConfig =
+        toml::from_str(toml).expect("Should parse final_newline = \"preserve\"");
+    assert_eq!(
+        config.final_newline,
+        FinalNewline::Preserve,
+        "string \"preserve\" should map to Preserve"
+    );
 }
 
 // Backward-compatibility: "leave" still accepted as alias for "preserve"
@@ -1000,14 +1182,23 @@ fn test_final_newline_deserialize_string_preserve() {
 fn test_command_case_leave_backward_compat() {
     let toml = "command_case = \"leave\"\n";
     let config: FormatConfig = toml::from_str(toml).expect("Should parse command_case = \"leave\"");
-    assert_eq!(config.command_case, CommandCase::Preserve, "\"leave\" should be accepted as alias for CommandCase::Preserve");
+    assert_eq!(
+        config.command_case,
+        CommandCase::Preserve,
+        "\"leave\" should be accepted as alias for CommandCase::Preserve"
+    );
 }
 
 #[test]
 fn test_closing_style_leave_backward_compat() {
     let toml = "closing_style = \"leave\"\n";
-    let config: FormatConfig = toml::from_str(toml).expect("Should parse closing_style = \"leave\"");
-    assert_eq!(config.closing_style, ClosingStyle::Preserve, "\"leave\" should be accepted as alias for ClosingStyle::Preserve");
+    let config: FormatConfig =
+        toml::from_str(toml).expect("Should parse closing_style = \"leave\"");
+    assert_eq!(
+        config.closing_style,
+        ClosingStyle::Preserve,
+        "\"leave\" should be accepted as alias for ClosingStyle::Preserve"
+    );
 }
 
 // ============================================================================
@@ -1019,8 +1210,16 @@ fn test_comment_tabs_normalized_to_single_space() {
     let input = "set(SOURCES\n\t#\t\tfilename.hpp\n\tvalue\n)\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert!(result.contains("# filename.hpp"), "Tab whitespace in comment should be normalized. Got: {}", result);
-    assert!(!result.contains("#\t"), "No tabs should remain in comment. Got: {}", result);
+    assert!(
+        result.contains("# filename.hpp"),
+        "Tab whitespace in comment should be normalized. Got: {}",
+        result
+    );
+    assert!(
+        !result.contains("#\t"),
+        "No tabs should remain in comment. Got: {}",
+        result
+    );
 }
 
 #[test]
@@ -1028,7 +1227,11 @@ fn test_comment_already_normalized_unchanged() {
     let input = "set(SOURCES\n\t# already normal\n\tvalue\n)\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert!(result.contains("# already normal"), "Already-normalized comment should stay the same. Got: {}", result);
+    assert!(
+        result.contains("# already normal"),
+        "Already-normalized comment should stay the same. Got: {}",
+        result
+    );
 }
 
 #[test]
@@ -1036,7 +1239,11 @@ fn test_comment_no_space_after_hash() {
     let input = "set(SOURCES\n\t#no-space\n\tvalue\n)\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert!(result.contains("# no-space"), "Comment without space after hash should get one. Got: {}", result);
+    assert!(
+        result.contains("# no-space"),
+        "Comment without space after hash should get one. Got: {}",
+        result
+    );
 }
 
 #[test]
@@ -1049,7 +1256,11 @@ fn test_comment_hash_only_stays_bare() {
     for line in result.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('#') && !trimmed.starts_with("#[") && trimmed.len() <= 1 {
-            assert_eq!(trimmed, "#", "Hash-only comment should stay as '#'. Got: '{}'", trimmed);
+            assert_eq!(
+                trimmed, "#",
+                "Hash-only comment should stay as '#'. Got: '{}'",
+                trimmed
+            );
         }
     }
 }
@@ -1059,7 +1270,11 @@ fn test_trailing_comment_whitespace_normalized() {
     let input = "set(FLAGS\n\t-Wall #   extra spaces comment\n)\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert!(result.contains("# extra spaces comment"), "Trailing comment whitespace should be normalized. Got: {}", result);
+    assert!(
+        result.contains("# extra spaces comment"),
+        "Trailing comment whitespace should be normalized. Got: {}",
+        result
+    );
 }
 
 #[test]
@@ -1067,7 +1282,11 @@ fn test_bracket_comment_inside_arglist_unchanged() {
     let input = "set(LIST\n\tvalue1\n\t#[=[\n  Keep   this   spacing\n  ]=]\n\tvalue2\n)\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert!(result.contains("Keep   this   spacing"), "Bracket comment content should be preserved. Got: {}", result);
+    assert!(
+        result.contains("Keep   this   spacing"),
+        "Bracket comment content should be preserved. Got: {}",
+        result
+    );
 }
 
 #[test]
@@ -1075,7 +1294,11 @@ fn test_comment_multiple_spaces_normalized() {
     let input = "set(SOURCES\n\t#     lots   of   spaces\n\tvalue\n)\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert!(result.contains("# lots   of   spaces"), "Only leading whitespace after # should be normalized, internal spacing preserved. Got: {}", result);
+    assert!(
+        result.contains("# lots   of   spaces"),
+        "Only leading whitespace after # should be normalized, internal spacing preserved. Got: {}",
+        result
+    );
 }
 
 // Test comment_style=leave preserves original whitespace
@@ -1087,8 +1310,16 @@ fn test_comment_style_leave_preserves_original() {
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.contains("#no-space"), "comment_style=leave should preserve original '#no-space'. Got: {}", result);
-    assert!(!result.contains("# no-space"), "comment_style=leave should NOT normalize to '# no-space'. Got: {}", result);
+    assert!(
+        result.contains("#no-space"),
+        "comment_style=leave should preserve original '#no-space'. Got: {}",
+        result
+    );
+    assert!(
+        !result.contains("# no-space"),
+        "comment_style=leave should NOT normalize to '# no-space'. Got: {}",
+        result
+    );
 }
 
 // Test comment_style=hash_no_space removes space after hash
@@ -1100,8 +1331,16 @@ fn test_comment_style_hash_no_space() {
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.contains("#has space"), "comment_style=hash_no_space should strip space after hash. Got: {}", result);
-    assert!(!result.contains("# has space"), "comment_style=hash_no_space should NOT keep space after hash. Got: {}", result);
+    assert!(
+        result.contains("#has space"),
+        "comment_style=hash_no_space should strip space after hash. Got: {}",
+        result
+    );
+    assert!(
+        !result.contains("# has space"),
+        "comment_style=hash_no_space should NOT keep space after hash. Got: {}",
+        result
+    );
 }
 
 // Test comment_style=hash_space is default
@@ -1110,7 +1349,11 @@ fn test_comment_style_hash_space_is_default() {
     let input = "set(SOURCES\n\t#no-space\n\tvalue\n)\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert!(result.contains("# no-space"), "default config should normalize to '# no-space'. Got: {}", result);
+    assert!(
+        result.contains("# no-space"),
+        "default config should normalize to '# no-space'. Got: {}",
+        result
+    );
 }
 
 // Test comment_style=leave preserves tabs
@@ -1122,7 +1365,11 @@ fn test_comment_style_leave_preserves_tabs() {
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.contains("#\t\ttabbed"), "comment_style=leave should preserve tabs. Got: {}", result);
+    assert!(
+        result.contains("#\t\ttabbed"),
+        "comment_style=leave should preserve tabs. Got: {}",
+        result
+    );
 }
 
 // Test comment_style=hash_no_space handles hash-only comments
@@ -1137,7 +1384,11 @@ fn test_comment_style_hash_no_space_hash_only() {
     // Hash-only comments should remain as just "#"
     let lines: Vec<&str> = result.lines().collect();
     let comment_line = lines.iter().find(|l| l.trim() == "#");
-    assert!(comment_line.is_some(), "Hash-only comment should remain as '#'. Got: {}", result);
+    assert!(
+        comment_line.is_some(),
+        "Hash-only comment should remain as '#'. Got: {}",
+        result
+    );
 }
 
 // Test standalone comments respect comment_style
@@ -1149,7 +1400,11 @@ fn test_standalone_comment_respects_comment_style() {
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.starts_with("#no-space standalone"), "Standalone comment should preserve original with comment_style=leave. Got: {}", result);
+    assert!(
+        result.starts_with("#no-space standalone"),
+        "Standalone comment should preserve original with comment_style=leave. Got: {}",
+        result
+    );
 }
 
 // Test trailing comments respect comment_style
@@ -1161,7 +1416,11 @@ fn test_trailing_comment_respects_comment_style() {
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.contains("#no-space trailing"), "Trailing comment should preserve original with comment_style=leave. Got: {}", result);
+    assert!(
+        result.contains("#no-space trailing"),
+        "Trailing comment should preserve original with comment_style=leave. Got: {}",
+        result
+    );
 }
 
 // ============================================================================
@@ -1177,7 +1436,11 @@ fn test_double_hash_preserved_with_hash_space() {
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.contains("## DXV4 After Effects exporter"), "Double-hash comment should be preserved exactly with HashSpace. Got: {}", result);
+    assert!(
+        result.contains("## DXV4 After Effects exporter"),
+        "Double-hash comment should be preserved exactly with HashSpace. Got: {}",
+        result
+    );
 }
 
 // Test double-hash without space preserved
@@ -1189,8 +1452,16 @@ fn test_double_hash_no_space_preserved() {
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.contains("##foo"), "Double-hash comment without space should stay as-is (no space added). Got: {}", result);
-    assert!(!result.contains("## foo"), "HashSpace should NOT normalize ##foo. Got: {}", result);
+    assert!(
+        result.contains("##foo"),
+        "Double-hash comment without space should stay as-is (no space added). Got: {}",
+        result
+    );
+    assert!(
+        !result.contains("## foo"),
+        "HashSpace should NOT normalize ##foo. Got: {}",
+        result
+    );
 }
 
 // Test triple-hash comments preserved
@@ -1202,7 +1473,11 @@ fn test_triple_hash_preserved() {
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.contains("### Section"), "Triple-hash comment should be preserved exactly. Got: {}", result);
+    assert!(
+        result.contains("### Section"),
+        "Triple-hash comment should be preserved exactly. Got: {}",
+        result
+    );
 }
 
 // Test double-hash preserved with HashNoSpace
@@ -1214,8 +1489,16 @@ fn test_double_hash_preserved_with_hash_no_space() {
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.contains("## foo"), "Double-hash comment should be preserved (space NOT removed) with HashNoSpace. Got: {}", result);
-    assert!(!result.contains("##foo"), "HashNoSpace should NOT strip space from ## foo. Got: {}", result);
+    assert!(
+        result.contains("## foo"),
+        "Double-hash comment should be preserved (space NOT removed) with HashNoSpace. Got: {}",
+        result
+    );
+    assert!(
+        !result.contains("##foo"),
+        "HashNoSpace should NOT strip space from ## foo. Got: {}",
+        result
+    );
 }
 
 // Test double-hash in full format context
@@ -1227,8 +1510,16 @@ fn test_double_hash_in_full_format() {
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.contains("## Main heading"), "Double-hash standalone comment should be preserved. Got: {}", result);
-    assert!(result.contains("## Another section"), "Multiple double-hash comments should all be preserved. Got: {}", result);
+    assert!(
+        result.contains("## Main heading"),
+        "Double-hash standalone comment should be preserved. Got: {}",
+        result
+    );
+    assert!(
+        result.contains("## Another section"),
+        "Multiple double-hash comments should all be preserved. Got: {}",
+        result
+    );
 }
 
 // ============================================================================
@@ -1243,7 +1534,10 @@ fn test_disable_format_returns_input_unchanged() {
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert_eq!(result, input, "disable_format=true should return input unchanged");
+    assert_eq!(
+        result, input,
+        "disable_format=true should return input unchanged"
+    );
 }
 
 #[test]
@@ -1254,8 +1548,14 @@ fn test_disable_format_false_still_formats() {
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert_ne!(result, input, "disable_format=false (default) should still format input");
-    assert_eq!(result, "set(FOO BAR)\n", "Expected properly formatted output");
+    assert_ne!(
+        result, input,
+        "disable_format=false (default) should still format input"
+    );
+    assert_eq!(
+        result, "set(FOO BAR)\n",
+        "Expected properly formatted output"
+    );
 }
 
 // ============================================================================
@@ -1268,8 +1568,10 @@ fn test_blank_line_after_leading_comment_preserved() {
     let input = "# Leading comment\n\nset(FOO bar)\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "# Leading comment\n\nset(FOO bar)\n",
-        "Blank line between comment and command should be preserved");
+    assert_eq!(
+        result, "# Leading comment\n\nset(FOO bar)\n",
+        "Blank line between comment and command should be preserved"
+    );
 }
 
 /// Blank line before AND after a leading comment should both be preserved
@@ -1278,8 +1580,10 @@ fn test_blank_lines_before_and_after_leading_comment() {
     let input = "set(A a)\n\n# Comment\n\nset(B b)\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "set(A a)\n\n# Comment\n\nset(B b)\n",
-        "Both blank lines (before and after comment) should be preserved");
+    assert_eq!(
+        result, "set(A a)\n\n# Comment\n\nset(B b)\n",
+        "Both blank lines (before and after comment) should be preserved"
+    );
 }
 
 /// No blank line between comment and command: should stay tight
@@ -1288,8 +1592,10 @@ fn test_no_blank_line_after_leading_comment_unchanged() {
     let input = "# Leading comment\nset(FOO bar)\n";
     let config = default_config();
     let result = format_text(input, &config);
-    assert_eq!(result, "# Leading comment\nset(FOO bar)\n",
-        "No blank line should be inserted when none existed");
+    assert_eq!(
+        result, "# Leading comment\nset(FOO bar)\n",
+        "No blank line should be inserted when none existed"
+    );
 }
 
 /// Idempotency: formatting blank-line-after-comment twice yields same result
@@ -1304,7 +1610,11 @@ fn test_blank_line_after_leading_comment_idempotent() {
     for input in inputs {
         let once = format_text(input, &config);
         let twice = format_text(&once, &config);
-        assert_eq!(once, twice, "Formatting should be idempotent for input: {:?}", input);
+        assert_eq!(
+            once, twice,
+            "Formatting should be idempotent for input: {:?}",
+            input
+        );
     }
 }
 
@@ -1336,14 +1646,26 @@ cmake_minimum_required(VERSION 3.10)
     };
     let result = format_text(input, &config);
     // Every comment line must be preserved exactly (no normalization of #  1. or #     this)
-    assert!(result.contains("#  1. Redistributions of source code"),
-        "Double-space indentation in block should be preserved, got: {}", result);
-    assert!(result.contains("#     this list of conditions"),
-        "Five-space alignment in block should be preserved, got: {}", result);
-    assert!(result.contains("#\n"),
-        "Blank # separators in block should be preserved, got: {}", result);
-    assert!(result.contains("#  2. Redistributions in binary form"),
-        "Second item double-space indentation should be preserved, got: {}", result);
+    assert!(
+        result.contains("#  1. Redistributions of source code"),
+        "Double-space indentation in block should be preserved, got: {}",
+        result
+    );
+    assert!(
+        result.contains("#     this list of conditions"),
+        "Five-space alignment in block should be preserved, got: {}",
+        result
+    );
+    assert!(
+        result.contains("#\n"),
+        "Blank # separators in block should be preserved, got: {}",
+        result
+    );
+    assert!(
+        result.contains("#  2. Redistributions in binary form"),
+        "Second item double-space indentation should be preserved, got: {}",
+        result
+    );
 }
 
 /// Isolated single-line comment is still normalized per comment_style
@@ -1358,10 +1680,16 @@ cmake_minimum_required(VERSION 3.10)
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.contains("# TODO fix this"),
-        "Isolated comment should be normalized with HashSpace, got: {}", result);
-    assert!(!result.contains("#TODO"),
-        "Original un-normalized form should not appear, got: {}", result);
+    assert!(
+        result.contains("# TODO fix this"),
+        "Isolated comment should be normalized with HashSpace, got: {}",
+        result
+    );
+    assert!(
+        !result.contains("#TODO"),
+        "Original un-normalized form should not appear, got: {}",
+        result
+    );
 }
 
 /// Formatting a copyright block twice yields identical output (idempotent)
@@ -1413,8 +1741,11 @@ set(RESAPI_SOURCE_MAC
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.contains("RANetworkAdapterOSX.mm\"\n\n"),
-        "Blank line before trailing comments should be preserved, got:\n{}", result);
+    assert!(
+        result.contains("RANetworkAdapterOSX.mm\"\n\n"),
+        "Blank line before trailing comments should be preserved, got:\n{}",
+        result
+    );
 }
 
 /// Blank line before trailing comment block in keyword section (target_link_libraries)
@@ -1435,8 +1766,11 @@ target_link_libraries(myapp
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.contains("lib2\n\n"),
-        "Blank line before trailing comments in keyword section should be preserved, got:\n{}", result);
+    assert!(
+        result.contains("lib2\n\n"),
+        "Blank line before trailing comments in keyword section should be preserved, got:\n{}",
+        result
+    );
 }
 
 /// Blank line before trailing comment block in non-grammar command (format_simple_args path)
@@ -1455,8 +1789,11 @@ some_custom_command(
         ..default_config()
     };
     let result = format_text(input, &config);
-    assert!(result.contains("arg2\n\n"),
-        "Blank line before trailing comments in simple args should be preserved, got:\n{}", result);
+    assert!(
+        result.contains("arg2\n\n"),
+        "Blank line before trailing comments in simple args should be preserved, got:\n{}",
+        result
+    );
 }
 
 /// Formatting is idempotent for blank line before trailing comments
@@ -1478,5 +1815,8 @@ set(RESAPI_SOURCE_MAC
     };
     let once = format_text(input, &config);
     let twice = format_text(&once, &config);
-    assert_eq!(once, twice, "Blank line before trailing comments should be idempotent");
+    assert_eq!(
+        once, twice,
+        "Blank line before trailing comments should be idempotent"
+    );
 }

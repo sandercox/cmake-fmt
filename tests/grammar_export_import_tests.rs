@@ -1,13 +1,13 @@
-use cmake_fmt::formatter::{
-    detect_grammar_format, export_command_grammars, export_grammars,
-    export_grammars_to_toml, import_grammar_file, FormatConfig, GrammarFormat, KeywordType,
-};
 use cmake_fmt::formatter::grammar::{builtin_grammars, config_grammars_to_map};
+use cmake_fmt::formatter::{
+    FormatConfig, GrammarFormat, KeywordType, detect_grammar_format, export_command_grammars,
+    export_grammars, export_grammars_to_toml, import_grammar_file,
+};
 use std::collections::HashMap;
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
-use std::fs;
 
 fn cmake_fmt_bin() -> String {
     env!("CARGO_BIN_EXE_cmake-fmt").to_string()
@@ -19,8 +19,7 @@ fn test_export_builtin_grammars_produces_valid_toml() {
     let toml_content = export_grammars_to_toml(&grammars);
 
     // Should parse back as valid TOML
-    let parsed: toml::Value = toml::from_str(&toml_content)
-        .expect("Exported TOML should be valid");
+    let parsed: toml::Value = toml::from_str(&toml_content).expect("Exported TOML should be valid");
 
     // Check that it has the grammar array
     assert!(parsed.get("grammar").is_some());
@@ -28,8 +27,8 @@ fn test_export_builtin_grammars_produces_valid_toml() {
     assert!(!grammar_array.is_empty());
 
     // Import it back and verify
-    let imported = import_grammar_file(&toml_content)
-        .expect("Should be able to import exported TOML");
+    let imported =
+        import_grammar_file(&toml_content).expect("Should be able to import exported TOML");
     assert!(!imported.is_empty());
 
     // Check for known commands (simple grammars only, multi-mode skipped in import)
@@ -72,16 +71,24 @@ PROPERTIES = "PairValue"
 COMMAND = "BinPack"
 "#;
 
-    let imported = import_grammar_file(toml_content)
-        .expect("Should parse custom grammar");
+    let imported = import_grammar_file(toml_content).expect("Should parse custom grammar");
 
     assert!(imported.contains_key("my_custom_command"));
     let grammar = &imported["my_custom_command"];
 
     assert_eq!(grammar.keyword_type("REQUIRED"), Some(KeywordType::Flag));
-    assert_eq!(grammar.keyword_type("OUTPUT"), Some(KeywordType::SingleValue));
-    assert_eq!(grammar.keyword_type("SOURCES"), Some(KeywordType::MultiValue));
-    assert_eq!(grammar.keyword_type("PROPERTIES"), Some(KeywordType::PairValue));
+    assert_eq!(
+        grammar.keyword_type("OUTPUT"),
+        Some(KeywordType::SingleValue)
+    );
+    assert_eq!(
+        grammar.keyword_type("SOURCES"),
+        Some(KeywordType::MultiValue)
+    );
+    assert_eq!(
+        grammar.keyword_type("PROPERTIES"),
+        Some(KeywordType::PairValue)
+    );
     assert_eq!(grammar.keyword_type("COMMAND"), Some(KeywordType::BinPack));
 }
 
@@ -90,8 +97,7 @@ fn test_import_round_trip() {
     let grammars = builtin_grammars();
     let toml_content = export_grammars_to_toml(&grammars);
 
-    let imported = import_grammar_file(&toml_content)
-        .expect("Should import exported TOML");
+    let imported = import_grammar_file(&toml_content).expect("Should import exported TOML");
 
     // Check that simple grammars round-trip correctly
     // find_package is a simple grammar
@@ -99,9 +105,15 @@ fn test_import_round_trip() {
     let find_package = &imported["find_package"];
 
     // Check that it has expected keywords
-    assert_eq!(find_package.keyword_type("REQUIRED"), Some(KeywordType::Flag));
+    assert_eq!(
+        find_package.keyword_type("REQUIRED"),
+        Some(KeywordType::Flag)
+    );
     assert_eq!(find_package.keyword_type("QUIET"), Some(KeywordType::Flag));
-    assert_eq!(find_package.keyword_type("COMPONENTS"), Some(KeywordType::MultiValue));
+    assert_eq!(
+        find_package.keyword_type("COMPONENTS"),
+        Some(KeywordType::MultiValue)
+    );
 
     // target_link_libraries is also simple
     assert!(imported.contains_key("target_link_libraries"));
@@ -133,8 +145,7 @@ grammar_files = ["{}"]
     );
 
     // Parse the config
-    let config: FormatConfig = toml::from_str(&config_content)
-        .expect("Failed to parse config");
+    let config: FormatConfig = toml::from_str(&config_content).expect("Failed to parse config");
 
     // Check that grammar_files was loaded
     assert_eq!(config.grammar_files.len(), 1);
@@ -163,10 +174,8 @@ FILES = "MultiValue"
 
     // Format a CMake file that uses the custom grammar
     let cmake_content = "my_special_command(REQUIRED FILES file1.txt file2.txt)\n";
-    let (formatted, _warnings) = cmake_fmt::formatter::format_text_with_diagnostics(
-        cmake_content,
-        &config,
-    );
+    let (formatted, _warnings) =
+        cmake_fmt::formatter::format_text_with_diagnostics(cmake_content, &config);
 
     // The command should be recognized and formatted
     // At minimum, it should not crash and should produce valid output
@@ -215,15 +224,16 @@ fn test_export_multimode_commands() {
 
     // install is a multi-mode command
     // Each mode should get its own entry with the mode field set
-    let parsed: toml::Value = toml::from_str(&toml_content)
-        .expect("Should parse as valid TOML");
+    let parsed: toml::Value = toml::from_str(&toml_content).expect("Should parse as valid TOML");
 
     let grammar_array = parsed.get("grammar").unwrap().as_array().unwrap();
 
     // Find entries for "install" command
-    let install_entries: Vec<_> = grammar_array.iter()
+    let install_entries: Vec<_> = grammar_array
+        .iter()
         .filter(|entry| {
-            entry.get("command")
+            entry
+                .get("command")
                 .and_then(|c| c.as_str())
                 .map(|s| s == "install")
                 .unwrap_or(false)
@@ -231,13 +241,19 @@ fn test_export_multimode_commands() {
         .collect();
 
     // Should have multiple entries for install (one per mode)
-    assert!(install_entries.len() > 1, "install should have multiple mode entries");
+    assert!(
+        install_entries.len() > 1,
+        "install should have multiple mode entries"
+    );
 
     // At least one should have a mode field
-    let has_mode = install_entries.iter().any(|entry| {
-        entry.get("mode").is_some()
-    });
-    assert!(has_mode, "At least one install entry should have a mode field");
+    let has_mode = install_entries
+        .iter()
+        .any(|entry| entry.get("mode").is_some());
+    assert!(
+        has_mode,
+        "At least one install entry should have a mode field"
+    );
 }
 
 #[test]
@@ -250,13 +266,15 @@ grammar:
       VALUE1: SingleValue
 "#;
 
-    let imported = import_grammar_file(yaml_content)
-        .expect("Should parse YAML grammar");
+    let imported = import_grammar_file(yaml_content).expect("Should parse YAML grammar");
 
     assert!(imported.contains_key("test_command"));
     let grammar = &imported["test_command"];
     assert_eq!(grammar.keyword_type("FLAG1"), Some(KeywordType::Flag));
-    assert_eq!(grammar.keyword_type("VALUE1"), Some(KeywordType::SingleValue));
+    assert_eq!(
+        grammar.keyword_type("VALUE1"),
+        Some(KeywordType::SingleValue)
+    );
 }
 
 #[test]
@@ -281,14 +299,14 @@ CUSTOM_KEYWORD = "Flag"
 
     let mut grammar_config = cmake_fmt::formatter::CommandGrammarConfig::default();
     grammar_config.options = vec!["CONFIG_KEYWORD".to_string()];
-    config.command_grammars.insert("find_package".to_string(), grammar_config);
+    config
+        .command_grammars
+        .insert("find_package".to_string(), grammar_config);
 
     // Format with this config - the config grammar should take precedence
     let cmake_content = "find_package(CONFIG_KEYWORD CUSTOM_KEYWORD)\n";
-    let (formatted, _warnings) = cmake_fmt::formatter::format_text_with_diagnostics(
-        cmake_content,
-        &config,
-    );
+    let (formatted, _warnings) =
+        cmake_fmt::formatter::format_text_with_diagnostics(cmake_content, &config);
 
     // Should not crash - precedence is working
     assert!(!formatted.is_empty());
@@ -304,8 +322,8 @@ fn test_export_builtin_grammars_to_yaml() {
     assert!(yaml_content.contains("# Generated by cmake-fmt"));
 
     // Should parse as valid YAML
-    let parsed: serde_yml::Value = serde_yml::from_str(&yaml_content)
-        .expect("Exported YAML should be valid");
+    let parsed: serde_yml::Value =
+        serde_yml::from_str(&yaml_content).expect("Exported YAML should be valid");
 
     // Check that it has the grammar array
     assert!(parsed.get("grammar").is_some());
@@ -313,8 +331,8 @@ fn test_export_builtin_grammars_to_yaml() {
     assert!(!grammar_array.is_empty());
 
     // Import it back and verify
-    let imported = import_grammar_file(&yaml_content)
-        .expect("Should be able to import exported YAML");
+    let imported =
+        import_grammar_file(&yaml_content).expect("Should be able to import exported YAML");
     assert!(!imported.is_empty());
 
     // Check for known commands (simple grammars only)
@@ -327,8 +345,7 @@ fn test_yaml_export_round_trip() {
     let grammars = builtin_grammars();
     let yaml_content = export_grammars(&grammars, &GrammarFormat::Yaml);
 
-    let imported = import_grammar_file(&yaml_content)
-        .expect("Should import exported YAML");
+    let imported = import_grammar_file(&yaml_content).expect("Should import exported YAML");
 
     // Check that simple grammars round-trip correctly
     // find_package is a simple grammar
@@ -336,9 +353,15 @@ fn test_yaml_export_round_trip() {
     let find_package = &imported["find_package"];
 
     // Check that it has expected keywords
-    assert_eq!(find_package.keyword_type("REQUIRED"), Some(KeywordType::Flag));
+    assert_eq!(
+        find_package.keyword_type("REQUIRED"),
+        Some(KeywordType::Flag)
+    );
     assert_eq!(find_package.keyword_type("QUIET"), Some(KeywordType::Flag));
-    assert_eq!(find_package.keyword_type("COMPONENTS"), Some(KeywordType::MultiValue));
+    assert_eq!(
+        find_package.keyword_type("COMPONENTS"),
+        Some(KeywordType::MultiValue)
+    );
 
     // target_link_libraries is also simple
     assert!(imported.contains_key("target_link_libraries"));
@@ -355,13 +378,17 @@ fn test_export_command_grammars_toml() {
 
     // Create two custom commands
     let mut cmd1 = CommandGrammar::new();
-    cmd1.keywords.insert("REQUIRED".to_string(), KeywordType::Flag);
-    cmd1.keywords.insert("FILES".to_string(), KeywordType::MultiValue);
+    cmd1.keywords
+        .insert("REQUIRED".to_string(), KeywordType::Flag);
+    cmd1.keywords
+        .insert("FILES".to_string(), KeywordType::MultiValue);
     grammars.insert("my_command_1".to_string(), cmd1);
 
     let mut cmd2 = CommandGrammar::new();
-    cmd2.keywords.insert("OUTPUT".to_string(), KeywordType::SingleValue);
-    cmd2.keywords.insert("DEPENDS".to_string(), KeywordType::MultiValue);
+    cmd2.keywords
+        .insert("OUTPUT".to_string(), KeywordType::SingleValue);
+    cmd2.keywords
+        .insert("DEPENDS".to_string(), KeywordType::MultiValue);
     grammars.insert("my_command_2".to_string(), cmd2);
 
     let toml_content = export_command_grammars(&grammars, &GrammarFormat::Toml, None);
@@ -376,15 +403,21 @@ fn test_export_command_grammars_toml() {
     assert!(toml_content.contains("MultiValue"));
 
     // Import back and verify
-    let imported = import_grammar_file(&toml_content)
-        .expect("Should import exported command grammars");
+    let imported =
+        import_grammar_file(&toml_content).expect("Should import exported command grammars");
 
     assert!(imported.contains_key("my_command_1"));
     assert!(imported.contains_key("my_command_2"));
 
     let cmd1_imported = &imported["my_command_1"];
-    assert_eq!(cmd1_imported.keyword_type("REQUIRED"), Some(KeywordType::Flag));
-    assert_eq!(cmd1_imported.keyword_type("FILES"), Some(KeywordType::MultiValue));
+    assert_eq!(
+        cmd1_imported.keyword_type("REQUIRED"),
+        Some(KeywordType::Flag)
+    );
+    assert_eq!(
+        cmd1_imported.keyword_type("FILES"),
+        Some(KeywordType::MultiValue)
+    );
 }
 
 #[test]
@@ -394,38 +427,65 @@ fn test_export_command_grammars_yaml() {
     let mut grammars = HashMap::new();
 
     let mut cmd = CommandGrammar::new();
-    cmd.keywords.insert("OPTIONAL".to_string(), KeywordType::Flag);
-    cmd.keywords.insert("SOURCES".to_string(), KeywordType::MultiValue);
-    cmd.keywords.insert("OUTPUT_DIR".to_string(), KeywordType::SingleValue);
+    cmd.keywords
+        .insert("OPTIONAL".to_string(), KeywordType::Flag);
+    cmd.keywords
+        .insert("SOURCES".to_string(), KeywordType::MultiValue);
+    cmd.keywords
+        .insert("OUTPUT_DIR".to_string(), KeywordType::SingleValue);
     grammars.insert("custom_cmd".to_string(), cmd);
 
     let yaml_content = export_command_grammars(&grammars, &GrammarFormat::Yaml, None);
 
     // Should be valid YAML
-    let parsed: serde_yml::Value = serde_yml::from_str(&yaml_content)
-        .expect("Should be valid YAML");
+    let parsed: serde_yml::Value =
+        serde_yml::from_str(&yaml_content).expect("Should be valid YAML");
 
     // Check structure
     assert!(parsed.get("grammar").is_some());
 
     // Import back and verify
-    let imported = import_grammar_file(&yaml_content)
-        .expect("Should import exported YAML command grammars");
+    let imported =
+        import_grammar_file(&yaml_content).expect("Should import exported YAML command grammars");
 
     assert!(imported.contains_key("custom_cmd"));
     let cmd_imported = &imported["custom_cmd"];
-    assert_eq!(cmd_imported.keyword_type("OPTIONAL"), Some(KeywordType::Flag));
-    assert_eq!(cmd_imported.keyword_type("SOURCES"), Some(KeywordType::MultiValue));
-    assert_eq!(cmd_imported.keyword_type("OUTPUT_DIR"), Some(KeywordType::SingleValue));
+    assert_eq!(
+        cmd_imported.keyword_type("OPTIONAL"),
+        Some(KeywordType::Flag)
+    );
+    assert_eq!(
+        cmd_imported.keyword_type("SOURCES"),
+        Some(KeywordType::MultiValue)
+    );
+    assert_eq!(
+        cmd_imported.keyword_type("OUTPUT_DIR"),
+        Some(KeywordType::SingleValue)
+    );
 }
 
 #[test]
 fn test_detect_grammar_format() {
-    assert_eq!(detect_grammar_format(Path::new("foo.yaml")), GrammarFormat::Yaml);
-    assert_eq!(detect_grammar_format(Path::new("foo.yml")), GrammarFormat::Yaml);
-    assert_eq!(detect_grammar_format(Path::new("foo.toml")), GrammarFormat::Toml);
-    assert_eq!(detect_grammar_format(Path::new("foo.tml")), GrammarFormat::Toml);
-    assert_eq!(detect_grammar_format(Path::new("foo.txt")), GrammarFormat::Yaml); // Default
+    assert_eq!(
+        detect_grammar_format(Path::new("foo.yaml")),
+        GrammarFormat::Yaml
+    );
+    assert_eq!(
+        detect_grammar_format(Path::new("foo.yml")),
+        GrammarFormat::Yaml
+    );
+    assert_eq!(
+        detect_grammar_format(Path::new("foo.toml")),
+        GrammarFormat::Toml
+    );
+    assert_eq!(
+        detect_grammar_format(Path::new("foo.tml")),
+        GrammarFormat::Toml
+    );
+    assert_eq!(
+        detect_grammar_format(Path::new("foo.txt")),
+        GrammarFormat::Yaml
+    ); // Default
     assert_eq!(detect_grammar_format(Path::new("foo")), GrammarFormat::Yaml); // No extension
 }
 
@@ -435,16 +495,16 @@ fn test_export_empty_command_grammars() {
 
     // Export to YAML
     let yaml_content = export_command_grammars(&grammars, &GrammarFormat::Yaml, None);
-    let parsed_yaml: serde_yml::Value = serde_yml::from_str(&yaml_content)
-        .expect("Empty grammar should produce valid YAML");
+    let parsed_yaml: serde_yml::Value =
+        serde_yml::from_str(&yaml_content).expect("Empty grammar should produce valid YAML");
     assert!(parsed_yaml.get("grammar").is_some());
     let grammar_array = parsed_yaml.get("grammar").unwrap().as_sequence().unwrap();
     assert!(grammar_array.is_empty());
 
     // Export to TOML
     let toml_content = export_command_grammars(&grammars, &GrammarFormat::Toml, None);
-    let parsed_toml: toml::Value = toml::from_str(&toml_content)
-        .expect("Empty grammar should produce valid TOML");
+    let parsed_toml: toml::Value =
+        toml::from_str(&toml_content).expect("Empty grammar should produce valid TOML");
     assert!(parsed_toml.get("grammar").is_some());
     let grammar_array = parsed_toml.get("grammar").unwrap().as_array().unwrap();
     assert!(grammar_array.is_empty());
@@ -458,13 +518,18 @@ fn test_export_command_grammars_preserves_original_casing() {
     let mut grammars = HashMap::new();
     let mut cmd = CommandGrammar::new();
     cmd.keywords.insert("FLAG1".to_string(), KeywordType::Flag);
-    cmd.keywords.insert("VALUE1".to_string(), KeywordType::SingleValue);
-    cmd.keywords.insert("MULTI1".to_string(), KeywordType::MultiValue);
+    cmd.keywords
+        .insert("VALUE1".to_string(), KeywordType::SingleValue);
+    cmd.keywords
+        .insert("MULTI1".to_string(), KeywordType::MultiValue);
     grammars.insert("mycustomfunction".to_string(), cmd);
 
     // Create name map with original casing
     let mut name_map = HashMap::new();
-    name_map.insert("mycustomfunction".to_string(), "MyCustomFunction".to_string());
+    name_map.insert(
+        "mycustomfunction".to_string(),
+        "MyCustomFunction".to_string(),
+    );
 
     // Export with name_map
     let yaml_content = export_command_grammars(&grammars, &GrammarFormat::Yaml, Some(&name_map));
@@ -474,8 +539,7 @@ fn test_export_command_grammars_preserves_original_casing() {
     assert!(!yaml_content.contains("mycustomfunction"));
 
     // Verify round-trip import still works (lowercases on import)
-    let imported = import_grammar_file(&yaml_content)
-        .expect("Should import exported YAML");
+    let imported = import_grammar_file(&yaml_content).expect("Should import exported YAML");
 
     // Should be stored with lowercase key
     assert!(imported.contains_key("mycustomfunction"));
@@ -484,16 +548,21 @@ fn test_export_command_grammars_preserves_original_casing() {
     // Verify keywords are preserved
     let cmd_imported = &imported["mycustomfunction"];
     assert_eq!(cmd_imported.keyword_type("FLAG1"), Some(KeywordType::Flag));
-    assert_eq!(cmd_imported.keyword_type("VALUE1"), Some(KeywordType::SingleValue));
-    assert_eq!(cmd_imported.keyword_type("MULTI1"), Some(KeywordType::MultiValue));
+    assert_eq!(
+        cmd_imported.keyword_type("VALUE1"),
+        Some(KeywordType::SingleValue)
+    );
+    assert_eq!(
+        cmd_imported.keyword_type("MULTI1"),
+        Some(KeywordType::MultiValue)
+    );
 
     // Test TOML format as well
     let toml_content = export_command_grammars(&grammars, &GrammarFormat::Toml, Some(&name_map));
     assert!(toml_content.contains("MyCustomFunction"));
     assert!(!toml_content.contains("mycustomfunction"));
 
-    let imported_toml = import_grammar_file(&toml_content)
-        .expect("Should import exported TOML");
+    let imported_toml = import_grammar_file(&toml_content).expect("Should import exported TOML");
     assert!(imported_toml.contains_key("mycustomfunction"));
 }
 
@@ -536,7 +605,9 @@ endmacro()
 
     // Should warn about grammarless commands
     assert!(stderr.contains("warning: no grammar found for custom command 'my_helper_no_grammar'"));
-    assert!(stderr.contains("warning: no grammar found for custom command 'another_grammarless_macro'"));
+    assert!(
+        stderr.contains("warning: no grammar found for custom command 'another_grammarless_macro'")
+    );
     assert!(stderr.contains("2 custom command(s) have no grammar definition"));
 
     // Should NOT warn about the command with grammar
@@ -576,8 +647,16 @@ endfunction()
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should NOT contain any warnings about missing grammars
-    assert!(!stderr.contains("no grammar found"), "stderr contained unexpected warning: {}", stderr);
-    assert!(!stderr.contains("custom command(s) have no grammar definition"), "stderr: {}", stderr);
+    assert!(
+        !stderr.contains("no grammar found"),
+        "stderr contained unexpected warning: {}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("custom command(s) have no grammar definition"),
+        "stderr: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -611,8 +690,16 @@ target_link_libraries(myapp PRIVATE Boost::filesystem)
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should not warn about builtin commands
-    assert!(!stderr.contains("warning: no grammar found"), "stderr contained unexpected warning: {}", stderr);
+    assert!(
+        !stderr.contains("warning: no grammar found"),
+        "stderr contained unexpected warning: {}",
+        stderr
+    );
 
     // Should report that no custom grammars were detected
-    assert!(stderr.contains("No custom grammars detected"), "stderr: {}", stderr);
+    assert!(
+        stderr.contains("No custom grammars detected"),
+        "stderr: {}",
+        stderr
+    );
 }
