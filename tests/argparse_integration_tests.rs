@@ -1,4 +1,4 @@
-use cmake_fmt::formatter::{format_text_with_diagnostics_and_path, FormatConfig};
+use cmake_fmt::formatter::{format_text_with_diagnostics, format_text_with_diagnostics_and_path, FormatConfig};
 use std::fs;
 use tempfile::TempDir;
 
@@ -226,4 +226,69 @@ my_build(VERBOSE SOURCES main.cpp util.cpp HEADERS main.h OUTPUT_DIR build)
     let expected = "include(cmake/MyModule.cmake)\nmy_build(\n\tVERBOSE\n\tSOURCES\n\t\tmain.cpp\n\t\tutil.cpp\n\tHEADERS main.h\n\tOUTPUT_DIR build\n)\n";
 
     assert_eq!(result, expected);
+}
+
+#[test]
+fn test_same_file_cmake_parse_arguments_grammar() {
+    let files = vec![
+        (
+            "CMakeLists.txt",
+            r#"function(mevi_ConfigureExample)
+    cmake_parse_arguments(PARSED "" "TARGET" "SOURCES;LINK_TARGETS" ${ARGN})
+
+    mevi_ConfigureApplication(
+        TARGET ${PARSED_TARGET}
+        SOURCES "${PARSED_SOURCES}"
+        LINK_TARGETS "mevi-example-base;${PARSED_LINK_TARGETS}"
+        RESOURCES_FOLDER "${CMAKE_CURRENT_LIST_DIR}/Resources"
+    )
+endfunction()
+
+mevi_ConfigureExample(
+    TARGET 01_HelloTriangle
+    SOURCES "${sourceFiles}"
+)
+"#,
+        ),
+    ];
+
+    let mut config = FormatConfig::default();
+    config.max_line_length = 40; // Force breaking
+
+    let result = setup_and_format(&files, "CMakeLists.txt", &config);
+
+    // TARGET is a SingleValue keyword -- it should stay on the same line as its value
+    assert!(
+        result.contains("TARGET 01_HelloTriangle"),
+        "TARGET (single-value) should keep its value on the same line.\nGot:\n{}",
+        result
+    );
+    // SOURCES is a MultiValue keyword
+    assert!(
+        result.contains("SOURCES"),
+        "SOURCES keyword should be present.\nGot:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_stdin_cmake_parse_arguments_grammar() {
+    let input = r#"function(my_cmd)
+    cmake_parse_arguments(MY "" "OUTPUT" "SOURCES" ${ARGN})
+endfunction()
+
+my_cmd(OUTPUT build SOURCES main.cpp util.cpp)
+"#;
+
+    let mut config = FormatConfig::default();
+    config.max_line_length = 30; // Force breaking
+
+    let (result, _warnings) = format_text_with_diagnostics(input, &config);
+
+    // OUTPUT is SingleValue -- should keep its value inline
+    assert!(
+        result.contains("OUTPUT build"),
+        "OUTPUT (single-value) should keep its value on the same line in stdin mode.\nGot:\n{}",
+        result
+    );
 }
