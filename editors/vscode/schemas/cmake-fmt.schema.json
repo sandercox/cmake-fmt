@@ -113,6 +113,11 @@
       "default": "none",
       "description": "Auto-sort filenames in set/add_executable/add_library/target_sources commands. 'none' preserves original order, 'alphabetical' sorts case-insensitively. Use '# cmake-fmt: no-sort' to disable for a single statement."
     },
+    "root": {
+      "type": "boolean",
+      "default": false,
+      "description": "Stop searching for configuration files in parent directories. When true, this config file is the root configuration — no ancestor configs are inherited."
+    },
     "grammar_files": {
       "type": "array",
       "items": {

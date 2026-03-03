@@ -675,7 +675,14 @@ fn process_files(
     for file in files {
         if file.exists() && file.is_file() {
             let parent = file.parent().unwrap_or_else(|| std::path::Path::new("."));
-            let project_root = cmake_fmt::formatter::grammar::user_scanner::find_project_root(parent);
+            let abs_parent = if parent.is_absolute() {
+                parent.to_path_buf()
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(parent))
+                    .unwrap_or_else(|_| parent.to_path_buf())
+            };
+            let project_root = cmake_fmt::formatter::grammar::user_scanner::find_project_root(&abs_parent);
             project_roots.insert(project_root);
         }
     }
