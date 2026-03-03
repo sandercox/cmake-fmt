@@ -38,6 +38,48 @@ pub fn find_project_root(start_path: &Path) -> PathBuf {
     start_path.to_path_buf()
 }
 
+/// Check if a directory contains a config file with root:true (or root = true)
+///
+/// For TOML files, parses with toml and checks for `root = true`.
+/// For YAML/extensionless files, does a lightweight string check.
+fn has_root_config(dir: &Path) -> bool {
+    for filename in CONFIG_FILENAMES {
+        let config_path = dir.join(filename);
+        if !config_path.exists() || !config_path.is_file() {
+            continue;
+        }
+
+        let Ok(content) = fs::read_to_string(&config_path) else {
+            continue;
+        };
+
+        let extension = config_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        let found = match extension {
+            "toml" | "tml" => {
+                // Parse TOML and check for root = true
+                if let Ok(table) = toml::from_str::<toml::Table>(&content) {
+                    matches!(table.get("root"), Some(toml::Value::Boolean(true)))
+                } else {
+                    false
+                }
+            }
+            _ => {
+                // YAML or extensionless: lightweight string check
+                content.contains("root: true") || content.contains("root:true")
+            }
+        };
+
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
 /// Check if a path is a CMake file (CMakeLists.txt or *.cmake)
 fn is_cmake_file(path: &Path) -> bool {
     if !path.is_file() {
@@ -170,6 +212,15 @@ pub fn follow_cmake_dependencies(project_root: &Path, verbose: bool) -> Vec<Path
 
                         if candidate.exists() {
                             if let Ok(canonical) = candidate.canonicalize() {
+                                // Check if subdirectory has root:true config — isolate sub-project
+                                let subdir = canonical.parent().unwrap_or(project_root);
+                                if subdir != project_root && has_root_config(subdir) {
+                                    if verbose {
+                                        eprintln!("verbose: skipping add_subdirectory({}) — has root:true config", dirname);
+                                    }
+                                    continue;
+                                }
+
                                 if visited.insert(canonical.clone()) {
                                     if verbose {
                                         eprintln!("verbose: add_subdirectory({}) -> {}", dirname, canonical.display());

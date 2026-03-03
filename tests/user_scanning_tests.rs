@@ -329,3 +329,95 @@ fn test_stray_cmake_file_not_found() {
         user_commands
     );
 }
+
+#[test]
+fn test_root_true_isolates_subdirectory_definitions() {
+    clear_project_scan_cache();
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Root project: CMakeLists.txt references sub/
+    create_file(
+        &temp_dir,
+        "CMakeLists.txt",
+        "add_subdirectory(sub)\n",
+    );
+    create_file(&temp_dir, ".cmake-fmt.toml", "indent_width = 2\n");
+
+    // Sub-project with root = true — should be isolated from parent scan
+    create_file(
+        &temp_dir,
+        "sub/CMakeLists.txt",
+        "function(sub_only_func)\nendfunction()\n",
+    );
+    create_file(&temp_dir, "sub/.cmake-fmt.toml", "root = true\n");
+
+    // Scan from root — sub_only_func should NOT be visible
+    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
+
+    assert!(
+        !user_commands.contains_key("sub_only_func"),
+        "Expected sub_only_func to NOT be found (sub-project isolated by root:true), but got: {:?}",
+        user_commands
+    );
+}
+
+#[test]
+fn test_without_root_true_subdirectory_definitions_visible() {
+    clear_project_scan_cache();
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Root project: CMakeLists.txt references sub/
+    create_file(
+        &temp_dir,
+        "CMakeLists.txt",
+        "add_subdirectory(sub)\n",
+    );
+    create_file(&temp_dir, ".cmake-fmt.toml", "indent_width = 2\n");
+
+    // Sub-project WITHOUT root = true — definitions should leak into parent
+    create_file(
+        &temp_dir,
+        "sub/CMakeLists.txt",
+        "function(sub_only_func)\nendfunction()\n",
+    );
+    create_file(&temp_dir, "sub/.cmake-fmt.toml", "indent_width = 4\n");
+
+    // Scan from root — sub_only_func SHOULD be visible (no isolation)
+    let user_commands = user_scanner::scan_project_commands(temp_dir.path(), false);
+
+    assert!(
+        user_commands.contains_key("sub_only_func"),
+        "Expected sub_only_func to be found (no root:true isolation), but got: {:?}",
+        user_commands
+    );
+}
+
+#[test]
+fn test_find_project_root_with_relative_path() {
+    clear_project_scan_cache();
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a config file in the temp dir
+    create_file(&temp_dir, ".cmake-fmt.toml", "indent_width = 2\n");
+
+    // Save old working directory and switch to temp dir
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(temp_dir.path()).unwrap();
+
+    // Call find_project_root with a relative path "."
+    let project_root = user_scanner::find_project_root(std::path::Path::new("."));
+
+    // Restore original directory before asserting (cleanup first)
+    std::env::set_current_dir(&original_dir).unwrap();
+
+    // The project root should be "." (relative) or resolve to temp_dir
+    // find_project_root returns the ancestor (relative ".") when it finds config there
+    assert!(
+        project_root == std::path::Path::new(".") || project_root == temp_dir.path(),
+        "Expected project root to be '.' or the temp dir path, got: {:?}",
+        project_root
+    );
+}
