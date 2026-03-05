@@ -122,17 +122,17 @@ pub fn find_project_root(start_path: &Path, verbose: bool) -> PathBuf {
     let result = highest_config_dir.unwrap_or_else(|| start_path.to_path_buf());
 
     // If the resolved result has no CMakeLists.txt, prefer the highest dir that does
-    if !result.join("CMakeLists.txt").exists() {
-        if let Some(cmake_dir) = highest_cmake_dir {
-            if verbose {
-                eprintln!(
-                    "verbose: find_project_root resolved root {} has no CMakeLists.txt, using highest CMakeLists.txt dir {}",
-                    result.display(),
-                    cmake_dir.display()
-                );
-            }
-            return cmake_dir;
+    if !result.join("CMakeLists.txt").exists()
+        && let Some(cmake_dir) = highest_cmake_dir
+    {
+        if verbose {
+            eprintln!(
+                "verbose: find_project_root resolved root {} has no CMakeLists.txt, using highest CMakeLists.txt dir {}",
+                result.display(),
+                cmake_dir.display()
+            );
         }
+        return cmake_dir;
     }
 
     if verbose {

@@ -455,6 +455,80 @@ fn test_find_project_root_walks_past_non_root_to_root_true() {
 }
 
 #[test]
+fn test_root_true_without_cmakelists_uses_highest_cmake_dir() {
+    clear_project_scan_cache();
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Scenario: .cmake-fmt with root:true at top level, but NO CMakeLists.txt there
+    // CMakeLists.txt exists in a subdirectory
+    create_file(&temp_dir, ".cmake-fmt.toml", "root = true\n");
+    // No CMakeLists.txt at root!
+
+    // Project CMakeLists.txt one level down
+    create_file(
+        &temp_dir,
+        "project/CMakeLists.txt",
+        "add_subdirectory(sub)\nfunction(project_func)\nendfunction()\n",
+    );
+    create_file(
+        &temp_dir,
+        "project/sub/CMakeLists.txt",
+        "project_func(arg1)\n",
+    );
+
+    // find_project_root from project/sub/ should resolve to project/ (highest CMakeLists.txt within root:true boundary)
+    let sub_dir = temp_dir.path().join("project/sub");
+    let project_root = user_scanner::find_project_root(&sub_dir, false);
+
+    assert_eq!(
+        project_root,
+        temp_dir.path().join("project"),
+        "Expected project root to be project/ (highest dir with CMakeLists.txt within root:true boundary), got {:?}",
+        project_root
+    );
+
+    // Scanning from that root should find project_func
+    let user_commands = user_scanner::scan_project(&project_root, false).commands;
+    assert!(
+        user_commands.contains_key("project_func"),
+        "Expected project_func to be found when root:true dir has no CMakeLists.txt: {:?}",
+        user_commands
+    );
+}
+
+#[test]
+fn test_root_true_with_cmakelists_unchanged() {
+    clear_project_scan_cache();
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // root:true WITH CMakeLists.txt at same level (should behave exactly as before)
+    create_file(&temp_dir, ".cmake-fmt.toml", "root = true\n");
+    create_file(
+        &temp_dir,
+        "CMakeLists.txt",
+        "function(root_func)\nendfunction()\n",
+    );
+
+    let project_root = user_scanner::find_project_root(temp_dir.path(), false);
+
+    assert_eq!(
+        project_root,
+        temp_dir.path().to_path_buf(),
+        "Expected project root to be root dir (has both root:true and CMakeLists.txt), got {:?}",
+        project_root
+    );
+
+    let user_commands = user_scanner::scan_project(&project_root, false).commands;
+    assert!(
+        user_commands.contains_key("root_func"),
+        "Expected root_func to be found: {:?}",
+        user_commands
+    );
+}
+
+#[test]
 fn test_find_project_root_with_relative_path() {
     clear_project_scan_cache();
 
