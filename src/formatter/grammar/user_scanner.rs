@@ -34,6 +34,7 @@ pub fn find_project_root(start_path: &Path, verbose: bool) -> PathBuf {
     }
 
     let mut highest_config_dir: Option<PathBuf> = None;
+    let mut highest_cmake_dir: Option<PathBuf> = None;
 
     for ancestor in start_path.ancestors() {
         // Skip the empty path that can appear at the end of relative path ancestor chains
@@ -46,6 +47,17 @@ pub fn find_project_root(start_path: &Path, verbose: bool) -> PathBuf {
 
         if verbose {
             eprintln!("verbose: find_project_root checking {}", ancestor.display());
+        }
+
+        // Track the highest ancestor that has a CMakeLists.txt
+        if ancestor.join("CMakeLists.txt").exists() {
+            if verbose {
+                eprintln!(
+                    "verbose: find_project_root found CMakeLists.txt in {}",
+                    ancestor.display()
+                );
+            }
+            highest_cmake_dir = Some(ancestor.to_path_buf());
         }
 
         // Check if this directory has any config file
@@ -62,8 +74,32 @@ pub fn find_project_root(start_path: &Path, verbose: bool) -> PathBuf {
                         "verbose: find_project_root found root:true config in {} — stopping",
                         ancestor.display()
                     );
+                }
+                // Check if the root:true dir has a CMakeLists.txt
+                if ancestor.join("CMakeLists.txt").exists() {
+                    if verbose {
+                        eprintln!(
+                            "verbose: find_project_root result: {} (root:true dir has CMakeLists.txt)",
+                            ancestor.display()
+                        );
+                    }
+                    return ancestor.to_path_buf();
+                }
+                // Fall back to highest CMakeLists.txt dir found within the boundary
+                if let Some(cmake_dir) = highest_cmake_dir {
+                    if verbose {
+                        eprintln!(
+                            "verbose: find_project_root resolved root {} has no CMakeLists.txt, using highest CMakeLists.txt dir {}",
+                            ancestor.display(),
+                            cmake_dir.display()
+                        );
+                    }
+                    return cmake_dir;
+                }
+                // No CMakeLists.txt anywhere in the hierarchy — return the root:true dir
+                if verbose {
                     eprintln!(
-                        "verbose: find_project_root result: {} (highest config dir)",
+                        "verbose: find_project_root result: {} (root:true dir, no CMakeLists.txt found)",
                         ancestor.display()
                     );
                 }
@@ -84,6 +120,21 @@ pub fn find_project_root(start_path: &Path, verbose: bool) -> PathBuf {
 
     // Return the highest config dir found, or fall back to start_path
     let result = highest_config_dir.unwrap_or_else(|| start_path.to_path_buf());
+
+    // If the resolved result has no CMakeLists.txt, prefer the highest dir that does
+    if !result.join("CMakeLists.txt").exists() {
+        if let Some(cmake_dir) = highest_cmake_dir {
+            if verbose {
+                eprintln!(
+                    "verbose: find_project_root resolved root {} has no CMakeLists.txt, using highest CMakeLists.txt dir {}",
+                    result.display(),
+                    cmake_dir.display()
+                );
+            }
+            return cmake_dir;
+        }
+    }
+
     if verbose {
         if result == start_path {
             eprintln!(
