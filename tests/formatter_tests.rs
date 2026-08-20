@@ -1820,3 +1820,207 @@ set(RESAPI_SOURCE_MAC
         "Blank line before trailing comments should be idempotent"
     );
 }
+
+// ============================================================================
+// CONDITION WRAPPING (if / elseif / while)
+// ============================================================================
+
+#[test]
+fn test_long_condition_breaks_at_boolean_operators() {
+    // Regression: https://github.com/sandercox/cmake-fmt/issues/2
+    // A wrapped condition used to put every word on its own line.
+    let input = concat!(
+        "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+        "  AND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\")\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+            "\tAND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\"\n",
+            ")\n",
+            "endif()\n"
+        )
+    );
+}
+
+#[test]
+fn test_long_condition_breaks_before_or() {
+    let input = concat!(
+        "while(SOME_LONG_CONDITION_VARIABLE AND ANOTHER_LONG_CONDITION_VARIABLE ",
+        "OR YET_MORE_STUFF)\n",
+        "endwhile()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "while(SOME_LONG_CONDITION_VARIABLE\n",
+            "\tAND ANOTHER_LONG_CONDITION_VARIABLE\n",
+            "\tOR YET_MORE_STUFF\n",
+            ")\n",
+            "endwhile()\n"
+        )
+    );
+}
+
+#[test]
+fn test_long_elseif_condition_breaks_at_operators() {
+    let input = concat!(
+        "if(FOO)\n",
+        "elseif(SOME_LONG_CONDITION_VARIABLE AND ANOTHER_LONG_CONDITION_VARIABLE ",
+        "OR MORE_STUFF)\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert!(
+        result.contains("elseif(SOME_LONG_CONDITION_VARIABLE\n\tAND ANOTHER_LONG_CONDITION_VARIABLE\n\tOR MORE_STUFF\n)"),
+        "elseif condition was not laid out by clause:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_short_condition_stays_on_one_line() {
+    let input = "if(A AND B)\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn test_over_long_clause_fills_continuation_lines() {
+    // A clause that can't fit on one line is filled across continuation lines
+    // indented one level deeper, so it still reads as one clause.
+    let input = concat!(
+        "if(SUPER_DUPER_EXTREMELY_LONG_SINGLE_CLAUSE_VARIABLE_NAME_THAT_WONT_FIT_AT_ALL_OK ",
+        "STREQUAL \"value\" AND B)\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if(SUPER_DUPER_EXTREMELY_LONG_SINGLE_CLAUSE_VARIABLE_NAME_THAT_WONT_FIT_AT_ALL_OK\n",
+            "\t\tSTREQUAL \"value\"\n",
+            "\tAND B\n",
+            ")\n",
+            "endif()\n"
+        )
+    );
+}
+
+#[test]
+fn test_long_condition_respects_indent_and_paren_style() {
+    let input = concat!(
+        "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" ",
+        "AND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\")\n",
+        "endif()\n"
+    );
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 2,
+        control_flow_space_before_paren: true,
+        space_between_command_parens: true,
+        indent_closing_paren: true,
+        ..Default::default()
+    };
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if ( NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+            "  AND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\"\n",
+            "  )\n",
+            "endif ()\n"
+        )
+    );
+}
+
+#[test]
+fn test_long_condition_nested_indentation() {
+    let input = concat!(
+        "if(OUTER)\n",
+        "\tif(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" ",
+        "AND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\")\n",
+        "\tendif()\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if(OUTER)\n",
+            "\tif(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+            "\t\tAND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\"\n",
+            "\t)\n",
+            "\tendif()\n",
+            "endif()\n"
+        )
+    );
+}
+
+#[test]
+fn test_long_condition_is_idempotent() {
+    let input = concat!(
+        "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" ",
+        "AND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\" OR OVERRIDE_MODE)\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let once = format_text(input, &config);
+    let twice = format_text(&once, &config);
+    assert_eq!(once, twice, "condition layout is not idempotent");
+}
+
+#[test]
+fn test_long_condition_with_comment_keeps_generic_layout() {
+    // A comment inside the condition needs its own line, so the clause layout
+    // steps aside rather than folding the comment into a clause.
+    let input = concat!(
+        "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" # only two modes\n",
+        "\tAND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\")\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert!(
+        result.contains("# only two modes"),
+        "comment was lost:\n{}",
+        result
+    );
+    let twice = format_text(&result, &config);
+    assert_eq!(result, twice, "commented condition is not idempotent");
+}
+
+#[test]
+fn test_foreach_is_not_treated_as_condition() {
+    // foreach carries a list, not a boolean expression: AND is just a value
+    let input = concat!(
+        "foreach(item IN LISTS SOME_LONG_LIST_VARIABLE ANOTHER_LONG_LIST_VARIABLE ",
+        "AND_MORE_HERE)\n",
+        "endforeach()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert!(
+        result.contains("\tLISTS\n"),
+        "foreach should keep the generic layout:\n{}",
+        result
+    );
+}

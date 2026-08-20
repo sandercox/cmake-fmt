@@ -652,7 +652,7 @@ fn format_command(
             // elseif carries a condition — always preserve its arguments
             if let Some(arg_list) = cmd.argument_list() {
                 let is_custom = !builtins::is_builtin_command(&name_lower);
-                format_argument_list(&arg_list, ctx, is_custom)
+                format_argument_list(&arg_list, ctx, is_custom, &name_lower)
             } else {
                 RcDoc::nil()
             }
@@ -711,7 +711,7 @@ fn format_command(
                             )
                         } else {
                             let is_custom = !builtins::is_builtin_command(&name_lower);
-                            format_argument_list(&arg_list, ctx, is_custom)
+                            format_argument_list(&arg_list, ctx, is_custom, &name_lower)
                         }
                     } else {
                         RcDoc::nil()
@@ -781,7 +781,7 @@ fn format_command(
                 )
             } else {
                 let is_custom = !builtins::is_builtin_command(&name_lower);
-                format_argument_list(&arg_list, ctx, is_custom)
+                format_argument_list(&arg_list, ctx, is_custom, &name_lower)
             }
         } else {
             RcDoc::nil()
@@ -868,16 +868,167 @@ pub(crate) fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> Arg
     ArgumentFormatSignals { force_multiline }
 }
 
+/// Commands whose argument list is a boolean expression, not a list of values
+fn is_condition_command(name_lower: &str) -> bool {
+    matches!(name_lower, "if" | "elseif" | "while")
+}
+
+/// Operators that join the top-level clauses of a condition.
+///
+/// CMake writes these in upper case, but the comparison is lenient so an
+/// `and`/`or` written in lower case still lays out the same way.
+fn is_condition_operator(arg: &str) -> bool {
+    arg.eq_ignore_ascii_case("AND") || arg.eq_ignore_ascii_case("OR")
+}
+
+/// Lay out an `if`/`elseif`/`while` condition that doesn't fit on one line.
+///
+/// A condition reads as clauses joined by AND/OR, so it breaks before each
+/// operator and keeps a whole clause on one line, rather than putting every
+/// word on a line of its own:
+///
+/// ```text
+/// if(NOT MODE STREQUAL "BATCH"
+///     AND NOT MODE STREQUAL "GROUP"
+/// )
+/// ```
+///
+/// A clause too long for one line is filled across continuation lines indented
+/// one level deeper, so it still reads as a single clause.
+///
+/// Returns `None` when the generic layout should stay in charge: the condition
+/// fits on one line, is too short to lay out, or carries comments that have to
+/// keep their own lines.
+fn format_condition_args(
+    arg_list: &ArgumentList,
+    ctx: &FormatContext,
+    name_lower: &str,
+    args: &[String],
+) -> Option<RcDoc<'static, ()>> {
+    if args.len() < 2 {
+        return None;
+    }
+
+    // Comments pin arguments to their own lines; leave those to the generic path
+    let has_comments = arg_list
+        .syntax()
+        .children_with_tokens()
+        .any(|c| matches!(c.kind(), SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT));
+    if has_comments {
+        return None;
+    }
+
+    let config = ctx.config;
+    let limit = config.max_line_length;
+    let paren_space = usize::from(config.space_between_command_parens);
+    let space_before =
+        usize::from(config.control_flow_space_before_paren && is_block_command(name_lower));
+    let base_indent = indent_string(ctx.indent_level, config).chars().count();
+
+    // Width of everything before the first argument: `<indent>if( `
+    let opening_width = base_indent + name_lower.chars().count() + space_before + 1 + paren_space;
+
+    // Only take over when the condition genuinely has to wrap; a condition that
+    // fits keeps whatever the generic layout does with it today.
+    let args_width: usize = args.iter().map(|a| a.chars().count()).sum::<usize>() + args.len() - 1;
+    let flat_width = opening_width + args_width + paren_space + 1;
+    if limit == 0 || flat_width <= limit {
+        return None;
+    }
+
+    // Split into clauses; each AND/OR opens a clause and leads its line
+    let mut clauses: Vec<Vec<&String>> = Vec::new();
+    for arg in args {
+        if is_condition_operator(arg) && !clauses.is_empty() {
+            clauses.push(vec![arg]);
+        } else if let Some(last) = clauses.last_mut() {
+            last.push(arg);
+        } else {
+            clauses.push(vec![arg]);
+        }
+    }
+
+    let clause_indent = indent_string(ctx.indent_level + 1, config);
+    let cont_indent = indent_string(ctx.indent_level + 2, config);
+
+    // The first clause trails the command's opening paren; every later line
+    // carries its own indent.
+    let mut first_line: Option<String> = None;
+    let mut lines: Vec<String> = Vec::new();
+
+    for (clause_idx, clause) in clauses.iter().enumerate() {
+        let mut indent = if clause_idx == 0 {
+            String::new()
+        } else {
+            clause_indent.clone()
+        };
+        let mut used = if clause_idx == 0 {
+            opening_width
+        } else {
+            clause_indent.chars().count()
+        };
+        let mut current = String::new();
+
+        for word in clause {
+            let width = word.chars().count();
+            if current.is_empty() {
+                current.push_str(word);
+                used += width;
+            } else if used + 1 + width > limit {
+                // Fill up to the limit, then continue the clause one level deeper
+                let line = std::mem::take(&mut current);
+                if clause_idx == 0 && first_line.is_none() {
+                    first_line = Some(line);
+                } else {
+                    lines.push(format!("{}{}", indent, line));
+                }
+                indent = cont_indent.clone();
+                used = cont_indent.chars().count() + width;
+                current.push_str(word);
+            } else {
+                current.push(' ');
+                current.push_str(word);
+                used += 1 + width;
+            }
+        }
+
+        if clause_idx == 0 && first_line.is_none() {
+            first_line = Some(current);
+        } else {
+            lines.push(format!("{}{}", indent, current));
+        }
+    }
+
+    let mut docs: Vec<RcDoc<'static, ()>> = Vec::new();
+    docs.push(RcDoc::text(first_line?));
+    for line in lines {
+        docs.push(RcDoc::hardline());
+        docs.push(RcDoc::text(line));
+    }
+    docs.push(closing_paren_position(config, ctx.indent_level, true));
+
+    Some(RcDoc::concat(docs))
+}
+
 /// Format an argument list with intelligent line breaking
 fn format_argument_list(
     arg_list: &ArgumentList,
     ctx: &FormatContext,
     is_custom_command: bool,
+    name_lower: &str,
 ) -> RcDoc<'static, ()> {
     let args = collect_logical_args(arg_list);
 
     if args.is_empty() {
         return RcDoc::nil();
+    }
+
+    // `if`/`elseif`/`while` hold a boolean expression rather than a list, so
+    // they get a layout that keeps each clause readable when it has to wrap.
+    if is_condition_command(name_lower)
+        && let Some(doc) = format_condition_args(arg_list, ctx, name_lower, &args)
+    {
+        return doc;
     }
 
     // Detect formatting signals

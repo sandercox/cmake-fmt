@@ -37,6 +37,22 @@ target_link_libraries(myapp
 )
 ```
 
+### Condition Wrapping
+
+**Before:**
+```cmake
+if(NOT JUMBO_BUILD_MODE STREQUAL "BATCH" AND NOT JUMBO_BUILD_MODE STREQUAL "GROUP")
+endif()
+```
+
+**After:**
+```cmake
+if(NOT JUMBO_BUILD_MODE STREQUAL "BATCH"
+	AND NOT JUMBO_BUILD_MODE STREQUAL "GROUP"
+)
+endif()
+```
+
 ### Command Casing & Grammar Awareness
 
 **Before:**
