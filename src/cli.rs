@@ -512,6 +512,15 @@ pub fn run() -> Result<ExitCode> {
             }
         });
 
+        // Honour ignore files for the path stdin stands in for, so editors that
+        // pipe the buffer through --assume-filename skip the same files the
+        // directory walk skips (e.g. format-on-save in the VS Code extension).
+        if let Some(path) = assume_path.as_deref()
+            && is_path_ignored(path, cli.ignore_file.as_deref(), cli.verbose)
+        {
+            return passthrough_stdin(check_mode, diff_mode);
+        }
+
         // For stdin, resolve config from assume_filename path or current directory
         let config = crate::config::resolve_config(
             assume_path.as_deref(),
@@ -706,6 +715,82 @@ fn is_cmake_file(path: &Path) -> bool {
         }
     }
     false
+}
+
+/// Returns true if `path` is excluded by a `.cmake-fmt-ignore` file in one of
+/// its ancestor directories, or by the extra `--ignore-file` if one was given.
+///
+/// Each ignore file uses gitignore syntax and is anchored at its own directory,
+/// exactly like the directory walk. Ancestors are consulted from the shallowest
+/// to the deepest, so the nearest ignore file wins — including its negations.
+fn is_path_ignored(path: &Path, ignore_file: Option<&Path>, verbose: bool) -> bool {
+    use ignore::Match;
+    use ignore::gitignore::GitignoreBuilder;
+
+    let mut ignored = false;
+
+    // Ancestors are yielded deepest-first; reverse so the nearest file wins.
+    let ancestors: Vec<&Path> = path
+        .parent()
+        .map(|dir| dir.ancestors().collect())
+        .unwrap_or_default();
+
+    let mut ignore_files: Vec<PathBuf> = ancestors
+        .into_iter()
+        .rev()
+        .map(|dir| dir.join(".cmake-fmt-ignore"))
+        .filter(|f| f.is_file())
+        .collect();
+
+    if let Some(extra) = ignore_file {
+        ignore_files.push(extra.to_path_buf());
+    }
+
+    for file in &ignore_files {
+        let root = file.parent().unwrap_or_else(|| Path::new("."));
+        let mut builder = GitignoreBuilder::new(root);
+        if let Some(err) = builder.add(file) {
+            eprintln!("Warning: Failed to read {}: {:#}", file.display(), err);
+            continue;
+        }
+        let matcher = match builder.build() {
+            Ok(m) => m,
+            Err(err) => {
+                eprintln!("Warning: Invalid patterns in {}: {:#}", file.display(), err);
+                continue;
+            }
+        };
+
+        match matcher.matched_path_or_any_parents(path, false) {
+            Match::Ignore(_) => ignored = true,
+            Match::Whitelist(_) => ignored = false,
+            Match::None => {}
+        }
+    }
+
+    if verbose && ignored {
+        eprintln!(
+            "verbose: {} is ignored, passing input through",
+            path.display()
+        );
+    }
+
+    ignored
+}
+
+/// Copy stdin to stdout untouched, for a file that ignore rules exclude
+fn passthrough_stdin(check_mode: bool, diff_mode: bool) -> Result<ExitCode> {
+    use std::io::{Read, Write, stdin, stdout};
+
+    let mut input = String::new();
+    stdin().lock().read_to_string(&mut input)?;
+
+    // check/diff modes report "nothing to do" rather than echoing the buffer
+    if !check_mode && !diff_mode {
+        write!(stdout().lock(), "{}", input)?;
+    }
+
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Process stdin to stdout

@@ -147,6 +147,10 @@ third_party/
 generated/*.cmake
 ```
 
+Ignore files are honoured both when walking directories and when a file is piped
+through stdin with `--assume-filename`, so editor format-on-save skips the same
+files. Files under an excluded path are passed through unchanged.
+
 When going through your files for the first time, you can use `--interactive` to review changes hunk-by-hunk and choose which ones to apply or skip/disable.
 
 ## Configuration
