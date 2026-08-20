@@ -1,5 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
+use ignore::Match;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use rayon::prelude::*;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -724,49 +726,47 @@ fn is_cmake_file(path: &Path) -> bool {
 /// exactly like the directory walk. Ancestors are consulted from the shallowest
 /// to the deepest, so the nearest ignore file wins — including its negations.
 fn is_path_ignored(path: &Path, ignore_file: Option<&Path>, verbose: bool) -> bool {
-    use ignore::Match;
-    use ignore::gitignore::GitignoreBuilder;
+    let path = normalize_path(path);
 
-    let mut ignored = false;
-
-    // Ancestors are yielded deepest-first; reverse so the nearest file wins.
-    let ancestors: Vec<&Path> = path
+    // Directories from the filesystem root down to the file's own directory.
+    // `ancestors()` yields deepest-first, so reverse it.
+    let mut dirs: Vec<PathBuf> = path
         .parent()
-        .map(|dir| dir.ancestors().collect())
+        .map(|dir| dir.ancestors().map(|a| a.to_path_buf()).collect())
         .unwrap_or_default();
+    dirs.reverse();
 
-    let mut ignore_files: Vec<PathBuf> = ancestors
-        .into_iter()
-        .rev()
-        .map(|dir| dir.join(".cmake-fmt-ignore"))
-        .filter(|f| f.is_file())
-        .collect();
-
-    if let Some(extra) = ignore_file {
-        ignore_files.push(extra.to_path_buf());
-    }
-
-    for file in &ignore_files {
-        let root = file.parent().unwrap_or_else(|| Path::new("."));
-        let mut builder = GitignoreBuilder::new(root);
-        if let Some(err) = builder.add(file) {
-            eprintln!("Warning: Failed to read {}: {:#}", file.display(), err);
-            continue;
-        }
-        let matcher = match builder.build() {
-            Ok(m) => m,
-            Err(err) => {
-                eprintln!("Warning: Invalid patterns in {}: {:#}", file.display(), err);
-                continue;
-            }
-        };
-
-        match matcher.matched_path_or_any_parents(path, false) {
-            Match::Ignore(_) => ignored = true,
-            Match::Whitelist(_) => ignored = false,
-            Match::None => {}
+    // One matcher per directory carrying a .cmake-fmt-ignore, kept in the same
+    // shallow-to-deep order as `dirs` so the deepest can be preferred later
+    let mut matchers: Vec<(PathBuf, Gitignore)> = Vec::new();
+    for dir in &dirs {
+        let file = dir.join(".cmake-fmt-ignore");
+        if file.is_file()
+            && let Some(matcher) = build_ignore_matcher(&file, dir)
+        {
+            matchers.push((dir.clone(), matcher));
         }
     }
+
+    // --ignore-file is rooted at the working directory and ranks below the
+    // .cmake-fmt-ignore chain, matching WalkBuilder::add_ignore
+    let extra = ignore_file.and_then(|file| {
+        let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        build_ignore_matcher(file, &root).map(|matcher| (root, matcher))
+    });
+
+    // Ancestor directories decide first, and an excluded one is final: git
+    // cannot re-include a file whose parent directory is excluded, and the
+    // walk never descends into it to read a deeper ignore file at all.
+    let ignored = dirs.iter().any(|dir| {
+        matches!(
+            ignore_decision(dir, true, &matchers, extra.as_ref()),
+            Some(true)
+        )
+    }) || matches!(
+        ignore_decision(&path, false, &matchers, extra.as_ref()),
+        Some(true)
+    );
 
     if verbose && ignored {
         eprintln!(
@@ -776,6 +776,87 @@ fn is_path_ignored(path: &Path, ignore_file: Option<&Path>, verbose: bool) -> bo
     }
 
     ignored
+}
+
+/// Ask the ignore rules about one path: `Some(true)` excluded, `Some(false)`
+/// explicitly re-included, `None` no rule matched.
+///
+/// The deepest matcher whose directory strictly contains `target` decides, so a
+/// nearer `.cmake-fmt-ignore` overrides a more distant one. An ignore file never
+/// decides about its own directory, only about what lies beneath it.
+fn ignore_decision(
+    target: &Path,
+    is_dir: bool,
+    matchers: &[(PathBuf, Gitignore)],
+    extra: Option<&(PathBuf, Gitignore)>,
+) -> Option<bool> {
+    let consult = |matcher: &Gitignore| -> Option<bool> {
+        match matcher.matched(target, is_dir) {
+            Match::Ignore(_) => Some(true),
+            Match::Whitelist(_) => Some(false),
+            Match::None => None,
+        }
+    };
+
+    matchers
+        .iter()
+        .rev()
+        // An ignore file governs what lies beneath its own directory, so it has
+        // no say about that directory itself.
+        .filter(|(root, _)| root.as_path() != target && target.starts_with(root))
+        .find_map(|(_, matcher)| consult(matcher))
+        // --ignore-file is consulted without that containment check: rooted at
+        // the working directory like the walk's add_ignore, its basename
+        // patterns still have to apply to a file outside that directory.
+        .or_else(|| extra.and_then(|(_, matcher)| consult(matcher)))
+}
+
+/// Build a gitignore matcher for `file`, anchored at `root`.
+///
+/// A malformed pattern is a partial failure: the builder still took every valid
+/// line, so the matcher is kept. Dropping the whole file would silently format
+/// everything the user excluded, which is the bug this all exists to prevent.
+fn build_ignore_matcher(file: &Path, root: &Path) -> Option<Gitignore> {
+    let mut builder = GitignoreBuilder::new(root);
+
+    if let Some(err) = builder.add(file) {
+        eprintln!("Warning: {:#}", err);
+    }
+
+    match builder.build() {
+        Ok(matcher) => Some(matcher),
+        Err(err) => {
+            eprintln!(
+                "Warning: Failed to build ignore rules from {}: {:#}",
+                file.display(),
+                err
+            );
+            None
+        }
+    }
+}
+
+/// Collapse `.` and `..` components without touching the filesystem.
+///
+/// `--assume-filename` routinely names a file that doesn't exist yet, so
+/// `canonicalize()` is not an option; but an un-normalized path makes
+/// `ancestors()` yield directories that aren't ancestors at all.
+fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push(Component::ParentDir.as_os_str());
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// Copy stdin to stdout untouched, for a file that ignore rules exclude

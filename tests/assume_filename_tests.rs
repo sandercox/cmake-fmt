@@ -504,3 +504,256 @@ fn test_assume_filename_ignored_file_passes_check_mode() {
     assert!(ok, "--check should succeed for an ignored file");
     assert!(stdout.is_empty(), "--check should not echo the buffer");
 }
+
+#[test]
+fn test_assume_filename_excluded_directory_is_final() {
+    // Git cannot re-include a file whose parent directory is excluded, and the
+    // walk never descends into it, so `!vendor/keep.cmake` must not win here.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    std::fs::create_dir(root.join("vendor")).expect("Failed to create vendor dir");
+    std::fs::write(
+        root.join(".cmake-fmt-ignore"),
+        "vendor/\n!vendor/keep.cmake\n",
+    )
+    .expect("Failed to write ignore");
+
+    let input = "set(FOO   bar)\n";
+    let target = root.join("vendor").join("keep.cmake");
+    let (ok, stdout) = run_with_stdin(&["-", "--assume-filename", target.to_str().unwrap()], input);
+
+    assert!(ok, "Command should succeed");
+    assert_eq!(
+        stdout, input,
+        "negation inside an excluded directory must not re-include the file"
+    );
+}
+
+#[test]
+fn test_assume_filename_ignore_file_inside_excluded_directory_is_not_read() {
+    // The walk never descends into build/, so it never reads the ignore file
+    // sitting there; the stdin path must not honour it either.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    let build = root.join("build");
+    std::fs::create_dir(&build).expect("Failed to create build dir");
+    std::fs::write(root.join(".cmake-fmt-ignore"), "build/\n").expect("Failed to write ignore");
+    std::fs::write(build.join(".cmake-fmt-ignore"), "!keep.cmake\n").expect("Failed to write");
+
+    let input = "set(FOO   bar)\n";
+    let target = build.join("keep.cmake");
+    let (_, stdout) = run_with_stdin(&["-", "--assume-filename", target.to_str().unwrap()], input);
+
+    assert_eq!(
+        stdout, input,
+        "file under an excluded directory must be skipped"
+    );
+}
+
+#[test]
+fn test_assume_filename_star_negation_is_honoured() {
+    // `vendor/*` excludes the contents rather than the directory, so git — and
+    // therefore this — does honour a negation under it.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    std::fs::create_dir(root.join("vendor")).expect("Failed to create vendor dir");
+    std::fs::write(
+        root.join(".cmake-fmt-ignore"),
+        "vendor/*\n!vendor/keep.cmake\n",
+    )
+    .expect("Failed to write ignore");
+
+    let input = "set(FOO   bar)\n";
+    let kept = root.join("vendor").join("keep.cmake");
+    let (_, stdout) = run_with_stdin(&["-", "--assume-filename", kept.to_str().unwrap()], input);
+    assert_eq!(
+        stdout, "set(FOO bar)\n",
+        "negation under vendor/* should apply"
+    );
+
+    let ignored = root.join("vendor").join("other.cmake");
+    let (_, stdout) = run_with_stdin(
+        &["-", "--assume-filename", ignored.to_str().unwrap()],
+        input,
+    );
+    assert_eq!(stdout, input, "other files under vendor/* stay excluded");
+}
+
+#[test]
+fn test_assume_filename_relative_ignore_file_does_not_panic() {
+    // `Gitignore::matched_path_or_any_parents` asserts the path is under the
+    // matcher root, which aborted the process (exit 101, empty stdout) for an
+    // --ignore-file whose directory is not a prefix of the assumed path.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    let work = root.join("work");
+    std::fs::create_dir(&work).expect("Failed to create work dir");
+    std::fs::write(work.join("ig.txt"), "a.cmake\n").expect("Failed to write ignore");
+    std::fs::write(root.join("ig.txt"), "a.cmake\n").expect("Failed to write ignore");
+
+    let input = "set(FOO   bar)\n";
+    let target = work.join("a.cmake");
+
+    for form in ["ig.txt", "./ig.txt", "../ig.txt"] {
+        let mut child = Command::new(cmake_fmt_bin())
+            .args([
+                "-",
+                "--assume-filename",
+                target.to_str().unwrap(),
+                "--ignore-file",
+                form,
+            ])
+            .current_dir(&work)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Failed to spawn cmake-fmt");
+        child
+            .stdin
+            .as_mut()
+            .expect("Failed to get stdin")
+            .write_all(input.as_bytes())
+            .expect("Failed to write to stdin");
+        let output = child.wait_with_output().expect("Failed to wait");
+
+        assert!(
+            output.status.success(),
+            "--ignore-file {} must not abort the process (exit {:?}): {}",
+            form,
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            input,
+            "--ignore-file {} should exclude a.cmake",
+            form
+        );
+    }
+}
+
+#[test]
+fn test_assume_filename_malformed_ignore_line_keeps_valid_patterns() {
+    // `GitignoreBuilder::add` is a partial failure: it still took the valid
+    // lines, so one bad glob must not disable the whole file.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    std::fs::create_dir(root.join("vendor")).expect("Failed to create vendor dir");
+    std::fs::write(root.join(".cmake-fmt-ignore"), "vendor/\n{a,b\n")
+        .expect("Failed to write ignore");
+
+    let input = "set(FOO   bar)\n";
+    let target = root.join("vendor").join("a.cmake");
+    let (ok, stdout) = run_with_stdin(&["-", "--assume-filename", target.to_str().unwrap()], input);
+
+    assert!(ok, "Command should succeed");
+    assert_eq!(
+        stdout, input,
+        "a malformed line must not disable the valid patterns"
+    );
+}
+
+#[test]
+fn test_assume_filename_normalizes_dot_segments() {
+    // An un-normalized path makes ancestors() yield directories that are not
+    // ancestors at all, applying the wrong ignore file.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    let cwd = root.join("cwd");
+    let foo = root.join("foo");
+    std::fs::create_dir(&cwd).expect("Failed to create cwd");
+    std::fs::create_dir(&foo).expect("Failed to create foo");
+    std::fs::write(cwd.join(".cmake-fmt-ignore"), "CMakeLists.txt\n")
+        .expect("Failed to write ignore");
+
+    let input = "set(FOO   bar)\n";
+
+    // cwd/.cmake-fmt-ignore governs cwd/, not the sibling foo/
+    let mut child = Command::new(cmake_fmt_bin())
+        .args(["-", "--assume-filename", "../foo/CMakeLists.txt"])
+        .current_dir(&cwd)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn cmake-fmt");
+    child
+        .stdin
+        .as_mut()
+        .expect("Failed to get stdin")
+        .write_all(input.as_bytes())
+        .expect("Failed to write to stdin");
+    let output = child.wait_with_output().expect("Failed to wait");
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "set(FOO bar)\n",
+        "a sibling directory's ignore file must not apply"
+    );
+}
+
+#[test]
+fn test_assume_filename_agrees_with_directory_walk() {
+    // The invariant the README promises: the stdin path and the directory walk
+    // reach the same verdict for every file in a tree.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+
+    for dir in ["vendor", "gen", "sub", "build"] {
+        std::fs::create_dir(root.join(dir)).expect("Failed to create dir");
+    }
+    std::fs::write(
+        root.join(".cmake-fmt-ignore"),
+        "vendor/\n!vendor/keep.cmake\ngen/*\n!gen/keep.cmake\nbuild/\n",
+    )
+    .expect("Failed to write ignore");
+    std::fs::write(root.join("sub").join(".cmake-fmt-ignore"), "local.cmake\n")
+        .expect("Failed to write ignore");
+    std::fs::write(
+        root.join("build").join(".cmake-fmt-ignore"),
+        "!keep.cmake\n",
+    )
+    .expect("Failed to write ignore");
+
+    // Every file needs reformatting, so --check names exactly the files the
+    // walk considers.
+    let unformatted = "set(FOO   bar)\n";
+    let files = [
+        "top.cmake",
+        "vendor/a.cmake",
+        "vendor/keep.cmake",
+        "gen/a.cmake",
+        "gen/keep.cmake",
+        "sub/local.cmake",
+        "sub/other.cmake",
+        "build/keep.cmake",
+    ];
+    for file in files {
+        std::fs::write(root.join(file), unformatted).expect("Failed to write file");
+    }
+
+    let walk = Command::new(cmake_fmt_bin())
+        .args(["-r", "--check", "."])
+        .current_dir(root)
+        .output()
+        .expect("Failed to run walk");
+    let walk_report =
+        String::from_utf8_lossy(&walk.stderr).to_string() + &String::from_utf8_lossy(&walk.stdout);
+
+    for file in files {
+        let walk_sees = walk_report.contains(file);
+        let target = root.join(file);
+        let (_, stdout) = run_with_stdin(
+            &["-", "--assume-filename", target.to_str().unwrap()],
+            unformatted,
+        );
+        let stdin_formats = stdout != unformatted;
+
+        assert_eq!(
+            walk_sees, stdin_formats,
+            "walk and stdin disagree about {}: walk_sees={}, stdin_formats={}\nwalk report:\n{}",
+            file, walk_sees, stdin_formats, walk_report
+        );
+    }
+}

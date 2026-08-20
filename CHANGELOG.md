@@ -23,9 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sortable_keywords` and `sortable_positional` in `command_grammars` and grammar files, to mark a list in your own command as unordered
 - `target_sources` now models the `FILE_SET` form's `TYPE`, `BASE_DIRS` and `FILES` keywords, and `source_group` has a grammar entry
 
-## [Unreleased]
 ### Fixed
 - `.cmake-fmt-ignore` (and `--ignore-file`) now apply to stdin input with `--assume-filename`, so editor format-on-save skips ignored files instead of formatting them ([#4](https://github.com/sandercox/cmake-fmt/issues/4))
+- `.cmake-fmt-ignore` (and `--ignore-file`) now apply to stdin input with `--assume-filename`, so editor format-on-save skips ignored files instead of formatting them. Matching follows git's rule that an excluded directory is final, so `build/` is not undone by a later `!build/keep.cmake`, and a malformed pattern line no longer discards the rest of the ignore file ([#4](https://github.com/sandercox/cmake-fmt/issues/4))
 
 ## [0.10.2]
 - Fix when `.cmake-fmt` is a root file but there is no CMakeLists.txt use highest ancestor directory as root for function detections

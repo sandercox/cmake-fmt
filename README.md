@@ -147,9 +147,16 @@ third_party/
 generated/*.cmake
 ```
 
-Ignore files are honoured both when walking directories and when a file is piped
-through stdin with `--assume-filename`, so editor format-on-save skips the same
-files. Files under an excluded path are passed through unchanged.
+`.cmake-fmt-ignore` is honoured both when walking directories and when a file is
+piped through stdin with `--assume-filename`, so editor format-on-save skips the
+same files, which are passed through unchanged. As in git, an excluded directory
+is final: `build/` cannot be undone by a later `!build/keep.cmake`, though
+`build/*` can.
+
+Two limits worth knowing. The stdin path consults `.cmake-fmt-ignore` and
+`--ignore-file`, but not `.gitignore` — the directory walk consults both. And a
+file named explicitly on the command line is always formatted, ignore rules or
+not.
 
 When going through your files for the first time, you can use `--interactive` to review changes hunk-by-hunk and choose which ones to apply or skip/disable.
 
