@@ -1820,3 +1820,96 @@ set(RESAPI_SOURCE_MAC
         "Blank line before trailing comments should be idempotent"
     );
 }
+
+// ============================================================================
+// NESTED PARENTHESES IN ARGUMENT LISTS
+// ============================================================================
+
+#[test]
+fn test_parenthesized_condition_preserved() {
+    // Regression: https://github.com/sandercox/cmake-fmt/issues/5
+    // Parenthesized groups used to be dropped, turning if((TRUE)) into if().
+    let input = "if((TRUE))\nendif()\n\nif((TRUE) AND (TRUE))\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn test_parenthesized_condition_groups_normalized() {
+    let input = "if(   (  TRUE   AND   FALSE  )   )\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, "if((TRUE AND FALSE))\nendif()\n");
+}
+
+#[test]
+fn test_parenthesized_condition_nested_groups() {
+    let input = "if((A AND B) OR (C AND D))\n\tmessage(one)\nelseif(NOT (X OR Y))\n\tmessage(two)\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn test_parenthesized_condition_adjacent_to_operator() {
+    // No whitespace between NOT and ( — the group merges into one argument
+    let input = "if(NOT(TRUE))\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn test_parenthesized_group_in_while_condition() {
+    let input = "while((A) AND (B))\nendwhile()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn test_parenthesized_group_with_comment_kept_verbatim() {
+    // Folding a group containing a line comment onto one line would swallow
+    // the rest of the condition, so the group is emitted as written.
+    let input = "if((A # why\n\tAND B) OR C)\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert!(
+        result.contains("# why"),
+        "comment inside group was lost:\n{}",
+        result
+    );
+    assert!(
+        result.contains("OR C"),
+        "condition after group was lost:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_parenthesized_group_in_keyword_aware_command() {
+    // Keyword-aware commands used to drop nested groups entirely
+    let input = "set(MY_VAR (a b) c)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, "set(MY_VAR (a b) c)\n");
+}
+
+#[test]
+fn test_parenthesized_condition_idempotent_when_wrapped() {
+    let input = concat!(
+        "if((VERY_LONG_VARIABLE_NAME_ONE AND VERY_LONG_VARIABLE_NAME_TWO) ",
+        "OR (VERY_LONG_VARIABLE_NAME_THREE AND VERY_LONG_VARIABLE_NAME_FOUR))\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let once = format_text(input, &config);
+    let twice = format_text(&once, &config);
+    assert_eq!(once, twice, "wrapped condition is not idempotent");
+    assert!(
+        once.contains("(VERY_LONG_VARIABLE_NAME_ONE AND VERY_LONG_VARIABLE_NAME_TWO)"),
+        "group was split or dropped:\n{}",
+        once
+    );
+}

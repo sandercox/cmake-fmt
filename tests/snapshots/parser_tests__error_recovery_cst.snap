@@ -25,10 +25,10 @@ FILE@0..202
       COMMENT@74..109 "# Another valid comma ..."
       NEWLINE@109..110 "\n"
       UNQUOTED_ARGUMENT@110..117 "project"
-      LPAREN@117..118 "("
-      ARGUMENT_LIST@118..127
+      ARGUMENT_LIST@117..128
+        LPAREN@117..118 "("
         UNQUOTED_ARGUMENT@118..127 "MyProject"
-      RPAREN@127..128 ")"
+        RPAREN@127..128 ")"
       NEWLINE@128..129 "\n"
       COMMENT@129..147 "# Unexpected token"
       NEWLINE@147..148 "\n"
@@ -37,10 +37,10 @@ FILE@0..202
       COMMENT@159..172 "# Valid again"
       NEWLINE@172..173 "\n"
       UNQUOTED_ARGUMENT@173..187 "add_executable"
-      LPAREN@187..188 "("
-      ARGUMENT_LIST@188..200
+      ARGUMENT_LIST@187..201
+        LPAREN@187..188 "("
         UNQUOTED_ARGUMENT@188..191 "app"
         WHITESPACE@191..192 " "
         UNQUOTED_ARGUMENT@192..200 "main.cpp"
-      RPAREN@200..201 ")"
+        RPAREN@200..201 ")"
       NEWLINE@201..202 "\n"

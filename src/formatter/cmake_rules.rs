@@ -766,6 +766,28 @@ pub fn parse_keyword_sections_with_grammar(
                     consecutive_newlines = 0;
                 }
             }
+        } else if let NodeOrToken::Node(node) = child {
+            // A nested `( ... )` group is one logical argument, never a keyword,
+            // e.g. the grouped sub-expression in `if((A AND B) OR C)`.
+            if let Some(nested) = ArgumentList::cast(node) {
+                consecutive_newlines = 0;
+                let text = super::cst_to_doc::render_nested_group(&nested);
+
+                if !saw_separator && !current_section.args.is_empty() {
+                    // Adjacent to previous token (no whitespace) — merge,
+                    // e.g. `NOT(TRUE)`
+                    current_section.args.last_mut().unwrap().push_str(&text);
+                } else {
+                    if current_section.args.is_empty()
+                        && current_section.keyword.is_some()
+                        && saw_newline_since_keyword
+                    {
+                        current_section.values_on_new_line = true;
+                    }
+                    current_section.args.push(text);
+                }
+                saw_separator = false;
+            }
         }
     }
 

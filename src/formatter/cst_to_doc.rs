@@ -808,6 +808,8 @@ fn format_command(
                     | SyntaxKind::ENV_VAR_REF
                     | SyntaxKind::CACHE_VAR_REF
                     | SyntaxKind::GENERATOR_EXPR
+                    // A nested `( ... )` group is an argument too
+                    | SyntaxKind::ARGUMENT_LIST
             )
         })
     });
@@ -1048,8 +1050,37 @@ fn format_argument_list(
                     }
                 }
             }
-            NodeOrToken::Node(_) => {
-                saw_separator = true;
+            NodeOrToken::Node(node) => {
+                if let Some(nested) = ArgumentList::cast(node) {
+                    // Nested `( ... )` group: emit as a single argument
+                    let text = render_nested_group(&nested);
+
+                    if !saw_separator && seen_first_arg {
+                        rest_parts.push_str(&text);
+                    } else if !seen_first_arg {
+                        if is_custom_command {
+                            rest_parts.push('\n');
+                            rest_parts.push_str(&inner_indent);
+                            rest_parts.push_str(&text);
+                        } else {
+                            first_arg = Some(text);
+                        }
+                        seen_first_arg = true;
+                    } else {
+                        rest_parts.push('\n');
+                        if consecutive_newline_count >= 2 {
+                            let blank_lines = consecutive_newline_count - 1;
+                            for _ in 0..blank_lines {
+                                rest_parts.push('\n');
+                            }
+                        }
+                        rest_parts.push_str(&inner_indent);
+                        rest_parts.push_str(&text);
+                    }
+                    saw_separator = false;
+                } else {
+                    saw_separator = true;
+                }
                 consecutive_newline_count = 0;
             }
         }
@@ -1093,8 +1124,8 @@ pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
     let mut saw_separator = true;
 
     for child in arg_list.syntax().children_with_tokens() {
-        if let NodeOrToken::Token(token) = child {
-            match token.kind() {
+        match child {
+            NodeOrToken::Token(token) => match token.kind() {
                 SyntaxKind::UNQUOTED_ARGUMENT
                 | SyntaxKind::QUOTED_ARGUMENT
                 | SyntaxKind::BRACKET_ARGUMENT
@@ -1116,10 +1147,43 @@ pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
                 _ => {
                     saw_separator = true;
                 }
+            },
+            NodeOrToken::Node(node) => {
+                // A nested `( ... )` group is one logical argument, e.g. the
+                // grouped sub-expression in `if((A AND B) OR C)`.
+                if let Some(nested) = ArgumentList::cast(node) {
+                    let text = render_nested_group(&nested);
+                    if !saw_separator && !args.is_empty() {
+                        args.last_mut().unwrap().push_str(&text);
+                    } else {
+                        args.push(text);
+                    }
+                    saw_separator = false;
+                } else {
+                    saw_separator = true;
+                }
             }
         }
     }
     args
+}
+
+/// Render a nested parenthesized argument group as a single logical argument.
+///
+/// Inner whitespace is normalized to single spaces (`( A  AND B )` becomes
+/// `(A AND B)`). Groups containing comments are emitted verbatim instead,
+/// because folding a line comment into one line would swallow what follows it.
+pub(crate) fn render_nested_group(group: &ArgumentList) -> String {
+    let has_comment = group
+        .syntax()
+        .descendants_with_tokens()
+        .any(|c| matches!(c.kind(), SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT));
+
+    if has_comment {
+        return group.syntax().text().to_string();
+    }
+
+    format!("({})", collect_logical_args(group).join(" "))
 }
 
 /// Detect the mode keyword for multi-mode commands
