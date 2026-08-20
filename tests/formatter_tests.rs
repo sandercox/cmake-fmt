@@ -1913,3 +1913,92 @@ fn test_parenthesized_condition_idempotent_when_wrapped() {
         once
     );
 }
+
+#[test]
+fn test_blank_lines_before_nested_group_are_clamped() {
+    // The token path clamps to max_blank_lines; the group path has to as well.
+    let input = "mycustomcmd(A\n\n\n\n(B C)\n\n\n\nD)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(result, "mycustomcmd(\n\tA\n\n\t(B C)\n\n\tD\n)\n");
+
+    let none = FormatConfig {
+        max_blank_lines: 0,
+        ..Default::default()
+    };
+    assert_eq!(
+        format_text(input, &none),
+        "mycustomcmd(\n\tA\n\t(B C)\n\tD\n)\n"
+    );
+}
+
+#[test]
+fn test_nested_group_overflows_single_value_keyword() {
+    // A SingleValue keyword already holding its one value must push a group
+    // into a new positional section, exactly as it does for a plain token.
+    let config = FormatConfig {
+        max_line_length: 30,
+        ..Default::default()
+    };
+
+    let with_group = format_text(
+        "install(FILES a.h DESTINATION inc (extra group) COMPONENT dev)\n",
+        &config,
+    );
+    let with_token = format_text(
+        "install(FILES a.h DESTINATION inc extra COMPONENT dev)\n",
+        &config,
+    );
+
+    assert!(
+        with_group.contains("\tDESTINATION inc\n\t(extra group)\n"),
+        "group stayed inside the SingleValue section:\n{}",
+        with_group
+    );
+    assert_eq!(
+        with_group.replace("(extra group)", "extra"),
+        with_token,
+        "a group and a token should produce the same section structure"
+    );
+}
+
+#[test]
+fn test_parenthesized_group_with_comment_exact_output() {
+    // Known limitation: a group containing a comment is emitted verbatim,
+    // because folding it onto one line would comment out the rest of the
+    // condition. The group's own lines keep the indentation they had in the
+    // source — the section parser decides this before the indent is known.
+    let input = "if(OUTER)\nif((A # why\nOR B))\nendif()\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        "if(OUTER)\n\tif((A # why\nOR B))\n\tendif()\nendif()\n"
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_empty_nested_group() {
+    let config = default_config();
+    assert_eq!(
+        format_text("if(())\nendif()\n", &config),
+        "if(())\nendif()\n"
+    );
+}
+
+#[test]
+fn test_nested_group_gets_paren_spacing() {
+    // has_args must count a group, or space_between_command_parens skips it
+    let config = FormatConfig {
+        space_between_command_parens: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        format_text("if((A))\nendif()\n", &config),
+        "if( (A) )\nendif()\n"
+    );
+    assert_eq!(format_text("if()\nendif()\n", &config), "if()\nendif()\n");
+}

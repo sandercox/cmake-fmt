@@ -777,6 +777,31 @@ pub fn parse_keyword_sections_with_grammar(
                     // Adjacent to previous token (no whitespace) — merge,
                     // e.g. `NOT(TRUE)`
                     current_section.args.last_mut().unwrap().push_str(&text);
+                } else if matches!(current_section.keyword_type, Some(KeywordType::SingleValue))
+                    && !current_section.args.is_empty()
+                {
+                    // Same SingleValue overflow the token path applies: the
+                    // keyword already has its one value, so this starts a new
+                    // positional section. `sort_from` is decided the same way
+                    // too — before the push, while `sections` is still empty
+                    // for a leading mode keyword. A group-led run is refused by
+                    // the value gate later anyway, since `( ... )` is not a
+                    // source file, but the two paths agreeing is the point.
+                    let overflow_sortable =
+                        sections.is_empty() && grammar.is_some_and(|g| g.sortable_positional);
+                    sections.push(current_section);
+                    current_section = KeywordSection {
+                        keyword: None,
+                        args: vec![text],
+                        comments: Vec::new(),
+                        trailing_comments: Vec::new(),
+                        blank_lines: Vec::new(),
+                        post_comment_blanks: Vec::new(),
+                        comment_blank_indices: Vec::new(),
+                        sort_from: overflow_sortable.then_some(0),
+                        keyword_type: None,
+                        values_on_new_line: false,
+                    };
                 } else {
                     if current_section.args.is_empty()
                         && current_section.keyword.is_some()

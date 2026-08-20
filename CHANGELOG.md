@@ -23,9 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sortable_keywords` and `sortable_positional` in `command_grammars` and grammar files, to mark a list in your own command as unordered
 - `target_sources` now models the `FILE_SET` form's `TYPE`, `BASE_DIRS` and `FILES` keywords, and `source_group` has a grammar entry
 
-## [Unreleased]
 ### Fixed
 - Parenthesized groups in conditions are no longer dropped — `if((TRUE))` became `if()` and `if((TRUE) AND (TRUE))` became `if(AND)`. A `( ... )` group is now kept as a single argument, in conditions and in keyword-aware commands alike ([#5](https://github.com/sandercox/cmake-fmt/issues/5))
+- Parenthesized groups in conditions are no longer dropped — `if((TRUE))` became `if()` and `if((TRUE) AND (TRUE))` became `if(AND)`. A `( ... )` group is now kept as a single argument, in conditions and in keyword-aware commands alike. Known limitation: a group is an unbreakable atom, so a hand-wrapped one is collapsed onto a single line, and a group containing a comment keeps the indentation it had in the source ([#5](https://github.com/sandercox/cmake-fmt/issues/5))
 
 ## [0.10.2]
 - Fix when `.cmake-fmt` is a root file but there is no CMakeLists.txt use highest ancestor directory as root for function detections

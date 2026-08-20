@@ -1070,7 +1070,9 @@ fn format_argument_list(
                         rest_parts.push('\n');
                         if consecutive_newline_count >= 2 {
                             let blank_lines = consecutive_newline_count - 1;
-                            for _ in 0..blank_lines {
+                            let blank_lines_to_emit =
+                                std::cmp::min(blank_lines, ctx.config.max_blank_lines);
+                            for _ in 0..blank_lines_to_emit {
                                 rest_parts.push('\n');
                             }
                         }

@@ -320,3 +320,39 @@ fn test_snapshot_error_recovery() {
 
     insta::assert_debug_snapshot!("error_recovery_cst", cst.root);
 }
+
+#[test]
+fn test_nested_group_node_owns_its_parens() {
+    // The formatter renders a group from its node text, so the node has to
+    // span the parens themselves, not just what sits between them.
+    let cst = parse_text("if((TRUE) AND (FALSE))\n");
+    let commands: Vec<_> = cst.commands().collect();
+    let arg_list = commands[0].argument_list().expect("has argument list");
+
+    let groups: Vec<String> = arg_list
+        .nested_lists()
+        .map(|g| g.syntax().text().to_string())
+        .collect();
+
+    assert_eq!(groups, vec!["(TRUE)".to_string(), "(FALSE)".to_string()]);
+}
+
+#[test]
+fn test_unterminated_nested_group_roundtrips() {
+    // Error recovery must still reproduce the input byte for byte
+    for input in [
+        "if((A)\n",
+        "if((\n",
+        "if((((((\n",
+        "if(()\n",
+        "if((A))extra\n",
+    ] {
+        let cst = parse_text(input);
+        assert_eq!(
+            cst.root.text().to_string(),
+            input,
+            "roundtrip failed for {:?}",
+            input
+        );
+    }
+}
