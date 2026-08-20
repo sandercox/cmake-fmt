@@ -23,9 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sortable_keywords` and `sortable_positional` in `command_grammars` and grammar files, to mark a list in your own command as unordered
 - `target_sources` now models the `FILE_SET` form's `TYPE`, `BASE_DIRS` and `FILES` keywords, and `source_group` has a grammar entry
 
-## [Unreleased]
 ### Changed
-- `if`/`elseif`/`while` conditions that don't fit on one line now break before `AND`/`OR` and keep each clause on its own line, instead of putting every word on a separate line. A clause too long for one line is filled across continuation lines indented one level deeper ([#2](https://github.com/sandercox/cmake-fmt/issues/2))
+- `if`/`elseif`/`while` conditions laid out on more than one line now break before `AND`/`OR` and keep each clause on its own line, instead of putting every word on a separate line. This covers both a condition too long to fit and one the author wrapped by hand. A clause too long for one line is filled across continuation lines ([#2](https://github.com/sandercox/cmake-fmt/issues/2))
 
 ## [0.10.2]
 - Fix when `.cmake-fmt` is a root file but there is no CMakeLists.txt use highest ancestor directory as root for function detections

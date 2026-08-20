@@ -2024,3 +2024,124 @@ fn test_foreach_is_not_treated_as_condition() {
         result
     );
 }
+
+#[test]
+fn test_hand_wrapped_short_condition_uses_clause_layout() {
+    // The condition fits on one line, but the author broke it, so the generic
+    // layout would honour that by putting every word on its own line.
+    let input = concat!(
+        "if(WITH_CUDA AND NOT OPENCV_PLATFORM_IOS\n",
+        "   AND NOT OPENCV_PLATFORM_ANDROID)\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if(WITH_CUDA\n",
+            "\tAND NOT OPENCV_PLATFORM_IOS\n",
+            "\tAND NOT OPENCV_PLATFORM_ANDROID\n",
+            ")\n",
+            "endif()\n"
+        )
+    );
+}
+
+#[test]
+fn test_lowercase_and_or_are_values_not_operators() {
+    // CMake rejects `if(A and B)` outright, so a bare `and`/`or` can only be a
+    // value — breaking there would tear a comparison off its operand.
+    let input = concat!(
+        "if(MY_VAR STREQUAL and OR MY_OTHER_VARIABLE_NAME_IS_LONG STREQUAL Or ",
+        "AND SOMETHING_ELSE)\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert!(
+        result.contains("if(MY_VAR STREQUAL and\n"),
+        "lowercase `and` was treated as an operator:\n{}",
+        result
+    );
+    assert!(
+        result.contains("STREQUAL Or\n"),
+        "`Or` was treated as an operator:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_condition_with_unlimited_line_length() {
+    // max_line_length = 0 means unlimited: clauses still get a line each
+    // because the author broke the condition, but nothing wraps on width.
+    let input = "if(A\n AND B)\nendif()\n";
+    let config = FormatConfig {
+        max_line_length: 0,
+        ..Default::default()
+    };
+    let result = format_text(input, &config);
+
+    assert_eq!(result, "if(A\n\tAND B\n)\nendif()\n");
+}
+
+#[test]
+fn test_single_clause_continuation_indents_one_level() {
+    // With only one clause there are no clause lines to distinguish the
+    // continuation from, so it sits where every other wrapped command puts it.
+    let input = concat!(
+        "if(NOT SOMETHING_EXTREMELY_LONG_THAT_EXCEEDS_EIGHTY_CHARACTERS_BY_ITSELF_YES_INDEED)\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if(NOT\n",
+            "\tSOMETHING_EXTREMELY_LONG_THAT_EXCEEDS_EIGHTY_CHARACTERS_BY_ITSELF_YES_INDEED\n",
+            ")\n",
+            "endif()\n"
+        )
+    );
+}
+
+#[test]
+fn test_preserved_closer_condition_matches_opener() {
+    // endif echoes the opener's condition under closing_style = preserve; the
+    // two must not be laid out differently.
+    let cond = "NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" AND NOT WICKHOPPER_MODE STREQUAL \"GROUP\"";
+    let input = format!("if({})\nendif({})\n", cond, cond);
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Preserve,
+        ..Default::default()
+    };
+    let result = format_text(&input, &config);
+
+    let laid_out = concat!(
+        "(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+        "\tAND NOT WICKHOPPER_MODE STREQUAL \"GROUP\"\n",
+        ")"
+    );
+    assert_eq!(
+        result,
+        format!("if{}\nendif{}\n", laid_out, laid_out),
+        "opener and closer disagree"
+    );
+}
+
+#[test]
+fn test_very_long_condition_does_not_overflow_stack() {
+    // The layout used to build one Doc node per line, whose left-nested Append
+    // chain overflowed the stack on Drop for a condition this size.
+    let clauses: Vec<String> = (0..20_000).map(|i| format!("VAR_{}", i)).collect();
+    let input = format!("if({})\nendif()\n", clauses.join(" AND "));
+    let config = default_config();
+
+    let once = format_text(&input, &config);
+    assert!(once.contains("\tAND VAR_19999\n"), "last clause missing");
+    assert_eq!(once, format_text(&once, &config), "not idempotent");
+}

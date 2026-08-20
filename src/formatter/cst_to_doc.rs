@@ -22,6 +22,7 @@ use super::post_process_rendered_output;
 /// Signals detected in argument list that affect formatting
 pub(crate) struct ArgumentFormatSignals {
     pub(crate) force_multiline: bool,
+    pub(crate) has_comments: bool,
 }
 
 /// Scope frame for tracking block opener arguments
@@ -865,20 +866,28 @@ pub(crate) fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> Arg
 
     let force_multiline = has_comments || has_blank_lines || has_newlines;
 
-    ArgumentFormatSignals { force_multiline }
+    ArgumentFormatSignals {
+        force_multiline,
+        has_comments,
+    }
 }
 
-/// Commands whose argument list is a boolean expression, not a list of values
+/// Commands whose argument list is a boolean expression, not a list of values.
+///
+/// `endif`/`endwhile` are included because with `closing_style = preserve` they
+/// echo the opener's condition, and the two should not be laid out differently.
 fn is_condition_command(name_lower: &str) -> bool {
-    matches!(name_lower, "if" | "elseif" | "while")
+    matches!(name_lower, "if" | "elseif" | "while" | "endif" | "endwhile")
 }
 
 /// Operators that join the top-level clauses of a condition.
 ///
-/// CMake writes these in upper case, but the comparison is lenient so an
-/// `and`/`or` written in lower case still lays out the same way.
+/// Case-sensitive, because CMake itself is: `if(A and B)` is not a lowercase
+/// spelling of the operator, it is an error ("Unknown arguments specified").
+/// So a bare `and`/`or` can only be a value, and treating it as an operator
+/// would split a clause away from its comparison.
 fn is_condition_operator(arg: &str) -> bool {
-    arg.eq_ignore_ascii_case("AND") || arg.eq_ignore_ascii_case("OR")
+    arg == "AND" || arg == "OR"
 }
 
 /// Lay out an `if`/`elseif`/`while` condition that doesn't fit on one line.
@@ -896,25 +905,25 @@ fn is_condition_operator(arg: &str) -> bool {
 /// A clause too long for one line is filled across continuation lines indented
 /// one level deeper, so it still reads as a single clause.
 ///
-/// Returns `None` when the generic layout should stay in charge: the condition
-/// fits on one line, is too short to lay out, or carries comments that have to
-/// keep their own lines.
+/// Applies whenever the condition will occupy more than one line — it either
+/// doesn't fit, or the author already broke it. Returns `None` when the generic
+/// layout should stay in charge: a condition that fits on one line and was
+/// written that way, one with fewer than two arguments, or one carrying
+/// comments, which have to keep their own lines. A blank line inside a
+/// condition is not preserved.
 fn format_condition_args(
-    arg_list: &ArgumentList,
+    signals: &ArgumentFormatSignals,
     ctx: &FormatContext,
     name_lower: &str,
     args: &[String],
 ) -> Option<RcDoc<'static, ()>> {
+    // args.len() >= 2 is relied on by the `args.len() - 1` below
     if args.len() < 2 {
         return None;
     }
 
     // Comments pin arguments to their own lines; leave those to the generic path
-    let has_comments = arg_list
-        .syntax()
-        .children_with_tokens()
-        .any(|c| matches!(c.kind(), SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT));
-    if has_comments {
+    if signals.has_comments {
         return None;
     }
 
@@ -928,11 +937,13 @@ fn format_condition_args(
     // Width of everything before the first argument: `<indent>if( `
     let opening_width = base_indent + name_lower.chars().count() + space_before + 1 + paren_space;
 
-    // Only take over when the condition genuinely has to wrap; a condition that
-    // fits keeps whatever the generic layout does with it today.
+    // Take over whenever the condition will be laid out on more than one line:
+    // either it doesn't fit, or the author already broke it and the generic
+    // layout would honour that by putting every word on its own line.
     let args_width: usize = args.iter().map(|a| a.chars().count()).sum::<usize>() + args.len() - 1;
     let flat_width = opening_width + args_width + paren_space + 1;
-    if limit == 0 || flat_width <= limit {
+    let must_wrap = limit > 0 && flat_width > limit;
+    if !must_wrap && !signals.force_multiline {
         return None;
     }
 
@@ -949,7 +960,14 @@ fn format_condition_args(
     }
 
     let clause_indent = indent_string(ctx.indent_level + 1, config);
-    let cont_indent = indent_string(ctx.indent_level + 2, config);
+    // A wrapped clause continues one level deeper than the clause lines, so the
+    // two can be told apart. With only one clause there is nothing to tell it
+    // apart from, and the extra level would just be noise.
+    let cont_indent = if clauses.len() > 1 {
+        indent_string(ctx.indent_level + 2, config)
+    } else {
+        clause_indent.clone()
+    };
 
     // The first clause trails the command's opening paren; every later line
     // carries its own indent.
@@ -974,7 +992,7 @@ fn format_condition_args(
             if current.is_empty() {
                 current.push_str(word);
                 used += width;
-            } else if used + 1 + width > limit {
+            } else if limit > 0 && used + 1 + width > limit {
                 // Fill up to the limit, then continue the clause one level deeper
                 let line = std::mem::take(&mut current);
                 if clause_idx == 0 && first_line.is_none() {
@@ -999,15 +1017,17 @@ fn format_condition_args(
         }
     }
 
-    let mut docs: Vec<RcDoc<'static, ()>> = Vec::new();
-    docs.push(RcDoc::text(first_line?));
+    // Render to a single string rather than concat-ing one doc per line: the
+    // fold builds a left-nested Append chain whose depth tracks the line count,
+    // which overflows the stack on Drop for a pathologically long condition.
+    // The force-multiline path below does the same for the same reason.
+    let mut rendered = first_line?;
     for line in lines {
-        docs.push(RcDoc::hardline());
-        docs.push(RcDoc::text(line));
+        rendered.push('\n');
+        rendered.push_str(&line);
     }
-    docs.push(closing_paren_position(config, ctx.indent_level, true));
 
-    Some(RcDoc::concat(docs))
+    Some(RcDoc::text(rendered).append(closing_paren_position(config, ctx.indent_level, true)))
 }
 
 /// Format an argument list with intelligent line breaking
@@ -1023,16 +1043,16 @@ fn format_argument_list(
         return RcDoc::nil();
     }
 
+    // Detect formatting signals
+    let signals = detect_argument_formatting_signals(arg_list);
+
     // `if`/`elseif`/`while` hold a boolean expression rather than a list, so
     // they get a layout that keeps each clause readable when it has to wrap.
     if is_condition_command(name_lower)
-        && let Some(doc) = format_condition_args(arg_list, ctx, name_lower, &args)
+        && let Some(doc) = format_condition_args(&signals, ctx, name_lower, &args)
     {
         return doc;
     }
-
-    // Detect formatting signals
-    let signals = detect_argument_formatting_signals(arg_list);
 
     // If no multiline signals, use auto-layout (flat_alt + group)
     // ARGL-03: For builtin commands, first arg stays on same line when broken
