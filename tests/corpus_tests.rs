@@ -310,6 +310,12 @@ const ALLOWED_REORDERING: &[(&str, Option<&str>, &[&str], bool)] = &[
 /// Keyword names that auto-detected wrapper commands may reorder.
 const CONVENTIONAL_FILE_LISTS: &[&str] = &["SOURCES", "SRCS", "FILES"];
 
+/// `sub_keywords` and `collection_keywords` are deliberately not modelled: they
+/// exist only on `install`'s TARGETS and DIRECTORY modes, neither of which has a
+/// table entry, so every run there must be byte-identical anyway. Splitting more
+/// finely than the parser is strictly stricter, and both sides go through this
+/// same function, so the decomposition stays canonical.
+///
 /// Split an argument list into `(governing keyword, values)` runs using the
 /// command's real grammar, so the split does not have to guess which tokens are
 /// keywords. Guessing got this wrong both ways: an all-caps list *variable*
@@ -331,11 +337,16 @@ fn split_into_keyword_runs(command: &str, args: &[String]) -> Vec<(Option<String
 
     let keyword_type = |arg: &str| match resolved {
         Some(cg) => cg.keyword_type(arg),
-        // Unknown command: fall back to the conventional names, which is the
-        // only thing the formatter itself reorders there
-        None => CONVENTIONAL_FILE_LISTS
-            .contains(&arg)
-            .then_some(KeywordType::MultiValue),
+        // No grammar to ask, so treat any all-caps token as a keyword. Using
+        // CONVENTIONAL_FILE_LISTS here would be circular: a keyword the
+        // formatter starts reordering but this test doesn't know about would be
+        // absorbed into a neighbouring run and vanish into its multiset check.
+        // Over-splitting costs nothing now that keyword identity is compared.
+        None => (arg.len() > 1
+            && arg
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()))
+        .then_some(KeywordType::MultiValue),
     };
 
     let mut runs: Vec<(Option<String>, Vec<String>)> = vec![(None, Vec::new())];
@@ -430,6 +441,9 @@ fn test_corpus_reordering_confined_to_allowlist() {
                 path.display()
             );
 
+            let command_has_grammar = cmake_fmt::formatter::grammar::GrammarRegistry::global()
+                .get(name)
+                .is_some();
             let mode = resolved_mode(name, plain_args);
             let entry = ALLOWED_REORDERING
                 .iter()
@@ -465,12 +479,29 @@ fn test_corpus_reordering_confined_to_allowlist() {
                     continue;
                 }
 
+                // The formatter permits a keyword-less run only when it leads
+                // the command, or when it overflowed from the command's first
+                // section (`list(APPEND var a b)`). A stray run later on is not
+                // the command's argument list.
+                let positional_run_permitted = run_index == 0
+                    || (run_index == 2
+                        && plain_runs[0].1.is_empty()
+                        && plain_runs[1].0.is_some()
+                        && plain_runs[1].1.len() == 1);
+
                 let may_permute = match (entry, keyword.as_deref()) {
-                    (Some((_, _, _, positional)), None) => *positional,
+                    (Some((_, _, _, positional)), None) => *positional && positional_run_permitted,
                     (Some((_, _, keywords, _)), Some(kw)) => keywords.contains(&kw),
-                    // Unknown command: only conventionally named file lists
-                    (None, Some(kw)) => CONVENTIONAL_FILE_LISTS.contains(&kw),
-                    (None, None) => false,
+                    // A command with no grammar at all: only conventionally
+                    // named file lists, which is all the formatter reorders
+                    // there. A command that HAS a grammar but no table entry is
+                    // a different thing and gets nothing — otherwise marking,
+                    // say, add_custom_target's SOURCES sortable would be
+                    // permitted without the table saying so.
+                    (None, Some(kw)) if !command_has_grammar => {
+                        CONVENTIONAL_FILE_LISTS.contains(&kw)
+                    }
+                    (None, _) => false,
                 };
 
                 if may_permute {
