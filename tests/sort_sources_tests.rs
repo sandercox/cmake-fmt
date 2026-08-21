@@ -552,3 +552,76 @@ fn test_no_sort_directive_also_stops_grouping() {
         result
     );
 }
+
+#[test]
+fn test_flag_lists_hold_regardless_of_variable_case() {
+    // A positional run has no keyword to vouch for it, so its values must look
+    // like source files. GCC processes -W flags in order and the last wins, so
+    // reordering `-Wno-unused -Wall` re-enables a warning the author disabled.
+    // Seen in tests/corpus/llvm/HandleLLVMOptions.cmake.
+    assert_unchanged("set(warning_flags -Wno-unused -Wall)\n");
+    assert_unchanged("set(WARNING_FLAGS -Wno-unused -Wall)\n");
+    assert_unchanged("set(msvc_warning_flags /wd4141 /wd4100)\n");
+    // CMAKE_<LANG>_FLAGS_<CONFIG> ends in the config name, not _FLAGS
+    assert_unchanged("set(CMAKE_CXX_FLAGS_RELEASE /O2 /Ob2 /DNDEBUG)\n");
+    // pkg-config output has no underscore before FLAGS
+    assert_unchanged("list(APPEND GTK_CFLAGS -I/z -DA)\n");
+    assert_unchanged("list(APPEND MY_LDFLAGS -Lz -la)\n");
+}
+
+#[test]
+fn test_argv_and_library_lists_hold() {
+    // `list(APPEND ARGS -o out.png)` then `COMMAND tool ${ARGS}` is an argv one
+    // level of indirection away, and static archive link order is significant.
+    assert_unchanged("set(RUN_ARGS --output z.txt --input a.txt)\n");
+    assert_unchanged("list(APPEND MY_ARGUMENTS -o in.dot out.png)\n");
+    assert_unchanged("list(APPEND LIBS libz.a liba.a)\n");
+    assert_unchanged("set(MY_LIBRARIES z.so a.so)\n");
+    // Even without a telling variable name, a linkable extension holds
+    assert_unchanged("set(BLOBS libz.a liba.a)\n");
+    assert_unchanged("set(OBJECTS z.o a.o)\n");
+}
+
+#[test]
+fn test_positional_run_requires_file_like_values() {
+    // Extension-less names sort where a keyword vouches for them, but not in a
+    // positional run, where the same shape could be a flag or a target name.
+    assert_unchanged("set(DOCS README LICENSE)\n");
+    assert_unchanged("set(DEFS A=1 B=2)\n");
+    // A source list still sorts
+    let config = reordering_config();
+    assert_eq!(
+        format_text("set(PROTO_FILES b.proto a.proto)\n", &config),
+        "set(PROTO_FILES a.proto b.proto)\n"
+    );
+}
+
+#[test]
+fn test_quoted_variable_reference_is_a_barrier() {
+    // A leading quote used to defeat the barrier check, and `"` (0x22) sorts
+    // below every letter, so the reference jumped to the front of the list.
+    let config = reordering_config();
+    assert_eq!(
+        format_text("set(S z.cpp a.cpp \"${GEN}\" y.cpp b.cpp)\n", &config),
+        "set(S a.cpp z.cpp \"${GEN}\" b.cpp y.cpp)\n"
+    );
+    assert_eq!(
+        format_text("set(S2 z.cpp \"$<TARGET_OBJECTS:x>\" a.cpp)\n", &config),
+        "set(S2 z.cpp \"$<TARGET_OBJECTS:x>\" a.cpp)\n"
+    );
+}
+
+#[test]
+fn test_dynamic_governing_variable_holds() {
+    // The variable name is unreadable, so it cannot be vetted against the
+    // search-path list — the same conservatism applied to values.
+    assert_unchanged("list(APPEND ${DYNAMIC_VAR} z.cmake a.cmake)\n");
+}
+
+#[test]
+fn test_stray_positional_run_after_a_later_keyword_holds() {
+    // Only a leading mode keyword that consumed the list variable opens an
+    // unordered run. A run after some later single-value keyword is a stray
+    // positional argument, not the command's argument list.
+    assert_unchanged("list(APPEND SRCS a.cpp SORT z.cpp b.cpp)\n");
+}

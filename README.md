@@ -385,13 +385,26 @@ Everything else is left alone, because argument order usually carries meaning:
 `COMMAND` holds an argv, `PROPERTIES` holds key/value pairs, `file(RENAME a b)`
 holds source then destination, `target_link_libraries` holds link order.
 
-Two things are never reordered even inside a list that is:
+Three things are never reordered even inside a list that is:
 
-- A variable reference or generator expression (`${GENERATED}`, `$<TARGET_OBJECTS:x>`)
-  holds its position, and files do not move across it — what it expands to is unknown.
-- A list whose variable is a search path or flag list — `CMAKE_MODULE_PATH`,
-  `CMAKE_PREFIX_PATH`, or a name ending in `_PATH`, `_PATHS`, `_FLAGS`, `_OPTIONS`,
-  `_DIRS`, `_DIRECTORIES`, `_PATTERNS` — because there the order is a precedence.
+- A variable reference or generator expression (`${GENERATED}`, `"${GENERATED}"`,
+  `$<TARGET_OBJECTS:x>`) holds its position, and files do not move across it —
+  what it expands to is unknown.
+- A keyword-less run whose values don't all look like source files. A keyword
+  names what its values are; `set(VAR ...)` does not, and the same shape holds
+  sources in one project and compiler flags in the next. So flag shapes
+  (`-Wall`, `/O2`, `--input`, `A=1`), library extensions (`.a`, `.so`, `.lib`)
+  and extension-less names keep their order there. Under a keyword that vouches
+  for them — `install(FILES README LICENSE ...)` — they still sort.
+- A list whose variable names a search path, flag list or argument list:
+  `CMAKE_MODULE_PATH`, `CMAKE_PREFIX_PATH`, anything containing `FLAGS`, or a
+  name ending in `_PATH`, `_PATHS`, `_DIRS`, `_DIRECTORIES`, `_OPTIONS`,
+  `_ARGS`, `_ARGUMENTS`, `_LIBS`, `_LIBRARIES`, `_PATTERNS`. Matched
+  case-insensitively, since project-local lists are often lowercase.
+
+A positional list in a command cmake-fmt does not recognize is not reordered at
+all — there is no grammar to say whether its order matters. Add a
+[`command_grammars`](#custom-command-grammars) entry to opt one in.
 
 To mark a list in your own command as unordered, name its keyword in
 [`command_grammars`](#custom-command-grammars):

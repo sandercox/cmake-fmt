@@ -979,12 +979,15 @@ fn mark_sortable_lists(grammars: &mut HashMap<String, Grammar>) {
         keywords: &[&str],
         positional: bool,
     ) {
-        if let Some(Grammar::Simple(g)) = grammars.get_mut(command) {
-            g.sortable_keywords = keywords.iter().map(|k| k.to_string()).collect();
-            g.sortable_positional = positional;
-        } else {
-            debug_assert!(false, "no single-mode grammar for {}", command);
-        }
+        let Some(Grammar::Simple(g)) = grammars.get_mut(command) else {
+            panic!("no single-mode grammar for {command}");
+        };
+        assert!(
+            g.sortable_keywords.is_empty() && !g.sortable_positional,
+            "{command} is marked twice; the second call would discard the first"
+        );
+        g.sortable_keywords = keywords.iter().map(|k| k.to_string()).collect();
+        g.sortable_positional = positional;
     }
 
     /// Mark one mode of a multi-mode command.
@@ -995,14 +998,18 @@ fn mark_sortable_lists(grammars: &mut HashMap<String, Grammar>) {
         keywords: &[&str],
         positional: bool,
     ) {
-        if let Some(Grammar::Modes { modes }) = grammars.get_mut(command)
-            && let Some(g) = modes.get_mut(mode)
-        {
-            g.sortable_keywords = keywords.iter().map(|k| k.to_string()).collect();
-            g.sortable_positional = positional;
-        } else {
-            debug_assert!(false, "no mode {} for {}", mode, command);
-        }
+        let Some(Grammar::Modes { modes }) = grammars.get_mut(command) else {
+            panic!("no multi-mode grammar for {command}");
+        };
+        let Some(g) = modes.get_mut(mode) else {
+            panic!("no mode {mode} for {command}");
+        };
+        assert!(
+            g.sortable_keywords.is_empty() && !g.sortable_positional,
+            "{command} mode {mode} is marked twice; the second call would discard the first"
+        );
+        g.sortable_keywords = keywords.iter().map(|k| k.to_string()).collect();
+        g.sortable_positional = positional;
     }
 
     // set(VAR a.cpp b.cpp) — the value run only. CACHE is deliberately absent:

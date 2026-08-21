@@ -264,20 +264,42 @@ fn test_corpus_files_exist() {
     println!("  OpenCV: {}", opencv_count);
 }
 
-/// Commands whose argument lists the allowlist permits reordering in.
+/// What the allowlist permits, per command: which keywords' values may be
+/// permuted, and whether the positional run may be.
 ///
-/// Kept deliberately as a literal list rather than read from the grammar, so
-/// that widening the allowlist in `builtins.rs` cannot silently widen this test
-/// along with it.
-const REORDERABLE_COMMANDS: &[&str] = &[
-    "set",
-    "list",
-    "add_library",
-    "add_executable",
-    "target_sources",
-    "source_group",
-    "install",
+/// Kept as a literal table rather than read from the grammar, so that widening
+/// the allowlist in `builtins.rs` cannot silently widen this test with it.
+const ALLOWED_REORDERING: &[(&str, &[&str], bool)] = &[
+    ("set", &[], true),
+    ("list", &[], true),
+    (
+        "add_library",
+        &[
+            "STATIC",
+            "SHARED",
+            "MODULE",
+            "OBJECT",
+            "INTERFACE",
+            "EXCLUDE_FROM_ALL",
+        ],
+        true,
+    ),
+    (
+        "add_executable",
+        &["WIN32", "MACOSX_BUNDLE", "EXCLUDE_FROM_ALL"],
+        true,
+    ),
+    (
+        "target_sources",
+        &["PUBLIC", "PRIVATE", "INTERFACE", "FILES"],
+        false,
+    ),
+    ("source_group", &["FILES"], false),
+    ("install", &["FILES", "PROGRAMS"], false),
 ];
+
+/// Keyword names that auto-detected wrapper commands may reorder.
+const CONVENTIONAL_FILE_LISTS: &[&str] = &["SOURCES", "SRCS", "FILES"];
 
 /// True for an argument that reads as a CMake keyword (`SOURCES`, `DEPENDS`).
 fn looks_like_keyword(arg: &str) -> bool {
@@ -292,8 +314,10 @@ fn looks_like_keyword(arg: &str) -> bool {
 fn split_into_keyword_runs(args: &[String]) -> Vec<(Option<String>, Vec<String>)> {
     let mut runs: Vec<(Option<String>, Vec<String>)> = vec![(None, Vec::new())];
 
-    for arg in args {
-        if looks_like_keyword(arg) {
+    for (index, arg) in args.iter().enumerate() {
+        // The first argument is the variable or target name, never a keyword —
+        // `set(PROTO_FILES ...)` would otherwise read as a keyword section.
+        if index > 0 && looks_like_keyword(arg) {
             runs.push((Some(arg.clone()), Vec::new()));
         } else {
             runs.last_mut()
@@ -312,8 +336,13 @@ fn test_corpus_reordering_confined_to_allowlist() {
     // FormatConfig::default(), where both reordering passes are off, so it never
     // exercised sort_sources or source_grouping at all. Enabling them used to
     // rewrite `set(... CACHE PATH "docs")`, tear `PATTERN` keywords off their
-    // globs in `install(DIRECTORY ... FILES_MATCHING ...)`, and shuffle MSVC
-    // flag lists — all in real files under tests/corpus/.
+    // globs in `install(DIRECTORY ... FILES_MATCHING ...)`, shuffle MSVC flag
+    // lists, and reorder GCC warning flags in
+    // tests/corpus/llvm/HandleLLVMOptions.cmake.
+    //
+    // Every keyword must keep its identity and position, and only the runs the
+    // allowlist names may be permuted — so re-marking `set`'s CACHE keyword or
+    // `install`'s DIRECTORY mode as sortable fails this test.
     let plain = FormatConfig::default();
     let reordering = FormatConfig {
         sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
@@ -323,6 +352,8 @@ fn test_corpus_reordering_confined_to_allowlist() {
 
     let files = corpus_files();
     assert!(!files.is_empty(), "No corpus files found in tests/corpus/");
+
+    let mut problems: Vec<String> = Vec::new();
 
     for path in &files {
         let input = std::fs::read_to_string(path)
@@ -349,72 +380,89 @@ fn test_corpus_reordering_confined_to_allowlist() {
                 path.display()
             );
 
-            if REORDERABLE_COMMANDS.contains(&name.as_str()) {
-                // An allowlisted command may reorder, but must never gain or
-                // lose an argument
-                let mut plain_sorted = plain_args.clone();
-                let mut reordered_sorted = reordered_args.clone();
-                plain_sorted.sort();
-                reordered_sorted.sort();
-                assert_eq!(
-                    plain_sorted,
-                    reordered_sorted,
-                    "{}({}) at index {} changed its arguments, not just their order",
-                    name,
+            let entry = ALLOWED_REORDERING.iter().find(|(cmd, _, _)| cmd == name);
+            let plain_runs = split_into_keyword_runs(plain_args);
+            let reordered_runs = split_into_keyword_runs(reordered_args);
+
+            if plain_runs.len() != reordered_runs.len() {
+                problems.push(format!(
+                    "{}:{} {} changed its keyword structure",
                     path.display(),
-                    index
-                );
-            } else {
-                // An unknown command may reorder only the values of a keyword
-                // conventionally named after a file list. Everything else,
-                // including a neighbouring DEPENDS or COMMAND, must be
-                // byte-identical.
-                let plain_runs = split_into_keyword_runs(plain_args);
-                let reordered_runs = split_into_keyword_runs(reordered_args);
-
-                assert_eq!(
-                    plain_runs.len(),
-                    reordered_runs.len(),
-                    "{} at index {} in {} changed its keyword structure",
-                    name,
                     index,
-                    path.display()
-                );
+                    name
+                ));
+                continue;
+            }
 
-                for ((keyword, plain_run), (_, reordered_run)) in
-                    plain_runs.iter().zip(reordered_runs.iter())
-                {
-                    let conventional = matches!(
-                        keyword.as_deref(),
-                        Some("SOURCES") | Some("SRCS") | Some("FILES")
-                    );
-                    if conventional {
-                        let mut a = plain_run.clone();
-                        let mut b = reordered_run.clone();
-                        a.sort();
-                        b.sort();
-                        assert_eq!(
-                            a,
-                            b,
-                            "{} at index {} in {} changed its {:?} values",
-                            name,
-                            index,
+            for ((keyword, plain_run), (reordered_keyword, reordered_run)) in
+                plain_runs.iter().zip(reordered_runs.iter())
+            {
+                // A keyword moving is the original bug — PATTERN piled up at the
+                // end of FILES_MATCHING — so identity and order are compared.
+                if keyword != reordered_keyword {
+                    problems.push(format!(
+                        "{}:{} {} moved keyword {:?} to {:?}",
+                        path.display(),
+                        index,
+                        name,
+                        keyword,
+                        reordered_keyword
+                    ));
+                    continue;
+                }
+
+                let may_permute = match (entry, keyword.as_deref()) {
+                    (Some((_, _, positional)), None) => *positional,
+                    (Some((_, keywords, _)), Some(kw)) => keywords.contains(&kw),
+                    // Unknown command: only conventionally named file lists
+                    (None, Some(kw)) => CONVENTIONAL_FILE_LISTS.contains(&kw),
+                    (None, None) => false,
+                };
+
+                if may_permute {
+                    let mut a = plain_run.clone();
+                    let mut b = reordered_run.clone();
+                    a.sort();
+                    b.sort();
+                    if a != b {
+                        problems.push(format!(
+                            "{}:{} {} {:?} gained or lost an argument",
                             path.display(),
-                            keyword
-                        );
-                    } else {
-                        assert_eq!(
-                            plain_run,
-                            reordered_run,
-                            "{} at index {} in {} reordered {:?}, which is not allowlisted",
-                            name,
                             index,
-                            path.display(),
+                            name,
                             keyword
-                        );
+                        ));
                     }
+                    // The leading positional run starts with the variable or
+                    // target name, which is pinned
+                    if keyword.is_none() && plain_run.first() != reordered_run.first() {
+                        problems.push(format!(
+                            "{}:{} {} moved its first positional argument {:?}",
+                            path.display(),
+                            index,
+                            name,
+                            plain_run.first()
+                        ));
+                    }
+                } else if plain_run != reordered_run {
+                    problems.push(format!(
+                        "{}:{} {} reordered {:?}, which is not allowlisted:\n    {:?}\n -> {:?}",
+                        path.display(),
+                        index,
+                        name,
+                        keyword,
+                        plain_run,
+                        reordered_run
+                    ));
                 }
             }
         }
     }
+
+    assert!(
+        problems.is_empty(),
+        "reordering escaped the allowlist in {} place(s):\n  {}",
+        problems.len(),
+        problems.join("\n  ")
+    );
 }

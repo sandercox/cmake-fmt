@@ -84,8 +84,10 @@ pub struct CommandGrammar {
     /// True when the command's keyword-less arguments are an unordered list,
     /// as in `set(VAR a.cpp b.cpp)` or `add_library(lib a.cpp b.cpp)`.
     ///
-    /// The first argument of a leading positional run is the variable or target
-    /// name and is always pinned.
+    /// The list's identifying name is never part of the sorted run: in a leading
+    /// positional run the first argument is pinned, and in a run opened by a
+    /// leading single-value keyword (`list(APPEND VAR a.cpp b.cpp)`) that
+    /// keyword has already consumed it.
     pub sortable_positional: bool,
 }
 

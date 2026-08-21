@@ -7,13 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
-- `sort_sources` and `source_grouping` now only reorder argument lists that a command grammar marks as unordered, instead of every list that happened to look like filenames. This stops both passes from rewriting `set(VAR val CACHE <type> "docstring")` ([#3](https://github.com/sandercox/cmake-fmt/issues/3)), `COMMAND` argv lists ([#6](https://github.com/sandercox/cmake-fmt/issues/6)), `PROPERTIES` key/value pairs, `install(DIRECTORY ... FILES_MATCHING PATTERN ...)` glob pairs, `file(RENAME src dst)`, `configure_file(in out)`, `target_link_libraries` link order, compile-flag lists, and a dotted target name such as `add_library(zz.lib ...)`
-- Reordering now applies to: `set(VAR ...)` values, `add_library` / `add_executable` sources, `target_sources` scope and `FILE_SET FILES` lists, `list(APPEND|PREPEND|REMOVE_ITEM)` elements, `install(FILES|PROGRAMS)`, `source_group(... FILES ...)`, and keywords named `SOURCES`/`SRCS`/`FILES` on your own commands. A variable reference or generator expression holds its position, and lists whose variable is a search path (`CMAKE_MODULE_PATH`, `*_PATH`, `*_FLAGS`, `*_PATTERNS`, ...) are left alone, since there the order is a precedence
+- `sort_sources` and `source_grouping` now only reorder argument lists that a command grammar marks as unordered, instead of every list that happened to look like filenames. This stops both passes from rewriting `set(VAR val CACHE <type> "docstring")` ([#3](https://github.com/sandercox/cmake-fmt/issues/3)), `COMMAND` argv lists ([#6](https://github.com/sandercox/cmake-fmt/issues/6)), `PROPERTIES` key/value pairs, `install(DIRECTORY ... FILES_MATCHING PATTERN ...)` glob pairs, `file(RENAME src dst)`, `configure_file(in out)`, `target_link_libraries` link order, `add_compile_options` flag lists, and a dotted target name such as `add_library(zz.lib ...)`
+- Reordering now applies to: `set(VAR ...)` values, `add_library` / `add_executable` sources, `target_sources` scope and `FILE_SET FILES` lists, `list(APPEND|PREPEND|REMOVE_ITEM)` elements, `install(FILES|PROGRAMS)`, `source_group(... FILES ...)`, and keywords named `SOURCES`/`SRCS`/`FILES` on your own commands
+- A keyword-less run is reordered only when every value looks like a source file, so flag lists (`set(warning_flags -Wno-unused -Wall)`), argument lists (`set(RUN_ARGS --output z.txt --input a.txt)`) and library lists (`list(APPEND LIBS libz.a liba.a)`) keep their order even when held in a variable. A keyword vouches for its own values, so `install(FILES README LICENSE ...)` still sorts
+- Lists whose variable names a search path, flag list or argument list are left alone, matched case-insensitively so lowercase project-local names like `warning_flags` are covered too
+- A quoted variable reference (`"${GENERATED}"`) now holds its position like the bare spelling, instead of sorting to the front of the list
 - `# cmake-fmt: no-sort` now also suppresses `source_grouping`, which reorders too
 
 ### Added
 - `sortable_keywords` and `sortable_positional` in `command_grammars` and grammar files, to mark a list in your own command as unordered
 - `target_sources` now models the `FILE_SET` form's `TYPE`, `BASE_DIRS` and `FILES` keywords, and `source_group` has a grammar entry
+
 
 ## [0.10.2]
 - Fix when `.cmake-fmt` is a root file but there is no CMakeLists.txt use highest ancestor directory as root for function detections

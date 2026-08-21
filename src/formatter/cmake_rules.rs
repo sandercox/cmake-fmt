@@ -555,6 +555,15 @@ pub fn parse_keyword_sections_with_grammar(
                                 && !current_section.args.is_empty();
 
                         if at_capacity {
+                            // A leading mode keyword that consumed the list
+                            // variable opens an unordered run, as in
+                            // `list(APPEND var a b)`. Only the command's first
+                            // section qualifies: anywhere later, this is a stray
+                            // positional argument rather than the command's
+                            // argument list. Computed before the push, which is
+                            // what makes `sections` still empty here.
+                            let overflow_sortable = sections.is_empty()
+                                && grammar.is_some_and(|g| g.sortable_positional);
                             sections.push(current_section);
                             current_section = KeywordSection {
                                 keyword: None,
@@ -565,11 +574,7 @@ pub fn parse_keyword_sections_with_grammar(
                                 post_comment_blanks: Vec::new(),
                                 comment_blank_indices: Vec::new(),
                                 keyword_type: None,
-                                // The mode keyword already consumed the list
-                                // variable, e.g. `list(APPEND var a b)`
-                                sort_from: grammar
-                                    .is_some_and(|g| g.sortable_positional)
-                                    .then_some(0),
+                                sort_from: overflow_sortable.then_some(0),
                                 values_on_new_line: false,
                             };
                         } else {
@@ -650,7 +655,7 @@ pub fn parse_keyword_sections_with_grammar(
         sections.push(current_section);
     }
 
-    unmark_search_path_lists(&mut sections);
+    unmark_unsortable_positional_runs(&mut sections);
 
     sections
 }
@@ -662,6 +667,11 @@ pub fn parse_keyword_sections_with_grammar(
 /// disables reordering, so a false positive costs a little tidiness and a false
 /// negative costs correctness.
 fn is_search_path_variable(name: &str) -> bool {
+    // Compared case-insensitively: CMake variable names are case-sensitive, and
+    // project-local lists are conventionally lowercase (`warning_flags`), so a
+    // byte comparison would miss most of them.
+    let name = name.to_ascii_uppercase();
+
     const EXACT: &[&str] = &[
         "CMAKE_MODULE_PATH",
         "CMAKE_PREFIX_PATH",
@@ -673,25 +683,79 @@ fn is_search_path_variable(name: &str) -> bool {
     const SUFFIXES: &[&str] = &[
         "_PATH",
         "_PATHS",
-        "_FLAGS",
-        "_OPTIONS",
         "_DIRS",
         "_DIRECTORIES",
+        "_OPTIONS",
+        // Argument lists feeding a COMMAND: `list(APPEND ARGS -o out.png)` then
+        // `add_custom_command(COMMAND tool ${ARGS})` is an argv one level of
+        // indirection away
+        "_ARGS",
+        "_ARGUMENTS",
+        // Static archive link order is significant
+        "_LIBS",
+        "_LIBRARIES",
         // Glob/regex lists are evaluated in order, and that order decides the
         // order of what they match — see OCV_GLOB_PATTERNS in the OpenCV corpus
         "_PATTERNS",
     ];
 
-    EXACT.contains(&name) || SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
+    if EXACT.contains(&name.as_str()) || SUFFIXES.iter().any(|suffix| name.ends_with(suffix)) {
+        return true;
+    }
+
+    // Compiler and linker flag lists, where the last flag usually wins.
+    // `contains` rather than `ends_with`, because the common spelling is
+    // `CMAKE_CXX_FLAGS_RELEASE` / `CMAKE_EXE_LINKER_FLAGS_DEBUG`, and because
+    // pkg-config names are `GTK_CFLAGS` / `MY_LDFLAGS` with no underscore.
+    name.contains("FLAGS")
 }
 
-/// Clear `sort_from` on positional runs governed by a search-path variable.
+/// True for a value that may be reordered inside a positional run.
 ///
-/// The variable name is the run's own first argument (`set(VAR …)`) or the
-/// value of the preceding single-value mode keyword (`list(APPEND VAR …)`).
-fn unmark_search_path_lists(sections: &mut [KeywordSection]) {
+/// A keyword names what its values are, so a keyword section trusts the grammar
+/// alone. A positional run has no such label — `set(VAR …)` holds sources in one
+/// project and compiler flags in the next — so its values have to look like
+/// source files before anything moves. This sits behind the grammar allowlist
+/// and only ever narrows it, so it cannot reopen the `CACHE`, `FILES_MATCHING`
+/// or `file(RENAME)` cases, which are keyword sections and unrecognized
+/// commands respectively.
+fn is_sortable_positional_value(arg: &str) -> bool {
+    // Flags and options: -Wall, --input, /O2, /wd4100, -I/usr/include
+    if arg.starts_with('-') || arg.starts_with('/') {
+        return false;
+    }
+    // Definitions and assignments: -DVERSION=1.0, A=1
+    if arg.contains('=') {
+        return false;
+    }
+
+    let name = arg.trim_matches('"');
+    let Some(extension) = name.rsplit('.').next().filter(|ext| *ext != name) else {
+        // No extension: a bare word like README or a target name. Sorting those
+        // is fine where a keyword vouches for them, but not here.
+        return false;
+    };
+
+    // Libraries, where link order decides symbol resolution
+    const LINKABLE_EXTS: &[&str] = &["a", "so", "dylib", "lib", "dll", "o", "obj"];
+    !LINKABLE_EXTS.contains(&extension.to_ascii_lowercase().as_str())
+}
+
+/// Clear `sort_from` on positional runs that must not be reordered after all.
+///
+/// A positional run is opted in by the command's grammar, which cannot know what
+/// the list actually holds. Two things disqualify one:
+///
+/// - its governing variable names a search path, flag list or argv — the name is
+///   the run's own first argument (`set(VAR …)`) or the value of the preceding
+///   single-value mode keyword (`list(APPEND VAR …)`);
+/// - any of its values does not look like a source file.
+fn unmark_unsortable_positional_runs(sections: &mut [KeywordSection]) {
     for idx in 0..sections.len() {
-        if sections[idx].keyword.is_some() || sections[idx].sort_from.is_none() {
+        let Some(sort_from) = sections[idx].sort_from else {
+            continue;
+        };
+        if sections[idx].keyword.is_some() {
             continue;
         }
 
@@ -706,7 +770,17 @@ fn unmark_search_path_lists(sections: &mut [KeywordSection]) {
                 .flatten()
         };
 
-        if governing.is_some_and(|name| is_search_path_variable(name)) {
+        // A variable name we cannot read is a name we cannot vet
+        let blocked_by_name =
+            governing.is_some_and(|name| is_variable_like(name) || is_search_path_variable(name));
+
+        let blocked_by_value = sections[idx]
+            .args
+            .iter()
+            .skip(sort_from)
+            .any(|arg| !is_variable_like(arg) && !is_sortable_positional_value(arg));
+
+        if blocked_by_name || blocked_by_value {
             sections[idx].sort_from = None;
         }
     }
@@ -745,7 +819,12 @@ fn split_at_barriers(args: &[String], seg: std::ops::Range<usize>) -> Vec<std::o
 
 /// True for arguments that expand to something unknown at format time, so their
 /// position may be meaningful even inside a list that is otherwise unordered.
+///
+/// A leading quote is stripped first: `"${GENERATED}"` is as common as the bare
+/// spelling, and it would otherwise sort ahead of everything because `"` (0x22)
+/// precedes every letter.
 fn is_variable_like(s: &str) -> bool {
+    let s = s.trim_start_matches('"');
     s.starts_with("${") || s.starts_with("$<") || s.starts_with("$ENV{") || s.starts_with("$CACHE{")
 }
 

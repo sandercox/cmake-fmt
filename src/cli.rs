@@ -197,6 +197,7 @@ fn print_grammar_help() {
     println!("        COMMAND: BinPack");
     println!("        PROPERTIES: PairValue");
     println!("      sortable_keywords: [SOURCES]");
+    println!("      sortable_positional: false");
     println!();
     println!("Keyword types:");
     println!();
@@ -227,6 +228,8 @@ fn print_grammar_help() {
     println!("  sort_sources and source_grouping only reorder keywords listed in");
     println!("  'sortable_keywords', plus the keyword-less arguments when");
     println!("  'sortable_positional: true'. Both default to leaving order alone,");
+    println!("  and a positional run additionally requires every value to look like a");
+    println!("  source file, so flag and library lists are never reordered.");
     println!("  since argument order usually carries meaning. BinPack and PairValue");
     println!("  keywords are never reordered.");
     println!();

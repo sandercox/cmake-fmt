@@ -511,7 +511,10 @@ pub struct CommandGrammarConfig {
     #[serde(default)]
     pub sortable_keywords: Vec<String>,
     /// True when the command's keyword-less arguments are an unordered list,
-    /// as in `set(VAR a.cpp b.cpp)`. The first argument is always pinned.
+    /// as in `set(VAR a.cpp b.cpp)`. The list's identifying name is never
+    /// sorted: a leading positional run pins its first argument, and a run
+    /// opened by a leading single-value keyword has already given its name to
+    /// that keyword.
     #[serde(default)]
     pub sortable_positional: bool,
 }
