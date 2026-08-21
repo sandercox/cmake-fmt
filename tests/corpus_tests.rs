@@ -264,16 +264,22 @@ fn test_corpus_files_exist() {
     println!("  OpenCV: {}", opencv_count);
 }
 
-/// What the allowlist permits, per command: which keywords' values may be
-/// permuted, and whether the positional run may be.
+/// What the allowlist permits, keyed by command and — for multi-mode commands
+/// like `list` and `install` — by mode: which keywords' values may be permuted,
+/// and whether the keyword-less run may be.
 ///
 /// Kept as a literal table rather than read from the grammar, so that widening
 /// the allowlist in `builtins.rs` cannot silently widen this test with it.
-const ALLOWED_REORDERING: &[(&str, &[&str], bool)] = &[
-    ("set", &[], true),
-    ("list", &[], true),
+/// Coverage is bounded by what the corpus contains, so the synthetic cases in
+/// `tests/sort_sources_tests.rs` are the other half of this guard.
+const ALLOWED_REORDERING: &[(&str, Option<&str>, &[&str], bool)] = &[
+    ("set", None, &[], true),
+    ("list", Some("APPEND"), &[], true),
+    ("list", Some("PREPEND"), &[], true),
+    ("list", Some("REMOVE_ITEM"), &[], true),
     (
         "add_library",
+        None,
         &[
             "STATIC",
             "SHARED",
@@ -286,48 +292,91 @@ const ALLOWED_REORDERING: &[(&str, &[&str], bool)] = &[
     ),
     (
         "add_executable",
+        None,
         &["WIN32", "MACOSX_BUNDLE", "EXCLUDE_FROM_ALL"],
         true,
     ),
     (
         "target_sources",
+        None,
         &["PUBLIC", "PRIVATE", "INTERFACE", "FILES"],
         false,
     ),
-    ("source_group", &["FILES"], false),
-    ("install", &["FILES", "PROGRAMS"], false),
+    ("source_group", None, &["FILES"], false),
+    ("install", Some("FILES"), &["FILES"], false),
+    ("install", Some("PROGRAMS"), &["PROGRAMS"], false),
 ];
 
 /// Keyword names that auto-detected wrapper commands may reorder.
 const CONVENTIONAL_FILE_LISTS: &[&str] = &["SOURCES", "SRCS", "FILES"];
 
-/// True for an argument that reads as a CMake keyword (`SOURCES`, `DEPENDS`).
-fn looks_like_keyword(arg: &str) -> bool {
-    arg.len() > 1
-        && arg
-            .chars()
-            .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
-}
+/// Split an argument list into `(governing keyword, values)` runs using the
+/// command's real grammar, so the split does not have to guess which tokens are
+/// keywords. Guessing got this wrong both ways: an all-caps list *variable*
+/// (`list(APPEND SOURCES …)`) read as a keyword, and a keyword moving between
+/// runs was invisible.
+fn split_into_keyword_runs(command: &str, args: &[String]) -> Vec<(Option<String>, Vec<String>)> {
+    use cmake_fmt::formatter::grammar::{GrammarRegistry, KeywordType};
 
-/// Split an argument list into `(governing keyword, values)` runs, so a
-/// reordering can be attributed to the keyword that permitted it.
-fn split_into_keyword_runs(args: &[String]) -> Vec<(Option<String>, Vec<String>)> {
+    let registry = GrammarRegistry::global();
+    let grammar = registry.get(command);
+    // Multi-mode commands resolve on their first argument
+    let resolved = grammar.and_then(|g| {
+        if g.is_multi_mode() {
+            g.resolve(args.first().map(String::as_str))
+        } else {
+            g.resolve(None)
+        }
+    });
+
+    let keyword_type = |arg: &str| match resolved {
+        Some(cg) => cg.keyword_type(arg),
+        // Unknown command: fall back to the conventional names, which is the
+        // only thing the formatter itself reorders there
+        None => CONVENTIONAL_FILE_LISTS
+            .contains(&arg)
+            .then_some(KeywordType::MultiValue),
+    };
+
     let mut runs: Vec<(Option<String>, Vec<String>)> = vec![(None, Vec::new())];
 
-    for (index, arg) in args.iter().enumerate() {
-        // The first argument is the variable or target name, never a keyword —
-        // `set(PROTO_FILES ...)` would otherwise read as a keyword section.
-        if index > 0 && looks_like_keyword(arg) {
+    for arg in args {
+        if keyword_type(arg).is_some() {
             runs.push((Some(arg.clone()), Vec::new()));
+            continue;
+        }
+
+        let current = runs.last_mut().expect("runs is never empty");
+        // A single-value keyword takes exactly one value; the next argument
+        // overflows into a positional run. Same rule the formatter applies, and
+        // what makes `list(APPEND var a b)` two sections rather than one.
+        let at_capacity = !current.1.is_empty()
+            && current
+                .0
+                .as_deref()
+                .and_then(keyword_type)
+                .is_some_and(|ty| ty == KeywordType::SingleValue);
+
+        if at_capacity {
+            runs.push((None, vec![arg.clone()]));
         } else {
-            runs.last_mut()
-                .expect("runs is never empty")
-                .1
-                .push(arg.clone());
+            current.1.push(arg.clone());
         }
     }
 
     runs
+}
+
+/// The mode a multi-mode command resolved to, for looking up the table.
+fn resolved_mode(command: &str, args: &[String]) -> Option<String> {
+    use cmake_fmt::formatter::grammar::GrammarRegistry;
+
+    let grammar = GrammarRegistry::global().get(command)?;
+    if !grammar.is_multi_mode() {
+        return None;
+    }
+    let first = args.first()?;
+    grammar.resolve(Some(first.as_str())).map(|_| first.clone())
 }
 
 #[test]
@@ -340,9 +389,10 @@ fn test_corpus_reordering_confined_to_allowlist() {
     // lists, and reorder GCC warning flags in
     // tests/corpus/llvm/HandleLLVMOptions.cmake.
     //
-    // Every keyword must keep its identity and position, and only the runs the
-    // allowlist names may be permuted — so re-marking `set`'s CACHE keyword or
-    // `install`'s DIRECTORY mode as sortable fails this test.
+    // Every keyword keeps its identity and position, and only the runs the
+    // allowlist names may be permuted — so re-marking `set`'s CACHE keyword,
+    // `install`'s DIRECTORY mode, or `list`'s POP_BACK mode as sortable fails
+    // this test.
     let plain = FormatConfig::default();
     let reordering = FormatConfig {
         sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
@@ -380,9 +430,13 @@ fn test_corpus_reordering_confined_to_allowlist() {
                 path.display()
             );
 
-            let entry = ALLOWED_REORDERING.iter().find(|(cmd, _, _)| cmd == name);
-            let plain_runs = split_into_keyword_runs(plain_args);
-            let reordered_runs = split_into_keyword_runs(reordered_args);
+            let mode = resolved_mode(name, plain_args);
+            let entry = ALLOWED_REORDERING
+                .iter()
+                .find(|(cmd, cmd_mode, _, _)| cmd == name && *cmd_mode == mode.as_deref());
+
+            let plain_runs = split_into_keyword_runs(name, plain_args);
+            let reordered_runs = split_into_keyword_runs(name, reordered_args);
 
             if plain_runs.len() != reordered_runs.len() {
                 problems.push(format!(
@@ -394,8 +448,8 @@ fn test_corpus_reordering_confined_to_allowlist() {
                 continue;
             }
 
-            for ((keyword, plain_run), (reordered_keyword, reordered_run)) in
-                plain_runs.iter().zip(reordered_runs.iter())
+            for (run_index, ((keyword, plain_run), (reordered_keyword, reordered_run))) in
+                plain_runs.iter().zip(reordered_runs.iter()).enumerate()
             {
                 // A keyword moving is the original bug — PATTERN piled up at the
                 // end of FILES_MATCHING — so identity and order are compared.
@@ -412,8 +466,8 @@ fn test_corpus_reordering_confined_to_allowlist() {
                 }
 
                 let may_permute = match (entry, keyword.as_deref()) {
-                    (Some((_, _, positional)), None) => *positional,
-                    (Some((_, keywords, _)), Some(kw)) => keywords.contains(&kw),
+                    (Some((_, _, _, positional)), None) => *positional,
+                    (Some((_, _, keywords, _)), Some(kw)) => keywords.contains(&kw),
                     // Unknown command: only conventionally named file lists
                     (None, Some(kw)) => CONVENTIONAL_FILE_LISTS.contains(&kw),
                     (None, None) => false,
@@ -434,8 +488,12 @@ fn test_corpus_reordering_confined_to_allowlist() {
                         ));
                     }
                     // The leading positional run starts with the variable or
-                    // target name, which is pinned
-                    if keyword.is_none() && plain_run.first() != reordered_run.first() {
+                    // target name, which is pinned. A run opened by a mode
+                    // keyword has already given up its name to that keyword.
+                    if run_index == 0
+                        && keyword.is_none()
+                        && plain_run.first() != reordered_run.first()
+                    {
                         problems.push(format!(
                             "{}:{} {} moved its first positional argument {:?}",
                             path.display(),

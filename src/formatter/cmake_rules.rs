@@ -720,21 +720,32 @@ fn is_search_path_variable(name: &str) -> bool {
 /// or `file(RENAME)` cases, which are keyword sections and unrecognized
 /// commands respectively.
 fn is_sortable_positional_value(arg: &str) -> bool {
-    // Flags and options: -Wall, --input, /O2, /wd4100, -I/usr/include
-    if arg.starts_with('-') || arg.starts_with('/') {
+    // Unquote first: a quoted flag is still a flag, and `"-I/usr/inc/a.h"`
+    // would otherwise pass the prefix test and then look like a header
+    let name = arg.trim_matches('"');
+
+    // Flags and options: -Wall, --input, /O2, /wd4100, -I/usr/include. This
+    // also rejects absolute POSIX paths, deliberately: protecting an MSVC flag
+    // list is worth more than sorting a list of literal /usr/src/… paths.
+    if name.starts_with('-') || name.starts_with('/') {
         return false;
     }
     // Definitions and assignments: -DVERSION=1.0, A=1
-    if arg.contains('=') {
+    if name.contains('=') {
         return false;
     }
 
-    let name = arg.trim_matches('"');
     let Some(extension) = name.rsplit('.').next().filter(|ext| *ext != name) else {
         // No extension: a bare word like README or a target name. Sorting those
         // is fine where a keyword vouches for them, but not here.
         return false;
     };
+
+    // A version number is not a file: `set(PYTHON_VERSIONS 3.9 3.12)` reads as
+    // extension "9", and version lists are usually precedence lists.
+    if extension.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
 
     // Libraries, where link order decides symbol resolution
     const LINKABLE_EXTS: &[&str] = &["a", "so", "dylib", "lib", "dll", "o", "obj"];
@@ -759,20 +770,28 @@ fn unmark_unsortable_positional_runs(sections: &mut [KeywordSection]) {
             continue;
         }
 
-        let governing = if idx == 0 {
-            sections[idx].args.first()
+        // At index 0 the first argument names the thing being defined — a
+        // variable for `set`, but a *target* for add_library/add_executable.
+        // A later run is opened by a mode keyword that already consumed the
+        // list variable, so there the name provably governs the list.
+        let (governing, governs_the_list) = if idx == 0 {
+            (sections[idx].args.first(), false)
         } else {
             let previous = &sections[idx - 1];
-            previous
+            let name = previous
                 .keyword
                 .is_some()
                 .then(|| previous.args.first())
-                .flatten()
+                .flatten();
+            (name, true)
         };
 
-        // A variable name we cannot read is a name we cannot vet
-        let blocked_by_name =
-            governing.is_some_and(|name| is_variable_like(name) || is_search_path_variable(name));
+        // A list variable we cannot read is one we cannot vet — but only when
+        // the whole token is a reference. `${PREFIX}_SOURCES` has a readable
+        // suffix, and a dynamic *target* name says nothing about its sources.
+        let blocked_by_name = governing.is_some_and(|name| {
+            (governs_the_list && is_whole_variable_reference(name)) || is_search_path_variable(name)
+        });
 
         let blocked_by_value = sections[idx]
             .args
@@ -826,6 +845,16 @@ fn split_at_barriers(args: &[String], seg: std::ops::Range<usize>) -> Vec<std::o
 fn is_variable_like(s: &str) -> bool {
     let s = s.trim_start_matches('"');
     s.starts_with("${") || s.starts_with("$<") || s.starts_with("$ENV{") || s.starts_with("$CACHE{")
+}
+
+/// True when the whole token is a single variable reference, so nothing about
+/// the name can be read. `${PREFIX}_SOURCES` is not one: its suffix is readable
+/// and can be vetted against the search-path list.
+fn is_whole_variable_reference(s: &str) -> bool {
+    let s = s.trim_matches('"');
+    ((s.starts_with("${") || s.starts_with("$ENV{") || s.starts_with("$CACHE{"))
+        && s.ends_with('}'))
+        || (s.starts_with("$<") && s.ends_with('>'))
 }
 
 /// Sort the arguments of a section the grammar marked as an unordered list,

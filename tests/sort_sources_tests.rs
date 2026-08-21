@@ -625,3 +625,46 @@ fn test_stray_positional_run_after_a_later_keyword_holds() {
     // positional argument, not the command's argument list.
     assert_unchanged("list(APPEND SRCS a.cpp SORT z.cpp b.cpp)\n");
 }
+
+#[test]
+fn test_dynamic_target_name_does_not_block_sorting() {
+    // A dynamic *target* name says nothing about whether its sources are
+    // ordered — only a dynamic *list variable* does. `add_library(${PROJECT_NAME}
+    // ...)` is about as idiomatic as CMake gets.
+    let config = reordering_config();
+    for input in [
+        "add_library(${PROJECT_NAME} z.cpp a.cpp)\n",
+        "add_executable(${TARGET_NAME} z.cpp a.cpp)\n",
+    ] {
+        let result = format_text(input, &config);
+        assert!(
+            result.contains("a.cpp z.cpp"),
+            "dynamic target name blocked sorting:\n{}",
+            result
+        );
+    }
+
+    // A readable suffix is still vetted, dynamic prefix or not
+    assert_eq!(
+        format_text("set(${PROJECT_NAME}_SOURCES z.cpp a.cpp)\n", &config),
+        "set(${PROJECT_NAME}_SOURCES a.cpp z.cpp)\n"
+    );
+    assert_unchanged("set(${PROJECT_NAME}_FLAGS -Wall -Wno-unused)\n");
+}
+
+#[test]
+fn test_quoted_flags_are_not_file_like() {
+    // The flag test ran on the raw argument and the extension test on the
+    // unquoted one, so a quoted flag containing a dot passed both.
+    assert_unchanged("set(a \"z.cpp\" \"-I/usr/inc/a.h\")\n");
+    assert_unchanged("set(b \"z.cpp\" \"-include a.h\")\n");
+    assert_unchanged("set(c z.cpp \"/DWIN32.x\")\n");
+}
+
+#[test]
+fn test_version_lists_hold() {
+    // `3.9` reads as extension "9"; version lists are precedence lists, and
+    // Python_ADDITIONAL_VERSIONS is a documented first-found-wins hint.
+    assert_unchanged("set(PYTHON_VERSIONS 3.9 3.12 3.11)\n");
+    assert_unchanged("set(SUPPORTED 1.10 1.9)\n");
+}

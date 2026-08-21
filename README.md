@@ -385,7 +385,7 @@ Everything else is left alone, because argument order usually carries meaning:
 `COMMAND` holds an argv, `PROPERTIES` holds key/value pairs, `file(RENAME a b)`
 holds source then destination, `target_link_libraries` holds link order.
 
-Three things are never reordered even inside a list that is:
+Four things are never reordered even inside a list that is:
 
 - A variable reference or generator expression (`${GENERATED}`, `"${GENERATED}"`,
   `$<TARGET_OBJECTS:x>`) holds its position, and files do not move across it —
@@ -396,6 +396,10 @@ Three things are never reordered even inside a list that is:
   (`-Wall`, `/O2`, `--input`, `A=1`), library extensions (`.a`, `.so`, `.lib`)
   and extension-less names keep their order there. Under a keyword that vouches
   for them — `install(FILES README LICENSE ...)` — they still sort.
+- A `list(APPEND ${DYNAMIC} …)` whose list variable is itself a reference, since
+  the name cannot be read and therefore cannot be vetted. A dynamic *target*
+  name does not block anything — `add_library(${PROJECT_NAME} a.cpp b.cpp)`
+  still sorts.
 - A list whose variable names a search path, flag list or argument list:
   `CMAKE_MODULE_PATH`, `CMAKE_PREFIX_PATH`, anything containing `FLAGS`, or a
   name ending in `_PATH`, `_PATHS`, `_DIRS`, `_DIRECTORIES`, `_OPTIONS`,
