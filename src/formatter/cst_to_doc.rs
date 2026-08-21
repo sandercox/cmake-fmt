@@ -425,13 +425,17 @@ fn format_file(
                                 current_indent
                             };
 
-                            // Handle no-sort directive: temporarily disable sorting for this command
+                            // Handle no-sort directive: disable both reordering
+                            // passes for this command. source_grouping reorders
+                            // too — it hoists a file next to its pair — so
+                            // leaving it on would not honour the directive.
                             let should_skip_sort = tracker.should_skip_sort_next();
                             let temp_config;
                             let effective_config = if should_skip_sort {
                                 tracker.clear_skip_sort();
                                 temp_config = FormatConfig {
                                     sort_sources: super::config::SortSources::None,
+                                    source_grouping: super::config::SourceGrouping::None,
                                     ..config.clone()
                                 };
                                 &temp_config

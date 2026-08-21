@@ -80,7 +80,7 @@ fn test_sort_sources_blank_line_sections() {
 }
 
 #[test]
-fn test_sort_sources_preserves_non_filenames() {
+fn test_sort_sources_variable_is_a_barrier() {
     let input = "set(MY_VAR ${SOME_VAR} z.cpp a.cpp)\n";
     let config = FormatConfig {
         sort_sources: SortSources::Alphabetical,
@@ -88,11 +88,9 @@ fn test_sort_sources_preserves_non_filenames() {
     };
     let result = format_text(input, &config);
 
-    // MY_VAR and ${SOME_VAR} should stay first (pre-keyword section not all filenames)
-    // This section should NOT be sorted because it contains non-filenames
-    assert!(result.contains("MY_VAR"));
-    assert!(result.find("MY_VAR").unwrap() < result.find("z.cpp").unwrap());
-    assert!(result.find("z.cpp").unwrap() < result.find("a.cpp").unwrap());
+    // The variable name is pinned and ${SOME_VAR} holds its position, because
+    // what it expands to is unknown; the files around it still sort.
+    assert_eq!(result, "set(MY_VAR ${SOME_VAR} a.cpp z.cpp)\n");
 }
 
 #[test]
@@ -333,5 +331,224 @@ fn test_sort_sources_paired_lines_sort_as_unit() {
     assert!(
         a_pair < z_pair,
         "a.h a.cpp pair should come before z.h z.cpp pair"
+    );
+}
+
+// ============================================================================
+// ALLOWLIST: reordering only happens where a grammar says a list is unordered
+//
+// Every test below runs with BOTH reordering passes on, because sort_sources
+// and source_grouping are gated by the same allowlist.
+// ============================================================================
+
+/// Both reordering passes enabled.
+fn reordering_config() -> FormatConfig {
+    FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        source_grouping: SourceGrouping::HeadersFirst,
+        ..Default::default()
+    }
+}
+
+/// Assert the command is left exactly as written.
+fn assert_unchanged(input: &str) {
+    let result = format_text(input, &reordering_config());
+    assert_eq!(result, input, "arguments were reordered");
+}
+
+#[test]
+fn test_set_cache_type_and_docstring_hold() {
+    // Regression: https://github.com/sandercox/cmake-fmt/issues/3
+    // CACHE holds a positional `<type> "<docstring>"` pair.
+    assert_unchanged("set(V x CACHE PATH \"docs (etc/xdg)\")\n");
+    assert_unchanged("set(V 0 CACHE INTERNAL \"Enables debug (DLOG_F etc).\")\n");
+}
+
+#[test]
+fn test_command_line_holds() {
+    // Regression: https://github.com/sandercox/cmake-fmt/issues/6
+    assert_unchanged("add_custom_target(g COMMAND dot -Tpng in.dot -o out.png)\n");
+    assert_unchanged("execute_process(COMMAND cp src/a.txt dst/b.txt)\n");
+    assert_unchanged("add_test(NAME t COMMAND runner.sh b.txt a.txt)\n");
+}
+
+#[test]
+fn test_install_directory_pattern_pairs_hold() {
+    // FILES_MATCHING holds PATTERN/glob pairs; sorting tore the keywords off
+    // their globs and piled them up at the end. Seen in
+    // tests/corpus/llvm/CMakeLists.txt. This command wraps, so assert the
+    // pairing rather than byte-identity.
+    let input = "install(DIRECTORY inc/ DESTINATION inc FILES_MATCHING PATTERN \"*.h\" PATTERN \"*.inc\")\n";
+    let result = format_text(input, &reordering_config());
+
+    assert!(
+        result.contains("PATTERN \"*.h\"") && result.contains("PATTERN \"*.inc\""),
+        "PATTERN lost its glob:\n{}",
+        result
+    );
+    let h = result.find("\"*.h\"").expect("*.h missing");
+    let inc = result.find("\"*.inc\"").expect("*.inc missing");
+    assert!(h < inc, "PATTERN order changed:\n{}", result);
+}
+
+#[test]
+fn test_positional_pairs_hold() {
+    assert_unchanged("file(RENAME z.txt a.txt)\n");
+    assert_unchanged("configure_file(z.h.in a.h)\n");
+}
+
+#[test]
+fn test_property_lists_hold() {
+    assert_unchanged("set_property(TARGET t PROPERTY SOURCES b.cpp a.cpp)\n");
+    assert_unchanged("set_target_properties(t PROPERTIES A_PROP z.exe B_PROP a.exe)\n");
+}
+
+#[test]
+fn test_link_libraries_and_flags_hold() {
+    // Static archive link order and compile-flag order are both significant
+    assert_unchanged("target_link_libraries(app z/libz.a a/liba.a)\n");
+    assert_unchanged("target_compile_options(app PRIVATE -include p.h -Wall)\n");
+    assert_unchanged("target_include_directories(app PRIVATE z/inc a/inc)\n");
+    assert_unchanged("add_compile_options(/O2 /Oi /Ot /GL)\n");
+}
+
+#[test]
+fn test_dotted_target_name_stays_first() {
+    // The target name used to be sorted into the source list because it looked
+    // like a filename. Index 0 of a leading positional run is now always pinned.
+    let result = format_text("add_library(zz.lib b.cpp a.cpp)\n", &reordering_config());
+    assert_eq!(result, "add_library(zz.lib a.cpp b.cpp)\n");
+}
+
+#[test]
+fn test_add_library_sorts_after_type_keyword() {
+    // A type flag ends the positional run and collects the sources itself
+    let config = reordering_config();
+    assert_eq!(
+        format_text("add_library(lib STATIC z.cpp a.cpp)\n", &config),
+        "add_library(lib STATIC a.cpp z.cpp)\n"
+    );
+    assert_eq!(
+        format_text("add_executable(app WIN32 z.cpp a.cpp)\n", &config),
+        "add_executable(app WIN32 a.cpp z.cpp)\n"
+    );
+    // ALIAS/IMPORTED forms carry a target name, not sources
+    assert_unchanged("add_library(foo ALIAS bar)\n");
+}
+
+#[test]
+fn test_unlisted_list_modes_hold() {
+    // POP_BACK out-vars are positionally bound to the popped elements, and
+    // TRANSFORM REPLACE holds regex then replacement.
+    assert_unchanged("list(POP_BACK l z.var a.var)\n");
+    assert_unchanged("list(TRANSFORM l REPLACE \"b.x\" \"a.y\")\n");
+    assert_unchanged("list(GET l 0 z.out)\n");
+}
+
+#[test]
+fn test_allowed_list_modes_sort() {
+    let config = reordering_config();
+    assert_eq!(
+        format_text("list(APPEND SRCS z.cpp a.cpp)\n", &config),
+        "list(APPEND SRCS a.cpp z.cpp)\n"
+    );
+    assert_eq!(
+        format_text("list(PREPEND SRCS z.cpp a.cpp)\n", &config),
+        "list(PREPEND SRCS a.cpp z.cpp)\n"
+    );
+    assert_eq!(
+        format_text("list(REMOVE_ITEM SRCS z.cpp a.cpp)\n", &config),
+        "list(REMOVE_ITEM SRCS a.cpp z.cpp)\n"
+    );
+}
+
+#[test]
+fn test_search_path_variables_hold() {
+    // Element order in a search path is precedence: first match wins, so
+    // sorting silently resolves a different module.
+    assert_unchanged("list(APPEND CMAKE_MODULE_PATH cmake/overrides cmake/defaults)\n");
+    assert_unchanged("list(PREPEND CMAKE_PREFIX_PATH z/root a/root)\n");
+    assert_unchanged("set(MY_INCLUDE_DIRS z/inc a/inc)\n");
+    assert_unchanged("set(BASE_WARNING_FLAGS /W4 /permissive-)\n");
+}
+
+#[test]
+fn test_target_sources_file_set_files_sort_base_dirs_hold() {
+    let input =
+        "target_sources(t PUBLIC FILE_SET api TYPE HEADERS BASE_DIRS zinc ainc FILES z.h a.h)\n";
+    let result = format_text(input, &reordering_config());
+
+    assert!(
+        result.contains("BASE_DIRS\n\t\tzinc\n\t\tainc"),
+        "BASE_DIRS is a search path and must hold its order:\n{}",
+        result
+    );
+    let a = result.find("a.h").expect("a.h missing");
+    let z = result.find("z.h").expect("z.h missing");
+    assert!(a < z, "FILE_SET FILES should sort:\n{}", result);
+}
+
+#[test]
+fn test_install_files_and_source_group_sort() {
+    let config = reordering_config();
+    assert_eq!(
+        format_text("install(FILES z.h a.h DESTINATION inc)\n", &config),
+        "install(FILES a.h z.h DESTINATION inc)\n"
+    );
+    assert_eq!(
+        format_text("source_group(grp FILES z.cpp a.cpp)\n", &config),
+        "source_group(grp FILES a.cpp z.cpp)\n"
+    );
+    // Extension-less names sort like anything else inside an allowed list,
+    // case-insensitively as everywhere else
+    assert_eq!(
+        format_text(
+            "install(FILES README LICENSE zoo.txt apple.txt DESTINATION s)\n",
+            &config
+        ),
+        "install(FILES apple.txt LICENSE README zoo.txt DESTINATION s)\n"
+    );
+}
+
+#[test]
+fn test_unknown_command_uses_conventional_keyword_names() {
+    // cmake_parse_arguments reports arity, not meaning, so only keywords named
+    // after a file list are treated as unordered on an auto-detected command.
+    let input = concat!(
+        "function(my_runner)\n",
+        "\tcmake_parse_arguments(ARG \"\" \"NAME\" \"SOURCES;COMMAND\" ${ARGN})\n",
+        "endfunction()\n",
+        "my_runner(NAME hello SOURCES z.cpp a.cpp COMMAND dot -Tpng in.dot -o out.png)\n"
+    );
+    let result = format_text(input, &reordering_config());
+
+    assert!(
+        result.contains("SOURCES a.cpp z.cpp"),
+        "conventional SOURCES keyword should sort:\n{}",
+        result
+    );
+    assert!(
+        result.contains("COMMAND dot -Tpng in.dot -o out.png"),
+        "auto-detected COMMAND must hold its argv:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_no_sort_directive_also_stops_grouping() {
+    // source_grouping reorders too — it hoists a file next to its pair — so the
+    // directive has to cover both passes to mean anything.
+    let input = "# cmake-fmt: no-sort\nset(SRC z.cpp a.cpp z.h)\nset(SRC2 z.cpp a.cpp z.h)\n";
+    let result = format_text(input, &reordering_config());
+
+    assert!(
+        result.contains("set(SRC z.cpp a.cpp z.h)"),
+        "no-sort must suppress grouping as well:\n{}",
+        result
+    );
+    assert!(
+        !result.contains("set(SRC2 z.cpp a.cpp z.h)"),
+        "the directive applies to the next command only:\n{}",
+        result
     );
 }

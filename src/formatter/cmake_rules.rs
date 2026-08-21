@@ -432,6 +432,14 @@ pub struct KeywordSection {
     pub comment_blank_indices: Vec<usize>,
     /// The type of the keyword (if known from grammar)
     pub keyword_type: Option<KeywordType>,
+    /// `Some(n)` when this section's arguments are an unordered list that
+    /// `sort_sources` and `source_grouping` may reorder, starting at index `n`.
+    /// `None` means the order is meaningful and must be left alone.
+    ///
+    /// Decided by the grammar while sections are parsed — see
+    /// [`CommandGrammar::sortable_keywords`] and
+    /// [`CommandGrammar::sortable_positional`].
+    pub sort_from: Option<usize>,
     /// Whether a newline appeared between the keyword and its first value
     /// (i.e., values were written on separate lines from the keyword)
     pub values_on_new_line: bool,
@@ -453,6 +461,8 @@ pub fn parse_keyword_sections_with_grammar(
         post_comment_blanks: Vec::new(),
         comment_blank_indices: Vec::new(),
         keyword_type: None,
+        // Leading positional run: index 0 is the variable or target name
+        sort_from: grammar.is_some_and(|g| g.sortable_positional).then_some(1),
         values_on_new_line: false,
     };
 
@@ -507,6 +517,10 @@ pub fn parse_keyword_sections_with_grammar(
                     if is_kw && !consumed_as_sub_keyword {
                         // Get the keyword type from grammar if available
                         let kw_type = grammar.and_then(|g| g.keyword_type(&text));
+                        // Whether this keyword's values are an unordered list
+                        let kw_sort_from = grammar
+                            .is_some_and(|g| g.is_sortable_keyword(&text))
+                            .then_some(0);
 
                         // Start a new section
                         if !current_section.args.is_empty() || current_section.keyword.is_some() {
@@ -521,6 +535,7 @@ pub fn parse_keyword_sections_with_grammar(
                             post_comment_blanks: Vec::new(),
                             comment_blank_indices: Vec::new(),
                             keyword_type: kw_type,
+                            sort_from: kw_sort_from,
                             values_on_new_line: false,
                         };
                         saw_separator = true;
@@ -550,6 +565,11 @@ pub fn parse_keyword_sections_with_grammar(
                                 post_comment_blanks: Vec::new(),
                                 comment_blank_indices: Vec::new(),
                                 keyword_type: None,
+                                // The mode keyword already consumed the list
+                                // variable, e.g. `list(APPEND var a b)`
+                                sort_from: grammar
+                                    .is_some_and(|g| g.sortable_positional)
+                                    .then_some(0),
                                 values_on_new_line: false,
                             };
                         } else {
@@ -630,7 +650,66 @@ pub fn parse_keyword_sections_with_grammar(
         sections.push(current_section);
     }
 
+    unmark_search_path_lists(&mut sections);
+
     sections
+}
+
+/// Variables whose element order is a search precedence, not a set.
+///
+/// `list(APPEND CMAKE_MODULE_PATH cmake/overrides cmake/defaults)` resolves
+/// first match wins, so sorting it silently picks a different module. Only ever
+/// disables reordering, so a false positive costs a little tidiness and a false
+/// negative costs correctness.
+fn is_search_path_variable(name: &str) -> bool {
+    const EXACT: &[&str] = &[
+        "CMAKE_MODULE_PATH",
+        "CMAKE_PREFIX_PATH",
+        "CMAKE_FIND_ROOT_PATH",
+        "CMAKE_INCLUDE_PATH",
+        "CMAKE_LIBRARY_PATH",
+        "CMAKE_PROGRAM_PATH",
+    ];
+    const SUFFIXES: &[&str] = &[
+        "_PATH",
+        "_PATHS",
+        "_FLAGS",
+        "_OPTIONS",
+        "_DIRS",
+        "_DIRECTORIES",
+        // Glob/regex lists are evaluated in order, and that order decides the
+        // order of what they match — see OCV_GLOB_PATTERNS in the OpenCV corpus
+        "_PATTERNS",
+    ];
+
+    EXACT.contains(&name) || SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
+}
+
+/// Clear `sort_from` on positional runs governed by a search-path variable.
+///
+/// The variable name is the run's own first argument (`set(VAR …)`) or the
+/// value of the preceding single-value mode keyword (`list(APPEND VAR …)`).
+fn unmark_search_path_lists(sections: &mut [KeywordSection]) {
+    for idx in 0..sections.len() {
+        if sections[idx].keyword.is_some() || sections[idx].sort_from.is_none() {
+            continue;
+        }
+
+        let governing = if idx == 0 {
+            sections[idx].args.first()
+        } else {
+            let previous = &sections[idx - 1];
+            previous
+                .keyword
+                .is_some()
+                .then(|| previous.args.first())
+                .flatten()
+        };
+
+        if governing.is_some_and(|name| is_search_path_variable(name)) {
+            sections[idx].sort_from = None;
+        }
+    }
 }
 
 /// Parse an argument list into keyword sections (backward compatibility wrapper)
@@ -639,80 +718,61 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
     parse_keyword_sections_with_grammar(arg_list, None, super::config::CommentStyle::HashSpace)
 }
 
-/// Check if a string looks like a filename (has extension or path separator)
-fn looks_like_filename(s: &str) -> bool {
-    // Must contain a dot with extension, or path separators
-    // Exclude CMake variables like ${VAR}, generator expressions $<...>
-    if s.starts_with("${")
-        || s.starts_with("$<")
-        || s.starts_with("$ENV{")
-        || s.starts_with("$CACHE{")
-    {
-        return false;
+/// Split `seg` into runs of adjacent sortable args, with each variable-like arg
+/// becoming its own single-element run — a barrier that can neither move nor let
+/// its neighbours move across it.
+fn split_at_barriers(args: &[String], seg: std::ops::Range<usize>) -> Vec<std::ops::Range<usize>> {
+    let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut run_start = seg.start;
+
+    for (offset, arg) in args[seg.start..seg.end].iter().enumerate() {
+        let idx = seg.start + offset;
+        if is_variable_like(arg) {
+            if run_start < idx {
+                runs.push(run_start..idx);
+            }
+            runs.push(idx..idx + 1);
+            run_start = idx + 1;
+        }
     }
-    // Check for file extension (dot followed by at least 1 char, not at start)
-    if let Some(dot_pos) = s.rfind('.')
-        && dot_pos > 0
-        && dot_pos < s.len() - 1
-    {
-        return true;
+
+    if run_start < seg.end {
+        runs.push(run_start..seg.end);
     }
-    // Check for path separators
-    s.contains('/') || s.contains('\\')
+
+    runs
 }
 
-/// Sort source file arguments within a section, respecting blank line boundaries
-/// and keeping comments in sync with their associated filenames.
+/// True for arguments that expand to something unknown at format time, so their
+/// position may be meaningful even inside a list that is otherwise unordered.
+fn is_variable_like(s: &str) -> bool {
+    s.starts_with("${") || s.starts_with("$<") || s.starts_with("$ENV{") || s.starts_with("$CACHE{")
+}
+
+/// Sort the arguments of a section the grammar marked as an unordered list,
+/// respecting blank line boundaries and keeping comments with their arguments.
 ///
 /// Rules:
-/// - Only sort items that look like filenames (have extensions or path separators)
+/// - Only sections with `sort_from` set are touched; whether a list may be
+///   reordered is the grammar's decision, not a guess from the argument text
+/// - Arguments before `sort_from` are pinned (the variable or target name)
+/// - Variable references and generator expressions hold their index and keep
+///   arguments from moving across them
 /// - Blank lines create separate sortable segments
-/// - Comments at position N are associated with the filename at position N
+/// - Comments at position N are associated with the argument at position N
 ///   (i.e., comment before a filename moves with that filename)
 /// - Paired entries from source_grouping (e.g., "foo.h foo.cpp") sort as a unit
 ///   using their first component as sort key
 /// - Case-insensitive sort
 pub fn sort_source_args(section: &mut KeywordSection) {
-    if section.args.is_empty() {
+    let Some(sort_start) = section.sort_from else {
+        return;
+    };
+
+    if section.args.len() <= sort_start + 1 {
+        // Nothing to reorder
         return;
     }
-
-    // Determine the range of args to sort
-    // For keyword sections (keyword is Some), sort all args
-    // For pre-keyword sections (keyword is None):
-    //   - If all args are filenames, sort all
-    //   - If first arg is not a filename but rest are (e.g., add_executable(target src1 src2)),
-    //     sort starting from index 1 (preserve target name)
-    //   - Otherwise, skip sorting
-    let (sort_start, _all_filenames) = if section.keyword.is_some() {
-        // Keyword section: sort all if any are filenames
-        let has_filenames = section.args.iter().any(|a| looks_like_filename(a));
-        if !has_filenames {
-            return;
-        }
-        (0, true)
-    } else {
-        // Pre-keyword section: check if we should sort
-        let all_filenames = section.args.iter().all(|a| looks_like_filename(a));
-        if all_filenames {
-            // All are filenames, sort all
-            (0, true)
-        } else if section.args.len() > 1 {
-            // Check if first is not a filename but rest are (common pattern: target_name + sources)
-            let first_not_filename = !looks_like_filename(&section.args[0]);
-            let rest_are_filenames = section.args[1..].iter().all(|a| looks_like_filename(a));
-            if first_not_filename && rest_are_filenames {
-                // Sort starting from index 1 (preserve first arg as target name)
-                (1, false)
-            } else {
-                // Mixed content, skip sorting
-                return;
-            }
-        } else {
-            // Only one arg, nothing to sort
-            return;
-        }
-    };
 
     // Split into segments by blank lines, but only for the sortable range
     let mut segments: Vec<std::ops::Range<usize>> = Vec::new();
@@ -726,6 +786,13 @@ pub fn sort_source_args(section: &mut KeywordSection) {
     if seg_start < section.args.len() {
         segments.push(seg_start..section.args.len());
     }
+
+    // Split each segment further at variable-like arguments, which hold their
+    // index and act as a barrier for the arguments around them
+    let segments: Vec<std::ops::Range<usize>> = segments
+        .into_iter()
+        .flat_map(|seg| split_at_barriers(&section.args, seg))
+        .collect();
 
     // For each segment, build sortable entries (arg + associated comments)
     // then sort and reassemble
@@ -1553,10 +1620,7 @@ pub fn format_keyword_aware_args(
                             effective_post_comment_blanks,
                             effective_comment_blank_indices,
                         ) = if config.source_grouping != super::config::SourceGrouping::None
-                            && matches!(
-                                section.keyword_type,
-                                Some(KeywordType::MultiValue) | Some(KeywordType::BinPack) | None
-                            )
+                            && section.sort_from.is_some()
                             && section.trailing_comments.is_empty()
                         {
                             group_source_pairs_preserving_blanks(
@@ -1713,6 +1777,7 @@ pub fn format_keyword_aware_args(
                 effective_post_comment_blanks,
                 effective_comment_blank_indices,
             ) = if config.source_grouping != super::config::SourceGrouping::None
+                && section.sort_from.is_some()
                 && section.trailing_comments.is_empty()
             {
                 group_source_pairs_preserving_blanks(
@@ -1992,6 +2057,7 @@ fn format_keyword_aware_args_inline_single(
                     _effective_post_comment_blanks,
                     effective_comment_blank_indices,
                 ) = if config.source_grouping != super::config::SourceGrouping::None
+                    && section.sort_from.is_some()
                     && section.trailing_comments.is_empty()
                 {
                     group_source_pairs_preserving_blanks(
@@ -2114,6 +2180,7 @@ fn format_keyword_aware_args_inline_single(
                 effective_post_comment_blanks,
                 effective_comment_blank_indices,
             ) = if config.source_grouping != super::config::SourceGrouping::None
+                && section.sort_from.is_some()
                 && section.trailing_comments.is_empty()
             {
                 group_source_pairs_preserving_blanks(
@@ -2318,6 +2385,7 @@ fn format_simple_args(
             effective_post_comment_blanks,
             effective_comment_blank_indices,
         ) = if config.source_grouping != super::config::SourceGrouping::None
+            && section.sort_from.is_some()
             && section.trailing_comments.is_empty()
         {
             group_source_pairs_preserving_blanks(

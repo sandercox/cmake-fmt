@@ -135,6 +135,8 @@ pub fn config_grammars_to_map(
                     force_args_on_new_line: false,
                     sub_keywords: HashSet::new(),
                     collection_keywords: HashSet::new(),
+                    sortable_keywords: cfg.sortable_keywords.iter().cloned().collect(),
+                    sortable_positional: cfg.sortable_positional,
                 },
             )
         })

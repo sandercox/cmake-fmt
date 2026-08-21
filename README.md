@@ -361,15 +361,58 @@ When `true`, skips formatting entirely. Useful for temporarily disabling formatt
 #### `sort_sources`
 
 **`sort_sources = alphabetical`:**
-Sorts file lists in commands like `add_executable()` alphabetically.
+Sorts file lists alphabetically, case-insensitively.
 
 **`sort_sources = none` (default):**
 Preserves original file order.
 
+#### Which lists get reordered
+
+`sort_sources` and `source_grouping` both reorder arguments, so both apply only
+where a list is known to be unordered:
+
+| Command | What is sorted |
+| --- | --- |
+| `set(VAR a.cpp b.cpp)` | the values (not the `CACHE <type> "<docstring>"` form) |
+| `add_library`, `add_executable` | the sources, after the target name |
+| `target_sources` | `PUBLIC` / `PRIVATE` / `INTERFACE`, and `FILE_SET`'s `FILES` |
+| `list(APPEND\|PREPEND\|REMOVE_ITEM var …)` | the elements |
+| `install(FILES\|PROGRAMS …)` | the file list |
+| `source_group(… FILES …)` | the file list |
+| your own commands | keywords named `SOURCES`, `SRCS` or `FILES` |
+
+Everything else is left alone, because argument order usually carries meaning:
+`COMMAND` holds an argv, `PROPERTIES` holds key/value pairs, `file(RENAME a b)`
+holds source then destination, `target_link_libraries` holds link order.
+
+Two things are never reordered even inside a list that is:
+
+- A variable reference or generator expression (`${GENERATED}`, `$<TARGET_OBJECTS:x>`)
+  holds its position, and files do not move across it — what it expands to is unknown.
+- A list whose variable is a search path or flag list — `CMAKE_MODULE_PATH`,
+  `CMAKE_PREFIX_PATH`, or a name ending in `_PATH`, `_PATHS`, `_FLAGS`, `_OPTIONS`,
+  `_DIRS`, `_DIRECTORIES`, `_PATTERNS` — because there the order is a precedence.
+
+To mark a list in your own command as unordered, name its keyword in
+[`command_grammars`](#custom-command-grammars):
+
+```yaml
+command_grammars:
+  my_add_library:
+    one_value_keywords: [NAME]
+    multi_value_keywords: [SOURCES, COMMAND]
+    sortable_keywords: [SOURCES]   # COMMAND keeps its order
+```
+
+Use `sortable_positional: true` for a command whose keyword-less arguments are a
+file list. To skip one command, put `# cmake-fmt: no-sort` on the line before it;
+that suppresses both reordering passes.
+
 #### `source_grouping`
 
 **`source_grouping = headers_first`:**
-Groups header files (`.h`, `.hpp`) before source files (`.cpp`, `.c`) in commands like `add_executable()` but also `set()` when file lists are detected.
+Groups header files (`.h`, `.hpp`) before source files (`.cpp`, `.c`) in the same
+lists `sort_sources` applies to.
 
 ```cmake
 set(SOURCES

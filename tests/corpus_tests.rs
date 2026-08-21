@@ -263,3 +263,158 @@ fn test_corpus_files_exist() {
     println!("  KDE: {}", kde_count);
     println!("  OpenCV: {}", opencv_count);
 }
+
+/// Commands whose argument lists the allowlist permits reordering in.
+///
+/// Kept deliberately as a literal list rather than read from the grammar, so
+/// that widening the allowlist in `builtins.rs` cannot silently widen this test
+/// along with it.
+const REORDERABLE_COMMANDS: &[&str] = &[
+    "set",
+    "list",
+    "add_library",
+    "add_executable",
+    "target_sources",
+    "source_group",
+    "install",
+];
+
+/// True for an argument that reads as a CMake keyword (`SOURCES`, `DEPENDS`).
+fn looks_like_keyword(arg: &str) -> bool {
+    arg.len() > 1
+        && arg
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+}
+
+/// Split an argument list into `(governing keyword, values)` runs, so a
+/// reordering can be attributed to the keyword that permitted it.
+fn split_into_keyword_runs(args: &[String]) -> Vec<(Option<String>, Vec<String>)> {
+    let mut runs: Vec<(Option<String>, Vec<String>)> = vec![(None, Vec::new())];
+
+    for arg in args {
+        if looks_like_keyword(arg) {
+            runs.push((Some(arg.clone()), Vec::new()));
+        } else {
+            runs.last_mut()
+                .expect("runs is never empty")
+                .1
+                .push(arg.clone());
+        }
+    }
+
+    runs
+}
+
+#[test]
+fn test_corpus_reordering_confined_to_allowlist() {
+    // The guard that was missing: `test_corpus_semantic_preservation` runs with
+    // FormatConfig::default(), where both reordering passes are off, so it never
+    // exercised sort_sources or source_grouping at all. Enabling them used to
+    // rewrite `set(... CACHE PATH "docs")`, tear `PATTERN` keywords off their
+    // globs in `install(DIRECTORY ... FILES_MATCHING ...)`, and shuffle MSVC
+    // flag lists — all in real files under tests/corpus/.
+    let plain = FormatConfig::default();
+    let reordering = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
+
+    let files = corpus_files();
+    assert!(!files.is_empty(), "No corpus files found in tests/corpus/");
+
+    for path in &files {
+        let input = std::fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("Failed to read {}", path.display()));
+
+        let baseline = extract_semantic_commands(&format_text(&input, &plain));
+        let reordered = extract_semantic_commands(&format_text(&input, &reordering));
+
+        assert_eq!(
+            baseline.len(),
+            reordered.len(),
+            "Command count changed in {}",
+            path.display()
+        );
+
+        for (index, ((name, plain_args), (reordered_name, reordered_args))) in
+            baseline.iter().zip(reordered.iter()).enumerate()
+        {
+            assert_eq!(
+                name,
+                reordered_name,
+                "Command {} changed name in {}",
+                index,
+                path.display()
+            );
+
+            if REORDERABLE_COMMANDS.contains(&name.as_str()) {
+                // An allowlisted command may reorder, but must never gain or
+                // lose an argument
+                let mut plain_sorted = plain_args.clone();
+                let mut reordered_sorted = reordered_args.clone();
+                plain_sorted.sort();
+                reordered_sorted.sort();
+                assert_eq!(
+                    plain_sorted,
+                    reordered_sorted,
+                    "{}({}) at index {} changed its arguments, not just their order",
+                    name,
+                    path.display(),
+                    index
+                );
+            } else {
+                // An unknown command may reorder only the values of a keyword
+                // conventionally named after a file list. Everything else,
+                // including a neighbouring DEPENDS or COMMAND, must be
+                // byte-identical.
+                let plain_runs = split_into_keyword_runs(plain_args);
+                let reordered_runs = split_into_keyword_runs(reordered_args);
+
+                assert_eq!(
+                    plain_runs.len(),
+                    reordered_runs.len(),
+                    "{} at index {} in {} changed its keyword structure",
+                    name,
+                    index,
+                    path.display()
+                );
+
+                for ((keyword, plain_run), (_, reordered_run)) in
+                    plain_runs.iter().zip(reordered_runs.iter())
+                {
+                    let conventional = matches!(
+                        keyword.as_deref(),
+                        Some("SOURCES") | Some("SRCS") | Some("FILES")
+                    );
+                    if conventional {
+                        let mut a = plain_run.clone();
+                        let mut b = reordered_run.clone();
+                        a.sort();
+                        b.sort();
+                        assert_eq!(
+                            a,
+                            b,
+                            "{} at index {} in {} changed its {:?} values",
+                            name,
+                            index,
+                            path.display(),
+                            keyword
+                        );
+                    } else {
+                        assert_eq!(
+                            plain_run,
+                            reordered_run,
+                            "{} at index {} in {} reordered {:?}, which is not allowlisted",
+                            name,
+                            index,
+                            path.display(),
+                            keyword
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

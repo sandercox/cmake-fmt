@@ -505,4 +505,13 @@ pub struct CommandGrammarConfig {
     /// Bin-pack keywords (packs values to fill lines)
     #[serde(default)]
     pub bin_pack_keywords: Vec<String>,
+    /// Keywords whose values are an unordered list, so `sort_sources` and
+    /// `source_grouping` may reorder them (e.g. SOURCES for a wrapper command).
+    /// Reordering is opt-in: keywords not listed here are left alone.
+    #[serde(default)]
+    pub sortable_keywords: Vec<String>,
+    /// True when the command's keyword-less arguments are an unordered list,
+    /// as in `set(VAR a.cpp b.cpp)`. The first argument is always pinned.
+    #[serde(default)]
+    pub sortable_positional: bool,
 }

@@ -714,3 +714,48 @@ target_link_libraries(myapp PRIVATE Boost::filesystem)
         stderr
     );
 }
+
+#[test]
+fn test_grammar_file_roundtrips_sortable_fields() {
+    use cmake_fmt::formatter::import_grammar_file;
+
+    let yaml = r#"
+grammar:
+  - command: wrapper_lib
+    keywords:
+      SOURCES: MultiValue
+      COMMAND: MultiValue
+    sortable_keywords:
+      - SOURCES
+    sortable_positional: true
+"#;
+
+    let imported = import_grammar_file(yaml).expect("grammar file should parse");
+    let grammar = &imported["wrapper_lib"];
+
+    assert!(grammar.sortable_keywords.contains("SOURCES"));
+    assert!(!grammar.sortable_keywords.contains("COMMAND"));
+    assert!(grammar.sortable_positional);
+    assert!(grammar.is_sortable_keyword("SOURCES"));
+    assert!(!grammar.is_sortable_keyword("COMMAND"));
+}
+
+#[test]
+fn test_grammar_file_without_sortable_fields_defaults_to_unordered_off() {
+    use cmake_fmt::formatter::import_grammar_file;
+
+    let yaml = r#"
+grammar:
+  - command: legacy_cmd
+    keywords:
+      SOURCES: MultiValue
+"#;
+
+    let imported = import_grammar_file(yaml).expect("grammar file should parse");
+    let grammar = &imported["legacy_cmd"];
+
+    // Reordering is opt-in, so an older grammar file reorders nothing
+    assert!(grammar.sortable_keywords.is_empty());
+    assert!(!grammar.sortable_positional);
+    assert!(!grammar.is_sortable_keyword("SOURCES"));
+}
