@@ -672,11 +672,12 @@ fn format_command(
                         let grammar =
                             grammar_enum.and_then(|g| g.resolve(first_keyword.as_deref()));
                         // If no builtin grammar, check user grammars
-                        let user_grammar = if grammar.is_none() {
-                            ctx.user_grammars.get(&name_lower)
-                        } else {
-                            None
-                        };
+                        let user_grammar =
+                            if grammar.is_none() && !is_condition_command(&name_lower) {
+                                ctx.user_grammars.get(&name_lower)
+                            } else {
+                                None
+                            };
                         let effective_grammar = grammar.or(user_grammar);
                         // Skip keyword-aware formatting for unrecognized modes in multi-mode commands
                         let is_unrecognized_mode = grammar_enum
@@ -764,7 +765,12 @@ fn format_command(
                 .and_then(|_| detect_mode_keyword(&arg_list));
             let grammar = grammar_enum.and_then(|g| g.resolve(first_keyword.as_deref()));
             // If no builtin grammar, check user grammars (builtins take precedence)
-            let user_grammar = if grammar.is_none() {
+            // A condition is a language construct, not a command a project defines.
+            // A user grammar naming `if` would route it to the keyword-aware
+            // path — restoring the one-argument-per-line layout this exists to
+            // remove, and letting `sortable_keywords` reorder condition
+            // operands, which changes what the condition means.
+            let user_grammar = if grammar.is_none() && !is_condition_command(&name_lower) {
                 ctx.user_grammars.get(&name_lower)
             } else {
                 None
