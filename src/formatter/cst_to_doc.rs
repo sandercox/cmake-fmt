@@ -859,7 +859,17 @@ pub(crate) fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> Arg
                 }
             }
             NodeOrToken::Node(_) => {
-                // Nodes reset newline count
+                // Deliberately does NOT look inside a nested `( ... )` group.
+                // A group renders as one atomic argument, and when it carries a
+                // comment that argument is multi-line, which the renderer
+                // measures as a single long line — so the containing command
+                // can break where it need not have. That mis-measure is
+                // one-directional (it over-estimates, so it only ever causes a
+                // spurious break, never a line over max_line_length) and the
+                // result is idempotent. Recursing here would make the
+                // measurement honest but the output worse: the command would
+                // then take the force-multiline path and put every remaining
+                // argument on its own line, where today the tail stays compact.
                 consecutive_newline_count = 0;
             }
         }
@@ -1175,6 +1185,13 @@ pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
 /// Inner whitespace is normalized to single spaces (`( A  AND B )` becomes
 /// `(A AND B)`). Groups containing comments are emitted verbatim instead,
 /// because folding a line comment into one line would swallow what follows it.
+///
+/// Two things follow from that verbatim path, both deliberate: the group keeps
+/// whatever indentation it had in the source, since the section parser builds it
+/// before the indent level is known; and `comment_style` is not applied inside
+/// it, since the text never reaches comment normalization. Re-emitting the
+/// group's own arguments with the configured indent and normalized comments
+/// would fix both, and is the right eventual shape.
 pub(crate) fn render_nested_group(group: &ArgumentList) -> String {
     let has_comment = group
         .syntax()

@@ -18,14 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A target name is no longer read as the name of the list it holds, so ordinary targets whose names end in `_LIBS`, `_DIRS` or `_OPTIONS` — or contain `FLAGS` — still sort their sources. That blocklist is new in this release and the exemption keeps it from over-reaching; nothing regressed on the previous one. Conversely `set(${VAR} ...)` now holds, as does `list(APPEND ${VAR} ...)`: a list variable nobody can read is one nobody can vet
 - Declaring a `command_grammars` entry no longer silently switches off sorting for keywords named `SOURCES`, `SRCS` or `FILES`. A config entry replaces the grammar auto-detected from `cmake_parse_arguments`, so a user who added one to fix wrapping lost the sorting they already had. Naming any keyword in `sortable_keywords` means that list is the whole list, and writing it as an empty list means nothing in that command is sortable — so there is always a way to say "not this one"
 - `source_grouping` now also reaches a source list that follows a flag, so `add_library(lib STATIC a.cpp a.h)` groups its pair like `add_library(lib a.cpp a.h)` already did. `sort_sources` always sorted that run, so the two passes disagreed about a list the allowlist owns
+- Declaring a `command_grammars` entry no longer silently switches off sorting for keywords named `SOURCES`, `SRCS` or `FILES`. A config entry replaces the grammar auto-detected from `cmake_parse_arguments`, so a user who added one to fix wrapping lost the sorting they already had
+- Parenthesized groups in conditions are no longer dropped — `if((TRUE))` became `if()` and `if((TRUE) AND (TRUE))` became `if(AND)`. A `( ... )` group is now kept as a single argument, in conditions and in keyword-aware commands alike. Known limitations: a group is an unbreakable atom, so a hand-wrapped one is collapsed onto a single line and can exceed `max_line_length`; and a group containing a comment is emitted verbatim, so it keeps the indentation it had in the source and `comment_style` is not applied inside it ([#5](https://github.com/sandercox/cmake-fmt/issues/5))
 
 ### Added
 - `sortable_keywords` and `sortable_positional` in `command_grammars` and grammar files, to mark a list in your own command as unordered
 - `target_sources` now models the `FILE_SET` form's `TYPE`, `BASE_DIRS` and `FILES` keywords, and `source_group` has a grammar entry
-
-### Fixed
-- Parenthesized groups in conditions are no longer dropped — `if((TRUE))` became `if()` and `if((TRUE) AND (TRUE))` became `if(AND)`. A `( ... )` group is now kept as a single argument, in conditions and in keyword-aware commands alike ([#5](https://github.com/sandercox/cmake-fmt/issues/5))
-- Parenthesized groups in conditions are no longer dropped — `if((TRUE))` became `if()` and `if((TRUE) AND (TRUE))` became `if(AND)`. A `( ... )` group is now kept as a single argument, in conditions and in keyword-aware commands alike. Known limitation: a group is an unbreakable atom, so a hand-wrapped one is collapsed onto a single line, and a group containing a comment keeps the indentation it had in the source ([#5](https://github.com/sandercox/cmake-fmt/issues/5))
 
 ## [0.10.2]
 - Fix when `.cmake-fmt` is a root file but there is no CMakeLists.txt use highest ancestor directory as root for function detections

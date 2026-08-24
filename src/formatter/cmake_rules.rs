@@ -784,9 +784,8 @@ pub fn parse_keyword_sections_with_grammar(
                     // keyword already has its one value, so this starts a new
                     // positional section. `sort_from` is decided the same way
                     // too — before the push, while `sections` is still empty
-                    // for a leading mode keyword. A group-led run is refused by
-                    // the value gate later anyway, since `( ... )` is not a
-                    // source file, but the two paths agreeing is the point.
+                    // for a leading mode keyword. The group itself cannot move,
+                    // because `is_variable_like` treats it as a barrier.
                     let overflow_sortable =
                         sections.is_empty() && grammar.is_some_and(|g| g.sortable_positional);
                     sections.push(current_section);
@@ -1049,7 +1048,15 @@ fn split_at_barriers(args: &[String], seg: std::ops::Range<usize>) -> Vec<std::o
 /// precedes every letter.
 fn is_variable_like(s: &str) -> bool {
     let s = s.trim_start_matches('"');
-    s.starts_with("${") || s.starts_with("$<") || s.starts_with("$ENV{") || s.starts_with("$CACHE{")
+    // A parenthesized group is one rendered argument holding several real ones,
+    // so its position is meaningful for the same reason a variable's is — and
+    // the value heuristics cannot read it: `(b c.cpp)` looks like a file with
+    // extension "cpp)", and its leading '(' hides any flag inside it.
+    s.starts_with('(')
+        || s.starts_with("${")
+        || s.starts_with("$<")
+        || s.starts_with("$ENV{")
+        || s.starts_with("$CACHE{")
 }
 
 /// True when the whole token is a single variable reference, so nothing about

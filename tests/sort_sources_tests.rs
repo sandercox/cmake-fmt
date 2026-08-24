@@ -1285,3 +1285,32 @@ fn test_sortable_positional_reaches_exactly_two_runs() {
         "list(APPEND ...) is the same rule"
     );
 }
+
+#[test]
+fn test_parenthesized_group_is_a_sort_barrier() {
+    // A group renders as one argument holding several real ones, so it cannot
+    // move — and the value heuristics cannot read it: `(b c.cpp)` looks like a
+    // file with extension "cpp)", and a leading `(` hides any flag inside.
+    // CMake treats `(` and `)` as separate arguments, so moving a source across
+    // one changes the list.
+    let config = reordering_config();
+
+    for input in [
+        "set(SRCS z.cpp (b c.cpp) a.cpp)\n",
+        "set(SRCS2 z.cpp (-Wall foo.cpp) a.cpp)\n",
+        "set(SRCS3 z.cpp (/usr/lib/x.cpp) a.cpp)\n",
+        "add_library(mylib z.cpp (b c.cpp) a.cpp)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &config),
+            input,
+            "a group let arguments move across it"
+        );
+    }
+
+    // The group holds its index; files on one side still sort among themselves
+    assert_eq!(
+        format_text("list(APPEND V (b.cpp) z.cpp a.cpp)\n", &config),
+        "list(APPEND V (b.cpp) a.cpp z.cpp)\n"
+    );
+}
