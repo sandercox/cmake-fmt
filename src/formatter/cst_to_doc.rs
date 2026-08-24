@@ -1225,7 +1225,29 @@ pub(crate) fn render_nested_group(group: &ArgumentList) -> String {
         .any(|c| matches!(c.kind(), SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT));
 
     if has_comment {
-        return group.syntax().text().to_string();
+        let mut text = group.syntax().text().to_string();
+
+        // If the parser never saw the group's closing paren, the verbatim text
+        // ends inside the open line comment. The caller's closing paren would
+        // then land inside that comment rather than becoming a real token, so
+        // the next run would append another one, and the next — the file grows
+        // by a byte per run and `--check` never goes green. Close it here, on
+        // its own line so it stays outside the comment.
+        //
+        // Checking the last token rather than the last character matters: in
+        // `f((A # c)` the trailing `)` is comment text, not an RPAREN.
+        let terminated = group
+            .syntax()
+            .last_token()
+            .is_some_and(|token| token.kind() == SyntaxKind::RPAREN);
+        if !terminated {
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push(')');
+        }
+
+        return text;
     }
 
     format!("({})", collect_logical_args(group).join(" "))

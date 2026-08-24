@@ -1047,16 +1047,19 @@ fn split_at_barriers(args: &[String], seg: std::ops::Range<usize>) -> Vec<std::o
 /// spelling, and it would otherwise sort ahead of everything because `"` (0x22)
 /// precedes every letter.
 fn is_variable_like(s: &str) -> bool {
+    // Tested before the quotes are stripped: a rendered group always starts at
+    // its own `(`, so a leading quote means this is a quoted *value* that
+    // merely begins with a paren, not a group.
+    if s.starts_with('(') {
+        return true;
+    }
+
     let s = s.trim_start_matches('"');
     // A parenthesized group is one rendered argument holding several real ones,
     // so its position is meaningful for the same reason a variable's is — and
     // the value heuristics cannot read it: `(b c.cpp)` looks like a file with
     // extension "cpp)", and its leading '(' hides any flag inside it.
-    s.starts_with('(')
-        || s.starts_with("${")
-        || s.starts_with("$<")
-        || s.starts_with("$ENV{")
-        || s.starts_with("$CACHE{")
+    s.starts_with("${") || s.starts_with("$<") || s.starts_with("$ENV{") || s.starts_with("$CACHE{")
 }
 
 /// True when the whole token is a single variable reference, so nothing about
