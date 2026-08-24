@@ -648,7 +648,32 @@ fn collect_cmake_files(
         }
     }
 
-    // Walk directories using the `ignore` crate
+    // Walk directories using the `ignore` crate.
+    //
+    // A walk only tests entries at or below its own root, so a root that is
+    // itself inside an excluded directory would be walked happily —
+    // `cmake-fmt -r .` from inside `third_party/` would format files that
+    // `cmake-fmt -r .` from the project root skips, and that the stdin path
+    // skips. An excluded path stays excluded however the tool is invoked, so
+    // drop such roots up front.
+    let dir_paths: Vec<PathBuf> = dir_paths
+        .into_iter()
+        .filter(|dir| {
+            // Relative roots (`.`, the common case) have no ancestors to scan
+            // until they are absolute
+            let absolute = if dir.is_relative() {
+                std::env::current_dir().unwrap_or_default().join(dir)
+            } else {
+                dir.clone()
+            };
+            let excluded = is_dir_ignored(&absolute, ignore_file, false);
+            if excluded {
+                eprintln!("Skipping {}: excluded by an ignore file", dir.display());
+            }
+            !excluded
+        })
+        .collect();
+
     if !dir_paths.is_empty() {
         let first = dir_paths[0].clone();
         let mut builder = WalkBuilder::new(&first);
@@ -723,9 +748,22 @@ fn is_cmake_file(path: &Path) -> bool {
 /// its ancestor directories, or by the extra `--ignore-file` if one was given.
 ///
 /// Each ignore file uses gitignore syntax and is anchored at its own directory,
-/// exactly like the directory walk. Ancestors are consulted from the shallowest
-/// to the deepest, so the nearest ignore file wins — including its negations.
+/// exactly like the directory walk. Two rules decide the outcome: for any given
+/// path the deepest ignore file whose directory contains it wins, and an
+/// excluded ancestor directory is final — git cannot re-include a file whose
+/// parent directory is excluded, and the walk never descends into one to read a
+/// deeper ignore file at all.
 fn is_path_ignored(path: &Path, ignore_file: Option<&Path>, verbose: bool) -> bool {
+    is_ignored(path, false, ignore_file, verbose)
+}
+
+/// The same question for a directory, where a directory-only pattern such as
+/// `build/` applies to the target itself and not only to its ancestors.
+fn is_dir_ignored(path: &Path, ignore_file: Option<&Path>, verbose: bool) -> bool {
+    is_ignored(path, true, ignore_file, verbose)
+}
+
+fn is_ignored(path: &Path, is_dir: bool, ignore_file: Option<&Path>, verbose: bool) -> bool {
     let path = normalize_path(path);
 
     // Directories from the filesystem root down to the file's own directory.
@@ -764,7 +802,7 @@ fn is_path_ignored(path: &Path, ignore_file: Option<&Path>, verbose: bool) -> bo
             Some(true)
         )
     }) || matches!(
-        ignore_decision(&path, false, &matchers, extra.as_ref()),
+        ignore_decision(&path, is_dir, &matchers, extra.as_ref()),
         Some(true)
     );
 

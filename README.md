@@ -153,10 +153,17 @@ same files, which are passed through unchanged. As in git, an excluded directory
 is final: `build/` cannot be undone by a later `!build/keep.cmake`, though
 `build/*` can.
 
-Two limits worth knowing. The stdin path consults `.cmake-fmt-ignore` and
-`--ignore-file`, but not `.gitignore` — the directory walk consults both. And a
-file named explicitly on the command line is always formatted, ignore rules or
-not.
+Two limits worth knowing.
+
+The stdin path consults `.cmake-fmt-ignore` and `--ignore-file` only. The
+directory walk additionally honours `.ignore`, `.gitignore` (when the tree is
+inside a git repository), `.git/info/exclude`, and your global gitignore — so a
+path excluded solely by one of those is skipped on the command line but still
+formatted on save. Put it in `.cmake-fmt-ignore` if you want both to skip it.
+
+And a file named explicitly on the command line is always formatted, ignore
+rules or not. A *directory* named explicitly is not: if it is excluded, it is
+skipped however you reach it, including `cmake-fmt -r .` run from inside it.
 
 When going through your files for the first time, you can use `--interactive` to review changes hunk-by-hunk and choose which ones to apply or skip/disable.
 

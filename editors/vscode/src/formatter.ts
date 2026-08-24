@@ -78,9 +78,14 @@ async function formatWithCli(
       reject(new Error('cancelled'));
     });
 
-    // Attach data listeners BEFORE writing to stdin (prevents buffer deadlock)
-    childProcess.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString();
+    // Attach data listeners BEFORE writing to stdin (prevents buffer deadlock).
+    // setEncoding decodes across chunk boundaries: without it a multi-byte
+    // character split across two reads becomes U+FFFD, which would make the
+    // output differ from the input and cause a full-document edit to be applied
+    // even for a file the ignore rules said to leave alone.
+    childProcess.stdout.setEncoding('utf8');
+    childProcess.stdout.on('data', (data: string) => {
+      stdout += data;
     });
 
     childProcess.stderr.on('data', (data: Buffer) => {

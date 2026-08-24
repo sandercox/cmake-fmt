@@ -757,3 +757,106 @@ fn test_assume_filename_agrees_with_directory_walk() {
         );
     }
 }
+
+#[test]
+fn test_extra_ignore_file_is_rooted_at_the_working_directory() {
+    // --ignore-file is rooted at the cwd, matching WalkBuilder::add_ignore, so
+    // an anchored pattern resolves against the cwd rather than against the
+    // ignore file's own directory. Nothing covered this, and mutating the
+    // rooting to an empty path left every other test green.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    std::fs::create_dir(root.join("build")).expect("Failed to create build dir");
+    std::fs::write(root.join("ig.txt"), "/build/\n").expect("Failed to write ignore");
+
+    let input = "set(FOO   bar)\n";
+    let target = root.join("build").join("a.cmake");
+
+    let mut child = Command::new(cmake_fmt_bin())
+        .args([
+            "-",
+            "--assume-filename",
+            target.to_str().unwrap(),
+            "--ignore-file",
+            "ig.txt",
+        ])
+        .current_dir(root)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn cmake-fmt");
+    child
+        .stdin
+        .as_mut()
+        .expect("Failed to get stdin")
+        .write_all(input.as_bytes())
+        .expect("Failed to write to stdin");
+    let output = child.wait_with_output().expect("Failed to wait");
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        input,
+        "an anchored --ignore-file pattern should resolve against the cwd"
+    );
+}
+
+#[test]
+fn test_walk_from_inside_an_excluded_directory_skips_too() {
+    // An excluded path stays excluded however the tool is reached. A walk only
+    // tests entries at or below its own root, so without an explicit check
+    // `cmake-fmt -r .` from inside an excluded directory formatted files that
+    // the same command from the project root — and the stdin path — skip.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    let inner = root.join("proj").join("third_party").join("foo");
+    std::fs::create_dir_all(&inner).expect("Failed to create dirs");
+    std::fs::write(root.join(".cmake-fmt-ignore"), "third_party/\n")
+        .expect("Failed to write ignore");
+
+    let unformatted = "set(FOO   bar)\n";
+    std::fs::write(inner.join("CMakeLists.txt"), unformatted).expect("Failed to write file");
+    std::fs::write(root.join("proj").join("top.cmake"), unformatted).expect("Failed to write file");
+
+    // From inside the excluded tree
+    let inside = Command::new(cmake_fmt_bin())
+        .args(["-r", "--check", "."])
+        .current_dir(&inner)
+        .output()
+        .expect("Failed to run walk");
+    let report = String::from_utf8_lossy(&inside.stdout).to_string()
+        + &String::from_utf8_lossy(&inside.stderr);
+    assert!(
+        !report.contains("Would reformat"),
+        "walk from inside an excluded directory should skip:\n{}",
+        report
+    );
+
+    // Naming it explicitly is the same answer
+    let named = Command::new(cmake_fmt_bin())
+        .args(["-r", "--check", "proj/third_party"])
+        .current_dir(root)
+        .output()
+        .expect("Failed to run walk");
+    let named_report = String::from_utf8_lossy(&named.stdout).to_string()
+        + &String::from_utf8_lossy(&named.stderr);
+    assert!(
+        !named_report.contains("Would reformat"),
+        "explicitly naming an excluded directory should skip:\n{}",
+        named_report
+    );
+
+    // A non-excluded sibling is still walked
+    let normal = Command::new(cmake_fmt_bin())
+        .args(["-r", "--check", "."])
+        .current_dir(root)
+        .output()
+        .expect("Failed to run walk");
+    let normal_report = String::from_utf8_lossy(&normal.stdout).to_string()
+        + &String::from_utf8_lossy(&normal.stderr);
+    assert!(
+        normal_report.contains("top.cmake"),
+        "the rest of the tree must still be walked:\n{}",
+        normal_report
+    );
+}

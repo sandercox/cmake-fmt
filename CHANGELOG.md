@@ -18,14 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A target name is no longer read as the name of the list it holds, so ordinary targets whose names end in `_LIBS`, `_DIRS` or `_OPTIONS` — or contain `FLAGS` — still sort their sources. That blocklist is new in this release and the exemption keeps it from over-reaching; nothing regressed on the previous one. Conversely `set(${VAR} ...)` now holds, as does `list(APPEND ${VAR} ...)`: a list variable nobody can read is one nobody can vet
 - Declaring a `command_grammars` entry no longer silently switches off sorting for keywords named `SOURCES`, `SRCS` or `FILES`. A config entry replaces the grammar auto-detected from `cmake_parse_arguments`, so a user who added one to fix wrapping lost the sorting they already had. Naming any keyword in `sortable_keywords` means that list is the whole list, and writing it as an empty list means nothing in that command is sortable — so there is always a way to say "not this one"
 - `source_grouping` now also reaches a source list that follows a flag, so `add_library(lib STATIC a.cpp a.h)` groups its pair like `add_library(lib a.cpp a.h)` already did. `sort_sources` always sorted that run, so the two passes disagreed about a list the allowlist owns
+- Declaring a `command_grammars` entry no longer silently switches off sorting for keywords named `SOURCES`, `SRCS` or `FILES`. A config entry replaces the grammar auto-detected from `cmake_parse_arguments`, so a user who added one to fix wrapping lost the sorting they already had
+- `.cmake-fmt-ignore` (and `--ignore-file`) now apply to stdin input with `--assume-filename`, so editor format-on-save skips ignored files instead of formatting them. Matching follows git's rule that an excluded directory is final, so `build/` is not undone by a later `!build/keep.cmake`, and a malformed pattern line no longer discards the rest of the ignore file ([#4](https://github.com/sandercox/cmake-fmt/issues/4))
 
 ### Added
 - `sortable_keywords` and `sortable_positional` in `command_grammars` and grammar files, to mark a list in your own command as unordered
 - `target_sources` now models the `FILE_SET` form's `TYPE`, `BASE_DIRS` and `FILES` keywords, and `source_group` has a grammar entry
-
-### Fixed
-- `.cmake-fmt-ignore` (and `--ignore-file`) now apply to stdin input with `--assume-filename`, so editor format-on-save skips ignored files instead of formatting them ([#4](https://github.com/sandercox/cmake-fmt/issues/4))
-- `.cmake-fmt-ignore` (and `--ignore-file`) now apply to stdin input with `--assume-filename`, so editor format-on-save skips ignored files instead of formatting them. Matching follows git's rule that an excluded directory is final, so `build/` is not undone by a later `!build/keep.cmake`, and a malformed pattern line no longer discards the rest of the ignore file ([#4](https://github.com/sandercox/cmake-fmt/issues/4))
 
 ## [0.10.2]
 - Fix when `.cmake-fmt` is a root file but there is no CMakeLists.txt use highest ancestor directory as root for function detections
