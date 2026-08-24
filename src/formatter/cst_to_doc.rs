@@ -880,20 +880,46 @@ pub(crate) fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> Arg
     ArgumentFormatSignals { force_multiline }
 }
 
+/// Whether an argument list holds anything at all, without rendering nested
+/// groups — `collect_logical_args` would, and on the force-multiline path its
+/// result is never used.
+fn has_arguments(arg_list: &ArgumentList) -> bool {
+    arg_list.syntax().children_with_tokens().any(|child| {
+        matches!(
+            child.kind(),
+            SyntaxKind::UNQUOTED_ARGUMENT
+                | SyntaxKind::QUOTED_ARGUMENT
+                | SyntaxKind::BRACKET_ARGUMENT
+                | SyntaxKind::VARIABLE_REF
+                | SyntaxKind::ENV_VAR_REF
+                | SyntaxKind::CACHE_VAR_REF
+                | SyntaxKind::GENERATOR_EXPR
+                | SyntaxKind::ARGUMENT_LIST
+        )
+    })
+}
+
 /// Format an argument list with intelligent line breaking
 fn format_argument_list(
     arg_list: &ArgumentList,
     ctx: &FormatContext,
     is_custom_command: bool,
 ) -> RcDoc<'static, ()> {
-    let args = collect_logical_args(arg_list);
-
-    if args.is_empty() {
+    if !has_arguments(arg_list) {
         return RcDoc::nil();
     }
 
     // Detect formatting signals
     let signals = detect_argument_formatting_signals(arg_list);
+
+    // Collected only for the auto-layout path below. The force-multiline path
+    // rebuilds from tokens, and collecting here as well would render every
+    // nested `( ... )` group twice.
+    let args = if signals.force_multiline {
+        Vec::new()
+    } else {
+        collect_logical_args(arg_list)
+    };
 
     // If no multiline signals, use auto-layout (flat_alt + group)
     // ARGL-03: For builtin commands, first arg stays on same line when broken

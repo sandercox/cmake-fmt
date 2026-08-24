@@ -470,3 +470,50 @@ target_compile_definitions(mylib
         pass1, pass2
     );
 }
+
+#[test]
+fn test_idempotency_unbalanced_parens_converges() {
+    // Input CMake itself rejects: two closing parens are missing. The formatter
+    // supplies the command's own closer on the first pass and the group's on the
+    // second, so it converges rather than being a fixed point immediately.
+    //
+    // Pinned rather than fixed. Synthesizing the group's closer too would make
+    // the first pass a fixed point, but it invents more syntax into a file that
+    // is already invalid. Worth knowing that `--check` on the formatter's own
+    // output can disagree once, for this class of input only.
+    let config = FormatConfig::default();
+    let input = "cmd((# c\n\n";
+
+    let once = format_text(input, &config);
+    let twice = format_text(&once, &config);
+    let thrice = format_text(&twice, &config);
+
+    assert_ne!(once, twice, "expected the second pass to close the group");
+    assert_eq!(twice, thrice, "should converge after the second pass");
+
+    // Content survives every pass — this is about paren placement, not loss
+    for pass in [&once, &twice, &thrice] {
+        assert!(pass.contains("# c"), "comment lost:\n{}", pass);
+        assert!(pass.contains("cmd("), "command lost:\n{}", pass);
+    }
+}
+
+#[test]
+fn test_idempotency_balanced_nested_groups() {
+    // The ordinary case is a fixed point on the first pass
+    let config = FormatConfig::default();
+    for input in [
+        "if((TRUE))\nendif()\n",
+        "if((A AND B) OR (C AND D))\nendif()\n",
+        "if(NOT(TRUE))\nendif()\n",
+        "set(V (a b) c.cpp)\n",
+    ] {
+        let once = format_text(input, &config);
+        assert_eq!(
+            once,
+            format_text(&once, &config),
+            "not idempotent: {}",
+            input
+        );
+    }
+}
