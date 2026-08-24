@@ -727,7 +727,27 @@ fn format_command(
                     if closer_ctx.opener_args.is_empty() {
                         RcDoc::nil()
                     } else {
-                        RcDoc::text(closer_ctx.opener_args.join(" "))
+                        // A closer echoing a condition gets the same clause
+                        // layout as its opener; laying the two out differently
+                        // is the thing including endif/endwhile is for. There is
+                        // no argument list to read signals from, so the
+                        // reconstructed condition is treated as written on one
+                        // line: it wraps only if it doesn't fit.
+                        let signals = ArgumentFormatSignals {
+                            force_multiline: false,
+                            has_comments: false,
+                        };
+                        is_condition_command(&name_lower)
+                            .then(|| {
+                                format_condition_args(
+                                    &signals,
+                                    ctx,
+                                    &name_lower,
+                                    &closer_ctx.opener_args,
+                                )
+                            })
+                            .flatten()
+                            .unwrap_or_else(|| RcDoc::text(closer_ctx.opener_args.join(" ")))
                     }
                 }
             }
@@ -872,6 +892,17 @@ pub(crate) fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> Arg
     }
 }
 
+/// Width of `s` in terminal columns.
+///
+/// Must match how the renderer measures text, or the decision to lay a
+/// condition out and the decision that it fits disagree. `pretty` measures
+/// non-ASCII text with `unicode_width`, so counting `char`s would
+/// under-estimate every wide character and hand the condition back to the
+/// generic one-argument-per-line layout.
+fn display_width(s: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(s)
+}
+
 /// Commands whose argument list is a boolean expression, not a list of values.
 ///
 /// `endif`/`endwhile` are included because with `closing_style = preserve` they
@@ -932,15 +963,15 @@ fn format_condition_args(
     let paren_space = usize::from(config.space_between_command_parens);
     let space_before =
         usize::from(config.control_flow_space_before_paren && is_block_command(name_lower));
-    let base_indent = indent_string(ctx.indent_level, config).chars().count();
+    let base_indent = display_width(&indent_string(ctx.indent_level, config));
 
     // Width of everything before the first argument: `<indent>if( `
-    let opening_width = base_indent + name_lower.chars().count() + space_before + 1 + paren_space;
+    let opening_width = base_indent + display_width(name_lower) + space_before + 1 + paren_space;
 
     // Take over whenever the condition will be laid out on more than one line:
     // either it doesn't fit, or the author already broke it and the generic
     // layout would honour that by putting every word on its own line.
-    let args_width: usize = args.iter().map(|a| a.chars().count()).sum::<usize>() + args.len() - 1;
+    let args_width: usize = args.iter().map(|a| display_width(a)).sum::<usize>() + args.len() - 1;
     let flat_width = opening_width + args_width + paren_space + 1;
     let must_wrap = limit > 0 && flat_width > limit;
     if !must_wrap && !signals.force_multiline {
@@ -983,12 +1014,14 @@ fn format_condition_args(
         let mut used = if clause_idx == 0 {
             opening_width
         } else {
-            clause_indent.chars().count()
+            display_width(&clause_indent)
         };
         let mut current = String::new();
 
         for word in clause {
-            let width = word.chars().count();
+            // After an argument containing newlines the column is the width of
+            // whatever follows its last newline, not of the whole argument
+            let width = display_width(word.rsplit('\n').next().unwrap_or(word));
             if current.is_empty() {
                 current.push_str(word);
                 used += width;
@@ -1001,7 +1034,7 @@ fn format_condition_args(
                     lines.push(format!("{}{}", indent, line));
                 }
                 indent = cont_indent.clone();
-                used = cont_indent.chars().count() + width;
+                used = display_width(&cont_indent) + width;
                 current.push_str(word);
             } else {
                 current.push(' ');
@@ -1021,7 +1054,7 @@ fn format_condition_args(
     // fold builds a left-nested Append chain whose depth tracks the line count,
     // which overflows the stack on Drop for a pathologically long condition.
     // The force-multiline path below does the same for the same reason.
-    let mut rendered = first_line?;
+    let mut rendered = first_line.expect("clause 0 always yields a line");
     for line in lines {
         rendered.push('\n');
         rendered.push_str(&line);

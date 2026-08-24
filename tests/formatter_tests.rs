@@ -2145,3 +2145,66 @@ fn test_very_long_condition_does_not_overflow_stack() {
     assert!(once.contains("\tAND VAR_19999\n"), "last clause missing");
     assert_eq!(once, format_text(&once, &config), "not idempotent");
 }
+
+#[test]
+fn test_condition_width_uses_display_width_not_char_count() {
+    // The layout has to measure width the way the renderer does. `pretty`
+    // measures non-ASCII text with unicode-width, so counting chars
+    // under-estimated every wide character: the layout decided the condition
+    // fit, abstained, and the generic path — measuring correctly — exploded it
+    // one argument per line. That also made the output non-idempotent.
+    //
+    // chars 58, bytes 80, display width 64, against a limit of 60.
+    let input = concat!(
+        "if(NAME STREQUAL \"éééééééééé\" AND OTHER STREQUAL \"你好你好你好\")\n",
+        "endif()\n"
+    );
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 2,
+        max_line_length: 60,
+        ..Default::default()
+    };
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if(NAME STREQUAL \"éééééééééé\"\n",
+            "  AND OTHER STREQUAL \"你好你好你好\"\n",
+            ")\n",
+            "endif()\n"
+        )
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_forced_closer_condition_matches_opener() {
+    // closing_style = force reconstructs the closer from the opener's
+    // arguments, bypassing the argument list entirely. Without the condition
+    // layout there it emitted one long line under a wrapped opener — the exact
+    // inconsistency that including endif/endwhile is meant to prevent.
+    let input = concat!(
+        "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" ",
+        "AND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\")\n",
+        "\tmessage(hi)\n",
+        "endif()\n"
+    );
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        ..Default::default()
+    };
+    let result = format_text(input, &config);
+
+    let laid_out = concat!(
+        "(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+        "\tAND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\"\n",
+        ")"
+    );
+    assert_eq!(
+        result,
+        format!("if{}\n\tmessage(hi)\nendif{}\n", laid_out, laid_out)
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
