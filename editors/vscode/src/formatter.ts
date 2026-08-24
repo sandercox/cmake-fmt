@@ -98,7 +98,10 @@ async function formatWithCli(
       reject(err);
     });
 
-    childProcess.on('exit', (code) => {
+    // 'close' rather than 'exit': exit can fire before stdout has drained,
+    // and a truncated read differs from the input, which would make the
+    // extension apply a full-document edit for a file it should have left alone
+    childProcess.on('close', (code) => {
       clearTimeout(timeout);
       cancellationListener.dispose();
 

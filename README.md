@@ -162,8 +162,16 @@ path excluded solely by one of those is skipped on the command line but still
 formatted on save. Put it in `.cmake-fmt-ignore` if you want both to skip it.
 
 And a file named explicitly on the command line is always formatted, ignore
-rules or not. A *directory* named explicitly is not: if it is excluded, it is
-skipped however you reach it, including `cmake-fmt -r .` run from inside it.
+rules or not. A *directory* named explicitly is not: if `.cmake-fmt-ignore`
+excludes it, it is skipped however you reach it, including `cmake-fmt -r .` run
+from inside it. The `.gitignore` family does not get that treatment — a
+directory excluded only by `.gitignore` is still walked when you name it.
+
+The asymmetry runs both ways, so it is worth knowing which direction you are
+in. The stdin path skips *less* than the walk, because of the sources above.
+It can also skip *more*: `--ignore-file` ranks below all of them on the walk, so
+a negation in `.gitignore` or `.ignore` can override it there and has no
+counterpart on the stdin path.
 
 When going through your files for the first time, you can use `--interactive` to review changes hunk-by-hunk and choose which ones to apply or skip/disable.
 

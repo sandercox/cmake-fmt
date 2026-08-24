@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Declaring a `command_grammars` entry no longer silently switches off sorting for keywords named `SOURCES`, `SRCS` or `FILES`. A config entry replaces the grammar auto-detected from `cmake_parse_arguments`, so a user who added one to fix wrapping lost the sorting they already had
 - `.cmake-fmt-ignore` (and `--ignore-file`) now apply to stdin input with `--assume-filename`, so editor format-on-save skips ignored files instead of formatting them. Matching follows git's rule that an excluded directory is final, so `build/` is not undone by a later `!build/keep.cmake`, and a malformed pattern line no longer discards the rest of the ignore file ([#4](https://github.com/sandercox/cmake-fmt/issues/4))
 
+### Changed
+- A directory excluded by `.cmake-fmt-ignore` is now skipped however you reach it: naming it explicitly, or running `cmake-fmt -r .` from inside it, both do nothing where they previously formatted its contents
+
 ### Added
 - `sortable_keywords` and `sortable_positional` in `command_grammars` and grammar files, to mark a list in your own command as unordered
 - `target_sources` now models the `FILE_SET` form's `TYPE`, `BASE_DIRS` and `FILES` keywords, and `source_group` has a grammar entry

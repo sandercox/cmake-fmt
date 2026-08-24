@@ -860,3 +860,53 @@ fn test_walk_from_inside_an_excluded_directory_skips_too() {
         normal_report
     );
 }
+
+#[test]
+fn test_ignore_file_pattern_matching_an_ancestor_does_not_disable_the_walk() {
+    // Gitignore matches a pattern with no slash against a path's basename, so
+    // an ordinary pattern like `tmp/` matches the `/tmp` component of an
+    // absolute path. Consulting --ignore-file for every ancestor therefore
+    // excluded the walk root itself and the whole run silently found nothing —
+    // and `--check` exited 0 having checked nothing, which in CI reads as pass.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    std::fs::create_dir(root.join("src")).expect("Failed to create src dir");
+
+    // Patterns from an ordinary .gitignore. `tmp/` matches the system temp
+    // directory this tree lives under; nothing here is meant to be excluded.
+    std::fs::write(root.join("ig.txt"), "build/\ntmp/\n*.o\n").expect("Failed to write ignore");
+
+    let unformatted = "set(FOO   bar)\n";
+    std::fs::write(root.join("CMakeLists.txt"), unformatted).expect("Failed to write file");
+    std::fs::write(root.join("src").join("a.cmake"), unformatted).expect("Failed to write file");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["-r", "--check", ".", "--ignore-file", "ig.txt"])
+        .current_dir(root)
+        .output()
+        .expect("Failed to run walk");
+    let report = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        report.contains("CMakeLists.txt") && report.contains("a.cmake"),
+        "an --ignore-file pattern matching an ancestor disabled the walk:\n{}",
+        report
+    );
+
+    // The same file still excludes what it actually names
+    std::fs::write(root.join("ig.txt"), "src/\n").expect("Failed to write ignore");
+    let output = Command::new(cmake_fmt_bin())
+        .args(["-r", "--check", ".", "--ignore-file", "ig.txt"])
+        .current_dir(root)
+        .output()
+        .expect("Failed to run walk");
+    let report = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        report.contains("CMakeLists.txt") && !report.contains("a.cmake"),
+        "--ignore-file should still exclude what it names:\n{}",
+        report
+    );
+}

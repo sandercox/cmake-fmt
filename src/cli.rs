@@ -666,7 +666,13 @@ fn collect_cmake_files(
             } else {
                 dir.clone()
             };
-            let excluded = is_dir_ignored(&absolute, ignore_file, false);
+            // Only the .cmake-fmt-ignore chain decides here, never
+            // --ignore-file. The walk applies its own add_ignore matcher to
+            // every entry it visits, so consulting it for the root as well
+            // would drop the whole tree for the ordinary allowlist idiom
+            // (`*` plus `!*.cmake`) before the re-inclusion could apply — and
+            // the walk never tests its own root as an entry either.
+            let excluded = is_dir_ignored(&absolute, None, false);
             if excluded {
                 eprintln!("Skipping {}: excluded by an ignore file", dir.display());
             }
@@ -797,11 +803,22 @@ fn is_ignored(path: &Path, is_dir: bool, ignore_file: Option<&Path>, verbose: bo
     // cannot re-include a file whose parent directory is excluded, and the
     // walk never descends into it to read a deeper ignore file at all.
     let ignored = dirs.iter().any(|dir| {
+        // --ignore-file is consulted for an ancestor only when that ancestor is
+        // under its root. Without this, gitignore basename matching lets an
+        // ordinary pattern like `build/` or `tmp/` match a component of the
+        // absolute path — `/tmp/...`, a checkout under `build/` — and exclude a
+        // directory nobody was asking about. The walk never asks its own
+        // add_ignore matcher about anything above its root, so it cannot happen
+        // there either.
+        let extra_here = extra.as_ref().filter(|(root, _)| dir.starts_with(root));
         matches!(
-            ignore_decision(dir, true, &matchers, extra.as_ref()),
+            ignore_decision(dir, true, &matchers, extra_here),
             Some(true)
         )
     }) || matches!(
+        // The target itself is matched without that restriction: a basename
+        // pattern in --ignore-file is meant to apply to a file outside the
+        // working directory too.
         ignore_decision(&path, is_dir, &matchers, extra.as_ref()),
         Some(true)
     );
