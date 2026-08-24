@@ -2208,3 +2208,107 @@ fn test_forced_closer_condition_matches_opener() {
     );
     assert_eq!(result, format_text(&result, &config), "not idempotent");
 }
+
+#[test]
+fn test_else_gets_the_same_layout_as_its_opener() {
+    // `else` is a mid-block command but not `elseif`, so it fell past both the
+    // elseif special case and the condition check into the join fallback — a
+    // 107-column line between a wrapped `if` and a wrapped `endif`.
+    let cond = "NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" AND NOT WICKHOPPER_MODE STREQUAL \"GROUP\"";
+    let input = format!(
+        "if({})\n\tmessage(hi)\nelse()\n\tmessage(bye)\nendif()\n",
+        cond
+    );
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        ..Default::default()
+    };
+    let result = format_text(&input, &config);
+
+    for line in result.lines() {
+        assert!(
+            line.len() <= 80,
+            "line over the limit, so a closer did not get the clause layout:\n{}",
+            result
+        );
+    }
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_forced_closer_uses_merged_arguments() {
+    // opener_args came from raw tokens while the opener used merged logical
+    // arguments, so `${VAR}` and `/path` were one argument to the opener and
+    // two to the closer. The injected space makes CMake itself warn that the
+    // block opens and closes with mis-matching arguments.
+    let input = concat!(
+        "if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/utils/googletest/include/gtest/gtest.h ",
+        "AND SOMETHING_ELSE_LONG)\n",
+        "\tmessage(hi)\n",
+        "endif()\n"
+    );
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        ..Default::default()
+    };
+    let result = format_text(input, &config);
+
+    assert!(
+        !result.contains("${CMAKE_CURRENT_SOURCE_DIR} /utils"),
+        "a space was injected into the path:\n{}",
+        result
+    );
+    let opener = result
+        .lines()
+        .next()
+        .expect("opener")
+        .trim_start_matches("if");
+    let closer_line = result
+        .lines()
+        .find(|l| l.starts_with("endif"))
+        .expect("closer");
+    assert_eq!(
+        opener,
+        closer_line.trim_start_matches("endif"),
+        "opener and closer disagree:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_forced_closer_paren_spacing_is_symmetric() {
+    // has_args read the source `endif()`, which has no arguments, so the width
+    // model assumed a space the renderer never emitted and `endif(X)` became
+    // `endif( X)` on a second pass.
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        space_between_command_parens: true,
+        ..Default::default()
+    };
+    let result = format_text("if(A)\n\tmessage(x)\nendif()\n", &config);
+
+    assert!(
+        result.contains("endif( A )"),
+        "closer spacing should mirror the opener:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_joined_condition_closes_on_the_same_line() {
+    // A hand-wrapped condition that fits gets joined onto one line; a lone `)`
+    // underneath it reads as a bug, and nothing else in the formatter puts a
+    // hardline before `)` unless the arguments are themselves on separate lines.
+    let config = default_config();
+    let result = format_text(
+        "if(CMAKE_CXX_COMPILER_ID STREQUAL\n   \"GNU\")\nendif()\n",
+        &config,
+    );
+
+    assert_eq!(
+        result,
+        "if(CMAKE_CXX_COMPILER_ID STREQUAL \"GNU\")\nendif()\n"
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}

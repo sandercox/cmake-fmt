@@ -486,11 +486,16 @@ fn format_file(
                             if is_block_opener(&cmd_name) {
                                 current_indent += 1;
                                 // Extract opener arguments for scope tracking
+                                // Logical arguments, not raw tokens: adjacent
+                                // tokens like `${DIR}` + `/x.h` are one
+                                // argument. Collecting tokens made a forced
+                                // closer disagree with its opener — a space
+                                // appeared mid-path, and the two got different
+                                // clause layouts. CMake itself warns about the
+                                // mismatch.
                                 let opener_args: Vec<String> = cmd
                                     .argument_list()
-                                    .map(|al| {
-                                        al.arguments().map(|t| t.text().to_string()).collect()
-                                    })
+                                    .map(|al| collect_logical_args(&al))
                                     .unwrap_or_default();
                                 scope_stack.push(ScopeFrame { opener_args });
                             }
@@ -738,17 +743,28 @@ fn format_command(
                             force_multiline: false,
                             has_comments: false,
                         };
-                        is_condition_command(&name_lower)
-                            .then(|| {
-                                format_condition_args(
-                                    &signals,
-                                    ctx,
-                                    &name_lower,
-                                    &closer_ctx.opener_args,
-                                )
-                            })
-                            .flatten()
-                            .unwrap_or_else(|| RcDoc::text(closer_ctx.opener_args.join(" ")))
+                        let laid_out = if is_condition_command(&name_lower) {
+                            format_condition_args(
+                                &signals,
+                                ctx,
+                                &name_lower,
+                                &closer_ctx.opener_args,
+                            )
+                        } else {
+                            None
+                        };
+
+                        laid_out.unwrap_or_else(|| {
+                            // Mirror the space the opening paren gets, or
+                            // space_between_command_parens yields `endif( A)`
+                            // — spaced open, unspaced close.
+                            let doc = RcDoc::text(closer_ctx.opener_args.join(" "));
+                            if ctx.config.space_between_command_parens {
+                                doc.append(RcDoc::text(" "))
+                            } else {
+                                doc
+                            }
+                        })
                     }
                 }
             }
@@ -824,20 +840,28 @@ fn format_command(
         } else {
             ""
         };
-    let has_args = cmd.argument_list().is_some_and(|al| {
-        al.syntax().children_with_tokens().any(|c| {
-            matches!(
-                c.kind(),
-                SyntaxKind::UNQUOTED_ARGUMENT
-                    | SyntaxKind::QUOTED_ARGUMENT
-                    | SyntaxKind::BRACKET_ARGUMENT
-                    | SyntaxKind::VARIABLE_REF
-                    | SyntaxKind::ENV_VAR_REF
-                    | SyntaxKind::CACHE_VAR_REF
-                    | SyntaxKind::GENERATOR_EXPR
-            )
-        })
+    // A forced closer is reconstructed from its opener, so it has arguments even
+    // though its own argument list is empty. Without this the width model
+    // assumed a paren space the renderer never emitted, and `endif(X)` became
+    // `endif( X)` on a second pass.
+    let reconstructs_opener_args = closer_context.is_some_and(|closer| {
+        matches!(ctx.config.closing_style, ClosingStyle::Force) && !closer.opener_args.is_empty()
     });
+    let has_args = reconstructs_opener_args
+        || cmd.argument_list().is_some_and(|al| {
+            al.syntax().children_with_tokens().any(|c| {
+                matches!(
+                    c.kind(),
+                    SyntaxKind::UNQUOTED_ARGUMENT
+                        | SyntaxKind::QUOTED_ARGUMENT
+                        | SyntaxKind::BRACKET_ARGUMENT
+                        | SyntaxKind::VARIABLE_REF
+                        | SyntaxKind::ENV_VAR_REF
+                        | SyntaxKind::CACHE_VAR_REF
+                        | SyntaxKind::GENERATOR_EXPR
+                )
+            })
+        });
     let space_after = if ctx.config.space_between_command_parens && has_args {
         " "
     } else {
@@ -914,7 +938,10 @@ fn display_width(s: &str) -> usize {
 /// `endif`/`endwhile` are included because with `closing_style = preserve` they
 /// echo the opener's condition, and the two should not be laid out differently.
 fn is_condition_command(name_lower: &str) -> bool {
-    matches!(name_lower, "if" | "elseif" | "while" | "endif" | "endwhile")
+    matches!(
+        name_lower,
+        "if" | "elseif" | "else" | "while" | "endif" | "endwhile"
+    )
 }
 
 /// Operators that join the top-level clauses of a condition.
@@ -1061,12 +1088,23 @@ fn format_condition_args(
     // which overflows the stack on Drop for a pathologically long condition.
     // The force-multiline path below does the same for the same reason.
     let mut rendered = first_line.expect("clause 0 always yields a line");
+    // Captured before the loop consumes `lines`
+    let broke = must_wrap || !lines.is_empty();
     for line in lines {
         rendered.push('\n');
         rendered.push_str(&line);
     }
 
-    Some(RcDoc::text(rendered).append(closing_paren_position(config, ctx.indent_level, true)))
+    // If the whole condition collapsed to one line, close it on that line. The
+    // arguments were deliberately joined; a lone `)` underneath them reads as a
+    // bug, and elsewhere a hardline before `)` only follows arguments that are
+    // themselves on separate lines. Returning None here would not do — the
+    // generic path would see force_multiline and explode it again.
+    Some(
+        RcDoc::text(rendered)
+            .append(closing_paren_position(config, ctx.indent_level, broke))
+            .group(),
+    )
 }
 
 /// Format an argument list with intelligent line breaking
