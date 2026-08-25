@@ -1984,6 +1984,19 @@ fn test_long_condition_is_idempotent() {
     let once = format_text(input, &config);
     let twice = format_text(&once, &config);
     assert_eq!(once, twice, "condition layout is not idempotent");
+    // Idempotency alone said nothing here — the generic one-argument-per-line
+    // layout is a fixed point too, so this passed before the clause layout
+    // existed. Assert the layout as well.
+    assert_eq!(
+        once,
+        concat!(
+            "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+            "\tAND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\"\n",
+            "\tOR OVERRIDE_MODE\n",
+            ")\n",
+            "endif()\n"
+        )
+    );
 }
 
 #[test]
@@ -2356,6 +2369,185 @@ fn test_joined_condition_closes_on_the_same_line() {
     assert_eq!(
         result,
         "if(CMAKE_CXX_COMPILER_ID STREQUAL \"GNU\")\nendif()\n"
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+/// The largest condition that still fits on one line, and the first that does not.
+///
+/// Every term of the width model — the indent, the command name, the space
+/// before `(`, the paren spaces, the inter-argument spaces and the closing `)` —
+/// shifts this boundary by one column, so pinning the boundary pins all of them.
+/// Six independent mutations of that arithmetic used to leave the whole suite
+/// green.
+fn assert_wrap_boundary(config: &FormatConfig, build: fn(&str) -> String, nesting: usize) {
+    let limit = config.max_line_length;
+    let mut last_flat: Option<(usize, usize)> = None;
+
+    for n in 1..200 {
+        let condition = build(&"A".repeat(n));
+        let input = if nesting == 0 {
+            format!("{}\n\tmessage(x)\nendif()\n", condition)
+        } else {
+            format!(
+                "if(OUTER)\n\t{}\n\t\tmessage(x)\n\tendif()\nendif()\n",
+                condition
+            )
+        };
+        let result = format_text(&input, config);
+        let line = result.lines().nth(nesting).expect("condition line");
+        let width = line.chars().count();
+
+        // The condition is on one line exactly when the `)` is still on it
+        if line.trim_end().ends_with(')') {
+            assert!(
+                width <= limit,
+                "a flat condition overflowed: {} columns > {} for n={}\n{}",
+                width,
+                limit,
+                n,
+                result
+            );
+            last_flat = Some((n, width));
+            continue;
+        }
+
+        // It broke. The last one that fitted must have filled the line exactly:
+        // one column short would mean the model reserves something the renderer
+        // does not emit, one column over is caught above.
+        let (flat_n, flat_width) = last_flat.expect("nothing fitted at all");
+        assert_eq!(
+            flat_width,
+            limit,
+            "the last flat condition (n={}) stopped {} columns short of the limit",
+            flat_n,
+            limit - flat_width
+        );
+        // And nothing in the broken form may overflow either
+        for line in result.lines() {
+            if line.split_whitespace().count() > 1 {
+                assert!(
+                    line.chars().count() <= limit,
+                    "wrapped line overflows: {:?}\n{}",
+                    line,
+                    result
+                );
+            }
+        }
+        // A `)` alone on a line must follow arguments that are themselves split
+        assert!(
+            result.lines().filter(|l| l.trim() == ")").count() == 0
+                || result.lines().count() > nesting + 3,
+            "the closing paren was stranded under a joined condition:\n{}",
+            result
+        );
+        return;
+    }
+    panic!("the condition never broke");
+}
+
+#[test]
+fn test_wrap_boundary_accounts_for_every_column() {
+    let single = |arg: &str| format!("if(FIRST STREQUAL \"{}\")", arg);
+    let two_clause = |arg: &str| format!("if(FIRST AND SECOND STREQUAL \"{}\")", arg);
+
+    for limit in [40, 60] {
+        // Tabs, spaces, and a deeper indent — pins the indent term
+        assert_wrap_boundary(
+            &FormatConfig {
+                max_line_length: limit,
+                ..Default::default()
+            },
+            single,
+            0,
+        );
+        assert_wrap_boundary(
+            &FormatConfig {
+                max_line_length: limit,
+                use_tabs: false,
+                indent_width: 4,
+                ..Default::default()
+            },
+            single,
+            1,
+        );
+        // Pins the paren-space term
+        assert_wrap_boundary(
+            &FormatConfig {
+                max_line_length: limit,
+                space_between_command_parens: true,
+                ..Default::default()
+            },
+            single,
+            0,
+        );
+        // Pins the space-before-paren term
+        assert_wrap_boundary(
+            &FormatConfig {
+                max_line_length: limit,
+                control_flow_space_before_paren: true,
+                ..Default::default()
+            },
+            single,
+            0,
+        );
+        // Pins the inter-argument spaces term
+        assert_wrap_boundary(
+            &FormatConfig {
+                max_line_length: limit,
+                ..Default::default()
+            },
+            two_clause,
+            0,
+        );
+    }
+}
+
+#[test]
+fn test_the_indent_counts_toward_the_conditions_width() {
+    // A condition nested in another block starts further right, and the layout
+    // only takes over when the condition will not fit. Leaving the indent out of
+    // that decision made it decline on a condition that overflows *because* of
+    // the indent, and the generic layout then put every argument on its own
+    // line — which is the shape this whole feature exists to avoid. Taken from
+    // llvm/AddLLVM.cmake, where it happens at a 40-column limit.
+    let config = FormatConfig {
+        max_line_length: 40,
+        use_tabs: false,
+        indent_width: 4,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(OUTER)\n\tif(NOT ARG_MODULE AND NOT ARG_OBJECT)\n\t\tmessage(x)\n\tendif()\nendif()\n",
+        &config,
+    );
+
+    assert!(
+        result.contains("if(NOT ARG_MODULE\n") && result.contains("AND NOT ARG_OBJECT\n"),
+        "the condition was not laid out by clause:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_clause_that_exactly_fills_the_line_is_not_broken() {
+    // The fill test asks whether the next word still fits; off by one it breaks
+    // the clause a word early and indents the tail for no reason. `AND SECOND
+    // STREQUAL "AAAAAAA"` is exactly 30 columns with its indent.
+    let config = FormatConfig {
+        max_line_length: 30,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(FIRST AND SECOND STREQUAL \"AAAAAAA\" AND THIRD)\n\tmessage(x)\nendif()\n",
+        &config,
+    );
+
+    assert!(
+        result.contains("\tAND SECOND STREQUAL \"AAAAAAA\"\n"),
+        "a clause that fits exactly was broken:\n{}",
+        result
     );
     assert_eq!(result, format_text(&result, &config), "not idempotent");
 }

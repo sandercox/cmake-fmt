@@ -1031,12 +1031,11 @@ fn format_condition_args(
     // Split into clauses; each AND/OR opens a clause and leads its line
     let mut clauses: Vec<Vec<&String>> = Vec::new();
     for arg in args {
-        if is_condition_operator(arg) && !clauses.is_empty() {
-            clauses.push(vec![arg]);
-        } else if let Some(last) = clauses.last_mut() {
-            last.push(arg);
-        } else {
-            clauses.push(vec![arg]);
+        match clauses.last_mut() {
+            // An operator opens a clause; anything else joins the open one
+            Some(_) if is_condition_operator(arg) => clauses.push(vec![arg]),
+            Some(last) => last.push(arg),
+            None => clauses.push(vec![arg]),
         }
     }
 
@@ -1055,6 +1054,14 @@ fn format_condition_args(
     let mut first_line: Option<String> = None;
     let mut lines: Vec<String> = Vec::new();
 
+    // What follows the final word: the paren space, if any, and the `)` itself.
+    // `flat_width` above already counts it when deciding whether the condition
+    // fits, and the fill has to agree — otherwise a condition that overflows
+    // *only* because of the `)` is filled onto one line and then the `)` is
+    // pushed underneath it on its own, which reads as a bug.
+    let closing_width = paren_space + 1;
+    let last_clause = clauses.len() - 1;
+
     for (clause_idx, clause) in clauses.iter().enumerate() {
         let mut indent = if clause_idx == 0 {
             String::new()
@@ -1068,14 +1075,16 @@ fn format_condition_args(
         };
         let mut current = String::new();
 
-        for word in clause {
+        for (word_idx, word) in clause.iter().enumerate() {
             // After an argument containing newlines the column is the width of
             // whatever follows its last newline, not of the whole argument
             let width = display_width(word.rsplit('\n').next().unwrap_or(word));
+            let is_final = clause_idx == last_clause && word_idx + 1 == clause.len();
+            let reserved = if is_final { closing_width } else { 0 };
             if current.is_empty() {
                 current.push_str(word);
                 used += width;
-            } else if limit > 0 && used + 1 + width > limit {
+            } else if limit > 0 && used + 1 + width + reserved > limit {
                 // Fill up to the limit, then continue the clause one level deeper
                 let line = std::mem::take(&mut current);
                 if clause_idx == 0 && first_line.is_none() {
@@ -1105,8 +1114,13 @@ fn format_condition_args(
     // which overflows the stack on Drop for a pathologically long condition.
     // The force-multiline path below does the same for the same reason.
     let mut rendered = first_line.expect("clause 0 always yields a line");
-    // Captured before the loop consumes `lines`
-    let broke = must_wrap || !lines.is_empty();
+    // Captured before the loop consumes `lines`. `must_wrap` says the condition
+    // did not fit flat, which is not the same question as whether it *was*
+    // broken — and it is the second that decides where the `)` goes. With the
+    // closing width reserved above the two now agree on every input I can
+    // construct, but asking the direct question is what stops a stranded `)`
+    // from coming back if they ever disagree again.
+    let broke = !lines.is_empty();
     for line in lines {
         rendered.push('\n');
         rendered.push_str(&line);
@@ -1117,11 +1131,20 @@ fn format_condition_args(
     // bug, and elsewhere a hardline before `)` only follows arguments that are
     // themselves on separate lines. Returning None here would not do — the
     // generic path would see force_multiline and explode it again.
-    Some(
-        RcDoc::text(rendered)
-            .append(closing_paren_position(config, ctx.indent_level, broke))
-            .group(),
-    )
+    //
+    // The flat case is emitted directly rather than as a `flat_alt` in a group:
+    // inside a group `pretty` re-decides using the rest of the line, including a
+    // trailing comment this layout never measured, and would strand the `)`
+    // again — `if(A STREQUAL "BBBB") # ccc` at a 30-column limit did exactly
+    // that.
+    let closing = if broke {
+        closing_paren_position(config, ctx.indent_level, true)
+    } else if config.space_between_command_parens {
+        RcDoc::text(" ")
+    } else {
+        RcDoc::nil()
+    };
+    Some(RcDoc::text(rendered).append(closing))
 }
 
 /// Format an argument list with intelligent line breaking

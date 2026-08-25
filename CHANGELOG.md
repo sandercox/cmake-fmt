@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `target_sources` now models the `FILE_SET` form's `TYPE`, `BASE_DIRS` and `FILES` keywords, and `source_group` has a grammar entry
 
 ### Changed
-- `if`/`elseif`/`while` conditions laid out on more than one line now break before `AND`/`OR` and keep each clause on its own line, instead of putting every word on a separate line. This covers both a condition too long to fit and one the author wrapped by hand. A clause too long for one line is filled across continuation lines ([#2](https://github.com/sandercox/cmake-fmt/issues/2))
+- `if`/`elseif`/`while` conditions laid out on more than one line now break before `AND`/`OR` and keep each clause on its own line, instead of putting every word on a separate line. This covers both a condition too long to fit and one the author wrapped by hand. A clause too long for one line is filled across continuation lines. A blank line written inside a condition is not preserved ([#2](https://github.com/sandercox/cmake-fmt/issues/2))
+- The space `space_between_command_parens` puts inside the parens now follows the arguments a block closer actually emits. `endforeach( )` under `closing_style = remove` and `endfunction( my_fn ARG )` under `force` were decided from the closer's own argument list, which `closing_style` had already replaced, so the width model and the renderer disagreed and a second pass changed the output again. An argument-less `elseif` in a block whose `if` had a condition came out as `elseif( )`
 
 ## [0.10.2]
 - Fix when `.cmake-fmt` is a root file but there is no CMakeLists.txt use highest ancestor directory as root for function detections
