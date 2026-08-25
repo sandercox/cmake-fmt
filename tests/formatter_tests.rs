@@ -2031,3 +2031,96 @@ fn test_a_forced_closer_keeps_the_opener_s_groups() {
     );
     assert_eq!(result, format_text(&result, &config), "not idempotent");
 }
+
+#[test]
+fn test_a_forced_closer_normalizes_the_openers_group() {
+    // The opener's arguments are rendered verbatim when a group carries a
+    // comment, which is right for the argument list it came from — folding a
+    // line comment onto one line would swallow what follows it — and wrong for
+    // rebuilding a closer: the comment ended up in the file twice, and the rest
+    // of the condition landed at column 0.
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        ..Default::default()
+    };
+    let input = "if(WIN32 AND (MSVC # only MSVC\nOR CLANG_CL))\n\tmessage(hi)\nendif()\n";
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result.matches("# only MSVC").count(),
+        1,
+        "the opener's comment was written twice:\n{}",
+        result
+    );
+    assert!(
+        result.contains("endif(WIN32 AND (MSVC OR CLANG_CL))"),
+        "the closer should carry the normalized condition:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_group_glued_to_the_token_before_it_is_still_a_barrier() {
+    // Adjacency merging renders `NOT(x.cpp)` as one argument, which does not
+    // *start* with a paren — so the barrier test missed it and the arguments
+    // around the group sorted across it.
+    let config = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
+    for input in [
+        "set(SRCS z.cpp a.cpp(b) c.cpp)\n",
+        "set(SRCS z.cpp NOT(x.cpp) a.cpp)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &config),
+            input,
+            "arguments moved across a merged group"
+        );
+    }
+
+    // A quoted value that merely contains a paren is a value, not a group
+    let sorting = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        ..Default::default()
+    };
+    assert_eq!(
+        format_text("set(SRCS \"${GEN}\" z.cpp a.cpp)\n", &sorting),
+        "set(SRCS \"${GEN}\" a.cpp z.cpp)\n",
+        "a quoted variable reference should hold its place and let the rest sort"
+    );
+}
+
+#[test]
+fn test_a_trailing_comment_after_a_group_stays_on_its_line() {
+    // The node arm resets the blank-line counter, which is what keeps a comment
+    // written after a group a *trailing* comment rather than an own-line one.
+    let config = FormatConfig::default();
+    let result = format_text("set(V\n\t(b) # tail\n\tc)\n", &config);
+    let line = result
+        .lines()
+        .find(|l| l.contains("# tail"))
+        .expect("the comment survived");
+    assert!(
+        line.contains("(b)"),
+        "the comment left the group's line:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_group_stays_glued_across_a_blank_line() {
+    // The force-multiline path merges a group onto the token before it too;
+    // without that, `NOT` and `(TRUE)` split across lines.
+    let config = FormatConfig::default();
+    let result = format_text("f(x\n\nNOT(TRUE))\n", &config);
+    assert!(
+        result.contains("NOT(TRUE)"),
+        "the group was split from the token it is glued to:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}

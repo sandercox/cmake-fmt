@@ -489,11 +489,21 @@ fn format_file(
                                 // parenthesized group was dropped here and a
                                 // forced closer came out as `endif(AND B)` for
                                 // an `if((A) AND B)` — a mismatch CMake itself
-                                // warns about. A group is one logical argument.
-                                let opener_args: Vec<String> = cmd
-                                    .argument_list()
-                                    .map(|al| collect_logical_args(&al))
-                                    .unwrap_or_default();
+                                // warns about. A group is one logical argument,
+                                // and always the normalized rendering of one:
+                                // the verbatim form carries the group's comments
+                                // and newlines, which a closer must not repeat.
+                                //
+                                // Only `force` reads these, and rendering a group
+                                // is not free, so nothing else pays for them.
+                                let opener_args: Vec<String> =
+                                    if matches!(ctx.config.closing_style, ClosingStyle::Force) {
+                                        cmd.argument_list()
+                                            .map(|al| collect_condition_args(&al))
+                                            .unwrap_or_default()
+                                    } else {
+                                        Vec::new()
+                                    };
                                 scope_stack.push(ScopeFrame { opener_args });
                             }
 
@@ -1171,6 +1181,29 @@ fn format_argument_list(
 /// For example, `${CMAKE_CURRENT_SOURCE_DIR}` + `/src` (two CST tokens)
 /// becomes one logical argument `${CMAKE_CURRENT_SOURCE_DIR}/src`.
 pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
+    collect_args_with(arg_list, GroupRendering::AsWritten)
+}
+
+/// How a nested group should be rendered when collecting logical arguments.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GroupRendering {
+    /// What the argument list itself needs: a group carrying a comment is
+    /// emitted verbatim, because folding a line comment onto one line would
+    /// swallow whatever follows it.
+    AsWritten,
+    /// What rebuilding a closer from its opener needs: always the normalized
+    /// form. The verbatim text carries the group's comments and its source
+    /// newlines, so a forced closer wrote the opener's comment into the file a
+    /// second time and left part of the condition at column 0.
+    Normalized,
+}
+
+/// The same arguments a closer would be rebuilt from, with groups normalized.
+pub(crate) fn collect_condition_args(arg_list: &ArgumentList) -> Vec<String> {
+    collect_args_with(arg_list, GroupRendering::Normalized)
+}
+
+fn collect_args_with(arg_list: &ArgumentList, groups: GroupRendering) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
     let mut saw_separator = true;
 
@@ -1203,7 +1236,12 @@ pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
                 // A nested `( ... )` group is one logical argument, e.g. the
                 // grouped sub-expression in `if((A AND B) OR C)`.
                 if let Some(nested) = ArgumentList::cast(node) {
-                    let text = render_nested_group(&nested);
+                    let text = match groups {
+                        GroupRendering::AsWritten => render_nested_group(&nested),
+                        GroupRendering::Normalized => {
+                            format!("({})", collect_condition_args(&nested).join(" "))
+                        }
+                    };
                     if !saw_separator && !args.is_empty() {
                         args.last_mut().unwrap().push_str(&text);
                     } else {

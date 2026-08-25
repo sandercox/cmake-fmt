@@ -93,11 +93,13 @@ fn walk_args(node: &cmake_fmt::SyntaxNode, args: &mut Vec<String>) {
 
 /// The detector itself, on the shape it used to be blind to.
 ///
-/// The corpus does reach this: `llvm/HandleLLVMOptions.cmake` closes a `set()`
-/// inside a trailing comment, so everything after it parses as nested groups —
-/// 135 of them — and `test_corpus_semantic_preservation` does fail if the
-/// extractor stops looking inside them. Nobody wrote a group there on purpose
-/// though, so this asserts the detector directly rather than relying on one
+/// The corpus does reach this shape: `llvm/HandleLLVMOptions.cmake` closes a
+/// `set()` inside a trailing comment, so everything after it parses as nested
+/// groups — 135 of them. But narrowing the extractor alone does not fail
+/// `test_corpus_semantic_preservation`, because the formatter preserves those
+/// groups on both sides of the comparison; the recursion only earns its place
+/// against a *formatter* regression, and it takes both mutations together to
+/// see it. So this asserts the detector directly rather than relying on one
 /// malformed file to keep doing it.
 #[test]
 fn test_the_semantic_extractor_sees_inside_a_group() {

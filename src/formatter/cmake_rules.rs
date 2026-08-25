@@ -812,11 +812,15 @@ pub fn parse_keyword_sections_with_grammar(
                 }
                 saw_separator = false;
             } else {
-                // Any other node — only an ERROR region can appear here — is a
-                // separator as far as adjacency goes. Both other copies of this
-                // walk do the same; leaving `saw_separator` stale would merge
-                // the next argument onto the previous one.
+                // Any other node would be an ERROR region. The lexer cannot
+                // produce one inside an argument list — it emits
+                // UNQUOTED_ARGUMENT for everything that is not a paren or EOF —
+                // so this is unreachable today and no test can cover it. Kept
+                // because the other two copies of this walk do the same, and a
+                // stale `saw_separator` would merge the next argument onto the
+                // previous one if the lexer ever changed.
                 saw_separator = true;
+                consecutive_newlines = 0;
             }
         }
     }
@@ -1053,10 +1057,12 @@ fn split_at_barriers(args: &[String], seg: std::ops::Range<usize>) -> Vec<std::o
 /// spelling, and it would otherwise sort ahead of everything because `"` (0x22)
 /// precedes every letter.
 fn is_variable_like(s: &str) -> bool {
-    // Tested before the quotes are stripped: a rendered group always starts at
-    // its own `(`, so a leading quote means this is a quoted *value* that
-    // merely begins with a paren, not a group.
-    if s.starts_with('(') {
+    // Tested before the quotes are stripped: a leading quote means this is a
+    // quoted *value* that merely contains a paren, not a group. Anything else
+    // holding a `(` is one — the paren need not lead, because a group glued to
+    // the token before it is rendered as one argument (`NOT(x.cpp)`,
+    // `a.cpp(b)`), and those let their neighbours sort across the group.
+    if !s.starts_with('"') && s.contains('(') {
         return true;
     }
 
