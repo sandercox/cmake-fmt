@@ -24,6 +24,9 @@ pub struct InteractiveResult {
     pub rejected: usize,
     /// Number of hunks suppressed
     pub suppressed: usize,
+    /// The file was left alone because formatting would have changed what it
+    /// says. Fails the run, like every other mode.
+    pub content_changed: bool,
 }
 
 /// Run interactive formatting for a file
@@ -45,19 +48,19 @@ pub fn run_interactive(file_path: &Path, config: &FormatConfig) -> Result<Intera
 
     // A file the formatter refused to touch also comes back unchanged, so say
     // which of the two happened rather than reporting it as already formatted
-    if let Some(detail) = warnings.iter().find_map(|w| match w {
-        FormatWarning::ContentChanged { detail } => Some(detail),
-        _ => None,
-    }) {
+    if let Some(warning) = warnings
+        .iter()
+        .find(|w| matches!(w, FormatWarning::ContentChanged { .. }))
+    {
+        // Reuse the Display wording rather than re-spelling it, so the two
+        // cannot drift apart
         let term = Term::stderr();
-        term.write_line(&format!(
-            "Left unchanged: formatting would have changed this file's contents ({}). This is a bug in cmake-fmt.",
-            detail
-        ))?;
+        term.write_line(&warning.to_string())?;
         return Ok(InteractiveResult {
             accepted: 0,
             rejected: 0,
             suppressed: 0,
+            content_changed: true,
         });
     }
 
@@ -69,6 +72,7 @@ pub fn run_interactive(file_path: &Path, config: &FormatConfig) -> Result<Intera
             accepted: 0,
             rejected: 0,
             suppressed: 0,
+            content_changed: false,
         });
     }
 
@@ -162,5 +166,6 @@ pub fn run_interactive(file_path: &Path, config: &FormatConfig) -> Result<Intera
         accepted,
         rejected,
         suppressed,
+        content_changed: false,
     })
 }

@@ -344,3 +344,238 @@ fn test_an_invented_closing_paren_is_refused() {
         "the file should be byte-identical"
     );
 }
+
+#[test]
+fn test_the_guard_never_fires_on_its_own_output() {
+    // Convergence over every real file: once the guard has accepted a file, the
+    // formatted result must be acceptable too. A guard that refuses its own
+    // output turns one bad pass into a permanently unformattable file.
+    let mut files = Vec::new();
+    for dir in ["tests/corpus", "tests/fixtures", "tests/format_fixtures"] {
+        collect_cmake_files(std::path::Path::new(dir), &mut files);
+    }
+    assert!(files.len() > 30, "expected a corpus, found {}", files.len());
+
+    let configs = [
+        FormatConfig::default(),
+        FormatConfig {
+            closing_style: ClosingStyle::Force,
+            sort_sources: SortSources::Alphabetical,
+            source_grouping: SourceGrouping::HeadersFirst,
+            ..Default::default()
+        },
+        FormatConfig {
+            closing_style: ClosingStyle::Preserve,
+            command_case: CommandCase::Preserve,
+            comment_style: CommentStyle::Preserve,
+            ..Default::default()
+        },
+    ];
+
+    for path in &files {
+        let source = std::fs::read_to_string(path).expect("read");
+        for config in &configs {
+            let (once, first) = format_text_with_diagnostics(&source, config);
+            if first
+                .iter()
+                .any(|w| matches!(w, FormatWarning::ContentChanged { .. }))
+            {
+                // Genuinely unformattable; that it is refused is asserted elsewhere
+                continue;
+            }
+            let (_, second) = format_text_with_diagnostics(&once, config);
+            assert!(
+                !second
+                    .iter()
+                    .any(|w| matches!(w, FormatWarning::ContentChanged { .. })),
+                "the guard refused the formatter's own output for {}",
+                path.display()
+            );
+        }
+    }
+}
+
+fn collect_cmake_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_cmake_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "cmake")
+                || path.file_name().is_some_and(|n| n == "CMakeLists.txt")
+            {
+                out.push(path);
+            }
+        }
+    }
+}
+
+#[test]
+fn test_a_suppressed_region_is_not_held_to_the_closing_style() {
+    // A `# cmake-fmt: off` region is emitted verbatim, so `closing_style` never
+    // applies inside it — but the guard normalised the input as if it did, and
+    // refused the whole file at default settings. The rest of the file was left
+    // unformatted as a result.
+    let tempdir = TempDir::new().expect("tempdir");
+    let path = tempdir.path().join("CMakeLists.txt");
+    std::fs::write(
+        &path,
+        "# cmake-fmt: off\nif(A)\nmessage(hi)\nendif(A)\n# cmake-fmt: on\nset(X    1)\n",
+    )
+    .expect("write");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["-i", path.to_str().unwrap()])
+        .output()
+        .expect("run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "the guard refused a suppressed region: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let formatted = std::fs::read_to_string(&path).expect("read back");
+    assert!(
+        formatted.contains("endif(A)") && formatted.contains("set(X 1)"),
+        "the suppressed region or the rest of the file was mangled:\n{}",
+        formatted
+    );
+}
+
+#[test]
+fn test_a_line_range_leaves_an_untouched_closer_alone() {
+    // The spliced buffer is only partly formatted, so a closer on a line the
+    // range did not select keeps its old arguments. Normalising the input as if
+    // the setting had applied refused hundreds of buffers byte-identical to
+    // their input.
+    let tempdir = TempDir::new().expect("tempdir");
+    let path = tempdir.path().join("CMakeLists.txt");
+    std::fs::write(&path, "if(A)\nmessage(hi)\nendif(A)\n").expect("write");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["-i", "--line-ranges", "1:1", path.to_str().unwrap()])
+        .output()
+        .expect("run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "an untouched closer was read as a content change: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_an_unreadable_file_fails_the_run() {
+    // The aggregation now treats a file it could not process as a failed run; a
+    // report nobody reads is how an unformatted file reaches a release.
+    let tempdir = TempDir::new().expect("tempdir");
+    let path = tempdir.path().join("missing-dir").join("CMakeLists.txt");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["-i", "--check", path.to_str().unwrap()])
+        .output()
+        .expect("run");
+
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "a file that could not be read should fail the run"
+    );
+}
+
+#[test]
+fn test_the_warning_says_where_and_what() {
+    // The diagnostic truncated both sides at 48 characters independently, so on
+    // both files that fire in practice it rendered them identically and told the
+    // reader nothing. It now carries a line number and keeps the divergence.
+    let tempdir = TempDir::new().expect("tempdir");
+    let path = tempdir.path().join("CMakeLists.txt");
+    std::fs::write(
+        &path,
+        "set(A b)\nset(B c)\nset(flags\n\t/wd1  # padded due to alignment specifier)\n",
+    )
+    .expect("write");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["-i", path.to_str().unwrap()])
+        .output()
+        .expect("run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(stderr.contains("line 3"), "no line number: {}", stderr);
+    let (before, after) = stderr
+        .split_once(" became ")
+        .expect("the warning names both sides");
+    assert_ne!(
+        before.rsplit('(').next(),
+        after.split(')').next(),
+        "both sides rendered identically: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_a_forced_closer_may_drop_the_openers_comment() {
+    // The formatter builds a forced closer from the opener's *values*, dropping
+    // comment tokens, so `if(A # why)` closes as `endif(A)`. The guard kept the
+    // comment in the opener's arguments and so demanded a closer the formatter
+    // will never emit — refusing the file.
+    let tempdir = TempDir::new().expect("tempdir");
+    let path = tempdir.path().join("CMakeLists.txt");
+    std::fs::write(&path, "if(A # why\n)\nmessage(hi)\nendif()\n").expect("write");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args([
+            "-i",
+            "--style",
+            "closing_style=force",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "the guard refused a legitimate forced closer: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let formatted = std::fs::read_to_string(&path).expect("read back");
+    assert!(
+        formatted.contains("endif(A)") && formatted.contains("# why"),
+        "the comment or the closer is wrong:\n{}",
+        formatted
+    );
+}
+
+#[test]
+fn test_a_command_the_formatter_does_not_treat_as_a_block_is_left_alone() {
+    // `block`/`endblock` are not in the formatter's block lists, so it never
+    // rewrites an `endblock`'s arguments whatever `closing_style` says. The
+    // guard listed them and so demanded a rewrite that never came.
+    let tempdir = TempDir::new().expect("tempdir");
+    let path = tempdir.path().join("CMakeLists.txt");
+    std::fs::write(&path, "block(PROPAGATE x)\nset(x    1)\nendblock()\n").expect("write");
+
+    for style in ["force", "remove", "preserve"] {
+        std::fs::write(&path, "block(PROPAGATE x)\nset(x    1)\nendblock()\n").expect("write");
+        let output = Command::new(cmake_fmt_bin())
+            .args([
+                "-i",
+                "--style",
+                &format!("closing_style={}", style),
+                path.to_str().unwrap(),
+            ])
+            .output()
+            .expect("run");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "closing_style={} refused a block: {}",
+            style,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}

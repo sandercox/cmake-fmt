@@ -69,12 +69,61 @@ enum Entry {
         /// Never reordered, and compared verbatim, so a synthesized or dropped
         /// paren is a difference.
         shape: Vec<String>,
-        /// The argument list's contents.
+        /// The argument list's contents, exactly as this side wrote them.
         args: Vec<String>,
+        /// For a block closer on the input side: the arguments `closing_style`
+        /// may replace `args` with. The output is accepted if it wrote either.
+        ///
+        /// Normalising the input to what the setting *will* emit was wrong,
+        /// because plenty of closers are not touched even when the setting is
+        /// on: inside a `# cmake-fmt: off` region, on a line `--line-ranges`
+        /// did not select, on a command the formatter's own block lists do not
+        /// carry, and wherever the opener's arguments hold something the
+        /// formatter drops. Every one of those refused a file the formatter had
+        /// written correctly. Offering both readings is reflexive by
+        /// construction — `check(x, x)` cannot fire — while still refusing a
+        /// closer that says something neither the author nor the setting asked
+        /// for.
+        closer_alternative: Option<Vec<String>>,
+        /// Byte offset of the command in its source, for the warning's line
+        /// number.
+        offset: usize,
     },
     /// Anything else carrying content: a top-level comment, or the stray tokens
     /// an error-recovery region leaves behind.
     Loose(String),
+}
+
+impl Entry {
+    /// Whether `output` says what this input entry said.
+    fn agrees_with(&self, output: &Entry) -> bool {
+        match (self, output) {
+            (
+                Entry::Command {
+                    name: input_name,
+                    shape: input_shape,
+                    args: input_args,
+                    closer_alternative,
+                    ..
+                },
+                Entry::Command {
+                    name: output_name,
+                    shape: output_shape,
+                    args: output_args,
+                    ..
+                },
+            ) => {
+                input_name == output_name
+                    && input_shape == output_shape
+                    && (input_args == output_args
+                        || closer_alternative
+                            .as_ref()
+                            .is_some_and(|allowed| allowed == output_args))
+            }
+            (Entry::Loose(input), Entry::Loose(output)) => input == output,
+            _ => false,
+        }
+    }
 }
 
 /// Describes a difference, for the warning the caller prints.
@@ -157,37 +206,118 @@ impl Content {
     }
 
     /// The first difference from `other`, or `None` when they say the same thing.
-    pub(crate) fn diff(&self, other: &Self) -> Option<Difference> {
-        for (index, (before, after)) in self.entries.iter().zip(other.entries.iter()).enumerate() {
-            if before != after {
+    pub(crate) fn diff(&self, other: &Self, source: &str) -> Option<Difference> {
+        for (before, after) in self.entries.iter().zip(other.entries.iter()) {
+            if !before.agrees_with(after) {
+                let (before_text, after_text) = describe_pair(before, after);
                 return Some(Difference {
                     summary: format!(
-                        "at item {}: {} became {}",
-                        index + 1,
-                        describe(before),
-                        describe(after)
+                        "{}: {} became {}",
+                        locate(before, source),
+                        before_text,
+                        after_text
                     ),
                 });
             }
         }
 
         match self.entries.len().cmp(&other.entries.len()) {
-            std::cmp::Ordering::Less => Some(Difference {
-                summary: format!("gained {}", describe(&other.entries[self.entries.len()])),
-            }),
-            std::cmp::Ordering::Greater => Some(Difference {
-                summary: format!("lost {}", describe(&self.entries[other.entries.len()])),
-            }),
+            std::cmp::Ordering::Less => {
+                let gained = &other.entries[self.entries.len()];
+                Some(Difference {
+                    summary: format!("gained {}", describe(gained)),
+                })
+            }
+            std::cmp::Ordering::Greater => {
+                let lost = &self.entries[other.entries.len()];
+                Some(Difference {
+                    summary: format!("{}: lost {}", locate(lost, source), describe(lost)),
+                })
+            }
             std::cmp::Ordering::Equal => None,
         }
     }
 }
 
+/// Where in the input an entry sits, for the warning.
+fn locate(entry: &Entry, source: &str) -> String {
+    match entry {
+        Entry::Command { offset, .. } => {
+            let line = source[..(*offset).min(source.len())]
+                .bytes()
+                .filter(|b| *b == b'\n')
+                .count()
+                + 1;
+            format!("line {}", line)
+        }
+        Entry::Loose(_) => "somewhere".to_string(),
+    }
+}
+
+/// Render two entries so their difference is visible.
+///
+/// Truncating each to its first 48 characters independently rendered both
+/// corpus firings identically — `set(msvc_warning_flags /wd4141 #'modifier'…`
+/// on both sides — which told the reader nothing at all. This keeps a little
+/// context before the point where they diverge.
+fn describe_pair(before: &Entry, after: &Entry) -> (String, String) {
+    let before_full = render(before);
+    let after_full = render(after);
+
+    let diverge = before_full
+        .char_indices()
+        .zip(after_full.char_indices())
+        .find(|((_, a), (_, b))| a != b)
+        .map(|((index, _), _)| index)
+        .unwrap_or_else(|| before_full.len().min(after_full.len()));
+
+    const CONTEXT: usize = 16;
+    const WIDTH: usize = 48;
+    let start = before_full[..diverge]
+        .char_indices()
+        .rev()
+        .nth(CONTEXT)
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+
+    (
+        window(&before_full, start, WIDTH),
+        window(&after_full, start, WIDTH),
+    )
+}
+
+fn window(text: &str, start: usize, width: usize) -> String {
+    let flattened: String = text
+        .chars()
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .collect();
+    let start = flattened
+        .char_indices()
+        .map(|(index, _)| index)
+        .find(|index| *index >= start)
+        .unwrap_or(0);
+    let head = if start > 0 { "…" } else { "" };
+    let body: String = flattened[start..].chars().take(width).collect();
+    let tail = if flattened[start..].chars().count() > width {
+        "…"
+    } else {
+        ""
+    };
+    format!("`{}{}{}`", head, body.trim_end(), tail)
+}
+
 /// A short, single-line rendering — this ends up in a warning, so a whole
 /// multi-line command would drown it.
 fn describe(entry: &Entry) -> String {
-    let raw = match entry {
-        Entry::Command { name, shape, args } => {
+    window(&render(entry), 0, 48)
+}
+
+/// The full text of an entry, before any windowing.
+fn render(entry: &Entry) -> String {
+    match entry {
+        Entry::Command {
+            name, shape, args, ..
+        } => {
             // `shape` holds the parens and anything written before them, so a
             // command that lost one reads as having lost one rather than as a
             // well-formed call
@@ -198,7 +328,7 @@ fn describe(entry: &Entry) -> String {
             }
             if !shape.iter().any(|t| t == "(") {
                 rendered.push_str(" with no parentheses");
-                return truncate(&rendered);
+                return rendered;
             }
             rendered.push('(');
             rendered.push_str(&args.join(" "));
@@ -210,23 +340,6 @@ fn describe(entry: &Entry) -> String {
             rendered
         }
         Entry::Loose(text) => text.clone(),
-    };
-    truncate(&raw)
-}
-
-/// One readable line, whatever the entry held.
-fn truncate(raw: &str) -> String {
-    let flattened: String = raw
-        .chars()
-        .map(|c| if c.is_whitespace() { ' ' } else { c })
-        .collect();
-
-    const LIMIT: usize = 48;
-    if flattened.chars().count() > LIMIT {
-        let head: String = flattened.chars().take(LIMIT).collect();
-        format!("`{}…`", head.trim_end())
-    } else {
-        format!("`{}`", flattened)
     }
 }
 
@@ -272,36 +385,61 @@ fn command_entry(
     let name = name?;
     let name_lower = name.to_lowercase();
 
-    let mut args = arg_list
+    let args = arg_list
         .as_ref()
         .map(|list| comparable_args(list, &name_lower, rules))
         .unwrap_or_default();
 
     // Block bookkeeping mirrors the formatter's: an opener's arguments are what
-    // a forced closer is built from.
-    if is_block_opener(&name_lower) {
-        openers.push(args.clone());
-    } else if let Some(governed) = closer_kind(&name_lower) {
-        let opener = match governed {
-            Governed::Closer => openers.pop(),
-            Governed::MidBlock => openers.last().cloned(),
-        };
-        // An unmatched closer keeps its own arguments, because the formatter
-        // has no opener to rebuild it from and leaves it alone too.
-        if let Some(opener) = opener {
-            match (rules.config.closing_style, rules.side) {
-                (ClosingStyle::Preserve, _) | (_, Side::Output) => {}
-                (ClosingStyle::Remove, Side::Input) => args.clear(),
-                (ClosingStyle::Force, Side::Input) => args = opener,
-            }
+    // a forced closer is built from. Comments are left out of them because the
+    // formatter's own `collect_logical_args` drops comment tokens, so a closer
+    // rebuilt from `if(A # why)` carries only `A`.
+    let opener_args = if is_block_opener(&name_lower) {
+        openers.push(
+            arg_list
+                .as_ref()
+                .map(|list| logical_values(list, rules.config.comment_style))
+                .unwrap_or_default(),
+        );
+        None
+    } else {
+        match closer_kind(&name_lower) {
+            // An unmatched closer has no opener to be rebuilt from, and the
+            // formatter leaves those alone too
+            Some(Governed::Closer) => openers.pop(),
+            Some(Governed::MidBlock) => openers.last().cloned(),
+            None => None,
         }
-    }
+    };
+
+    let closer_alternative = if rules.side == Side::Input {
+        opener_args.and_then(|opener| match rules.config.closing_style {
+            ClosingStyle::Preserve => None,
+            ClosingStyle::Remove => Some(Vec::new()),
+            ClosingStyle::Force => Some(opener),
+        })
+    } else {
+        None
+    };
 
     Some(Entry::Command {
         name: if rules.fold_case { name_lower } else { name },
         shape,
         args,
+        closer_alternative,
+        offset: usize::from(node.text_range().start()),
     })
+}
+
+/// The argument list's values with comments left out, the way the formatter
+/// collects an opener's arguments to rebuild a closer from.
+fn logical_values(arg_list: &ArgumentList, comment_style: CommentStyle) -> Vec<String> {
+    let mut all = Vec::new();
+    collect_args(arg_list.syntax(), comment_style, &mut all);
+    let mut comments = Vec::new();
+    collect_comments(arg_list.syntax(), comment_style, &mut comments);
+    all.retain(|arg| !comments.contains(arg));
+    all
 }
 
 /// The arguments of one command, with the runs a grammar marks as unordered
@@ -321,9 +459,12 @@ fn comparable_args(arg_list: &ArgumentList, name_lower: &str, rules: &Rules) -> 
 
 /// Walk one argument list, rendering a nested `( … )` group as a single atom.
 ///
-/// Flattening a group would let the multiset comparison move an argument across
-/// its parentheses — `(a.cpp b.cpp) c.cpp` and `(a.cpp c.cpp) b.cpp` hold the
-/// same tokens — which is exactly the reordering a group exists to prevent.
+/// This path compares arguments in order, so the atom is not what stops a
+/// multiset reading moving an argument across the parentheses — the reordering
+/// path never gets here, and renders groups through the section parser instead.
+/// Keeping a group whole still matters: it is one logical argument, and
+/// splitting it would make the two sides' argument lists differ in length for a
+/// file nothing changed.
 fn collect_args(node: &crate::SyntaxNode, comment_style: CommentStyle, out: &mut Vec<String>) {
     for child in node.children_with_tokens() {
         match child {
@@ -333,9 +474,12 @@ fn collect_args(node: &crate::SyntaxNode, comment_style: CommentStyle, out: &mut
                 }
             }
             NodeOrToken::Node(nested) => {
+                // The nested list owns its own parens, so joining its tokens is
+                // already an unambiguous atom — wrapping it again rendered
+                // `(A OR B)` as `((A OR B))` in the warning.
                 let mut inner = Vec::new();
                 collect_args(&nested, comment_style, &mut inner);
-                out.push(format!("({})", inner.join(" ")));
+                out.push(inner.join(" "));
             }
         }
     }
@@ -510,19 +654,21 @@ pub(crate) fn check(
     config: &FormatConfig,
     grammars: &UserGrammars,
 ) -> Option<Difference> {
-    // The CRLF pass runs after formatting as a blanket replacement, so it
-    // rewrites newlines inside a bracket argument or bracket comment as well as
-    // between lines. Comparing on \n accepts that; it would otherwise be a
-    // difference in every token on the line.
-    let input = input.replace("\r\n", "\n");
-    let output = output.replace("\r\n", "\n");
+    // Strip every `\r`, exactly as the formatter does before parsing. Handling
+    // only `\r\n` here meant a lone `\r` reached the lexer for the first time
+    // through this function — and the lexer loops on one, so `set(A b)\rset(C
+    // d)` allocated until the process was killed.
+    //
+    // It also accepts the CRLF pass, which runs after formatting as a blanket
+    // replacement and so rewrites newlines inside a bracket argument or bracket
+    // comment as well as between lines.
+    let input = input.replace('\r', "");
+    let output = output.replace('\r', "");
 
-    Content::read(&input, config, grammars, Side::Input).diff(&Content::read(
-        &output,
-        config,
-        grammars,
-        Side::Output,
-    ))
+    Content::read(&input, config, grammars, Side::Input).diff(
+        &Content::read(&output, config, grammars, Side::Output),
+        &input,
+    )
 }
 
 #[cfg(test)]
@@ -643,8 +789,15 @@ mod tests {
     #[test]
     fn test_a_group_holds_its_contents_under_reordering() {
         // `(a.cpp b.cpp) c.cpp` and `(a.cpp c.cpp) b.cpp` hold the same tokens,
-        // so flattening the group let the multiset comparison move an argument
-        // across parentheses — the reordering a group exists to prevent.
+        // so a comparison that flattened the group would let the multiset
+        // reading move an argument across parentheses — the reordering a group
+        // exists to prevent.
+        //
+        // What holds it together here is that the section parser renders a group
+        // as one argument (`render_nested_group`), not the barrier split: this
+        // case passes with either of those reverted individually. The barrier
+        // split earns its place by keeping the runs *around* a group sorting
+        // independently, which is what the formatter does.
         let config = FormatConfig {
             sort_sources: SortSources::Alphabetical,
             ..Default::default()
@@ -723,12 +876,109 @@ mod tests {
         assert!(!accepts("set(A b)\n", "unset(A b)\n", &builtin_only));
     }
 
+    /// The property that would have caught four separate false positives at
+    /// once: comparing a text against itself can never report a difference.
+    ///
+    /// Every one of them came from normalising the input to what a setting
+    /// *would* emit, in a place where the formatter does not apply it — inside a
+    /// `# cmake-fmt: off` region, on a line `--line-ranges` did not select, on a
+    /// command the formatter's block lists do not carry, and where the opener
+    /// held a comment the formatter drops. Each refused a file the formatter had
+    /// written correctly.
+    #[test]
+    fn test_comparing_a_text_against_itself_never_fires() {
+        let sources = [
+            // a closer with arguments, which closing_style has opinions about
+            "if(A)\n\tmessage(hi)\nendif(A)\n",
+            "foreach(f a b)\nendforeach(f)\n",
+            "while(A)\nendwhile(A)\n",
+            "function(f a)\nendfunction(f)\n",
+            "macro(m)\nendmacro(m)\n",
+            "block(PROPAGATE x)\nset(x 1)\nendblock()\n",
+            "block()\nendblock(foo)\n",
+            "if(A)\nelse(A)\nendif(A)\n",
+            "if(A)\nelseif(B)\nendif(A)\n",
+            // an opener holding a comment, which the formatter drops from a
+            // rebuilt closer
+            "if(A # why\n)\nmessage(hi)\nendif()\n",
+            "foreach(f a b # trailing\n)\nendforeach()\n",
+            // an unmatched closer
+            "endif(A)\n",
+            "else(A)\n",
+            // suppressed regions, which are emitted verbatim
+            "# cmake-fmt: off\nif(A)\nendif(A)\n# cmake-fmt: on\n",
+            "set(A b) # cmake-fmt: no-sort\n",
+            // ordinary content
+            "set(SOURCES z.cpp a.cpp)\n",
+            "target_sources(t PRIVATE a.cpp a.h)\n",
+            "install(FILES a.h DESTINATION inc)\n",
+            "# a comment\nset(A b) # trailing\n",
+            "set(V [[bracket\nargument]])\n",
+            "f((a b) c)\n",
+            "",
+            "\n\n",
+        ];
+
+        for source in sources {
+            for closing_style in [
+                ClosingStyle::Preserve,
+                ClosingStyle::Remove,
+                ClosingStyle::Force,
+            ] {
+                for (sort_sources, source_grouping) in [
+                    (SortSources::None, SourceGrouping::None),
+                    (SortSources::Alphabetical, SourceGrouping::HeadersFirst),
+                ] {
+                    let config = FormatConfig {
+                        closing_style,
+                        sort_sources,
+                        source_grouping,
+                        ..Default::default()
+                    };
+                    assert!(
+                        accepts(source, source, &config),
+                        "comparing {:?} against itself fired under {:?}/{:?}/{:?}",
+                        source,
+                        closing_style,
+                        sort_sources,
+                        source_grouping
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_a_lone_carriage_return_is_not_a_difference() {
+        // The formatter strips every `\r` before parsing; handling only `\r\n`
+        // here meant a lone `\r` reached the lexer for the first time through
+        // this function, and the lexer loops on one — `set(A b)\rset(C d)`
+        // allocated until the process was killed.
+        let config = FormatConfig::default();
+        assert!(accepts(
+            "set(A b)\rset(C d)\r",
+            "set(A b)\nset(C d)\n",
+            &config
+        ));
+        assert!(accepts("set(A b)\r\n", "set(A b)\n", &config));
+    }
+
     #[test]
     fn test_crlf_is_not_a_difference() {
+        // Between lines this is not what the replacement is for — newline tokens
+        // carry no content and are dropped anyway, so deleting the replacement
+        // left this half green. What it is for is a newline *inside* a bracket
+        // argument, where the CRLF pass rewrites part of an argument's value.
         let config = FormatConfig {
             line_ending: LineEnding::CrLf,
             ..Default::default()
         };
         assert!(accepts("set(A b)\n", "set(A b)\r\n", &config));
+        assert!(accepts(
+            "set(V [[a\nb]])\n",
+            "set(V [[a\r\nb]])\r\n",
+            &config
+        ));
+        assert!(accepts("#[[a\nb]]\n", "#[[a\r\nb]]\r\n", &config));
     }
 }

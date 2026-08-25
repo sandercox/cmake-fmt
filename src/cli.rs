@@ -495,6 +495,7 @@ pub fn run() -> Result<ExitCode> {
 
         // Run interactive mode
         match cmake_fmt::interactive::run_interactive(&cli.files[0], &config) {
+            Ok(result) if result.content_changed => return Ok(ExitCode::from(1)),
             Ok(_result) => return Ok(ExitCode::SUCCESS),
             Err(e) => {
                 eprintln!("error: {:#}", e);

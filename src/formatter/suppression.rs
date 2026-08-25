@@ -25,7 +25,9 @@ pub enum FormatWarning {
     /// An "off" directive appeared while already in a suppressed region
     NestedOff { line: usize },
     /// The formatted output said something different from the input, so the file
-    /// was left alone. Always a bug in the formatter, never in the input.
+    /// was left alone. Either the formatter has a bug, or the input is not valid
+    /// CMake and the formatter cannot represent it — both files this fires on in
+    /// practice are the second kind, so the message must not blame only itself.
     ContentChanged { detail: String },
 }
 
@@ -42,7 +44,7 @@ impl fmt::Display for FormatWarning {
             FormatWarning::ContentChanged { detail } => {
                 write!(
                     f,
-                    "warning: formatting would have changed this file's contents ({}), so it was left unchanged. This is a bug in cmake-fmt",
+                    "warning: formatting would have changed this file's contents ({}), so it was left unchanged — the input is either not valid CMake, or has hit a bug in cmake-fmt",
                     detail
                 )
             }
