@@ -2434,13 +2434,17 @@ fn assert_wrap_boundary(config: &FormatConfig, build: fn(&str) -> String, nestin
                 );
             }
         }
-        // A `)` alone on a line must follow arguments that are themselves split
-        assert!(
-            result.lines().filter(|l| l.trim() == ")").count() == 0
-                || result.lines().count() > nesting + 3,
-            "the closing paren was stranded under a joined condition:\n{}",
-            result
-        );
+        // A `)` alone on a line must follow arguments that are themselves split,
+        // so the condition has to occupy at least two lines before it. The old
+        // form of this compared the total line count against `nesting + 3`,
+        // which the broken path always exceeds, so it could never fail.
+        if let Some(closer) = result.lines().position(|l| l.trim() == ")") {
+            assert!(
+                closer >= nesting + 2,
+                "the closing paren was stranded under a joined condition:\n{}",
+                result
+            );
+        }
         return;
     }
     panic!("the condition never broke");
@@ -2550,4 +2554,151 @@ fn test_a_clause_that_exactly_fills_the_line_is_not_broken() {
         result
     );
     assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+/// Grow a two-clause condition to the wrapping boundary and assert that when it
+/// breaks, the clause layout — not the generic one-argument-per-line layout —
+/// is what produced the break.
+///
+/// This is the assertion `assert_wrap_boundary` cannot make. When the width
+/// model under-counts by a column the layout *declines* at the boundary, the
+/// generic path breaks the line correctly, and the flat width still comes out
+/// equal to the limit — so the boundary assertion is satisfied by the wrong
+/// layout. Three mutations of the arithmetic survived for exactly that reason.
+fn assert_clause_layout_survives_the_boundary(config: &FormatConfig) {
+    let limit = config.max_line_length;
+    let mut broke = false;
+
+    for n in 1..120 {
+        let input = format!(
+            "if(FIRST AND SECOND STREQUAL \"{}\")\n\tmessage(x)\nendif()\n",
+            "A".repeat(n)
+        );
+        let result = format_text(&input, config);
+        let first = result.lines().next().expect("a first line");
+        if first.trim_end().ends_with(')') {
+            assert!(
+                first.chars().count() <= limit,
+                "a flat condition overflowed at n={}:\n{}",
+                n,
+                result
+            );
+            continue;
+        }
+
+        broke = true;
+        // The whole second clause belongs on one line. The generic layout puts
+        // `AND`, `SECOND` and `STREQUAL` on three lines of their own.
+        assert!(
+            result
+                .lines()
+                .any(|l| l.trim().starts_with("AND SECOND STREQUAL")),
+            "the clause layout gave way to the generic one at n={} (limit {}):\n{}",
+            n,
+            limit,
+            result
+        );
+        assert_eq!(result, format_text(&result, config), "not idempotent");
+        if n > 4 {
+            break;
+        }
+    }
+
+    assert!(broke, "the condition never wrapped at limit {}", limit);
+}
+
+#[test]
+fn test_the_clause_layout_survives_every_column_term() {
+    for limit in [40, 60, 80] {
+        assert_clause_layout_survives_the_boundary(&FormatConfig {
+            max_line_length: limit,
+            ..Default::default()
+        });
+        // Pins the paren-space term in both the fit decision and the fill: with
+        // it dropped, the layout declines one column early and the generic
+        // one-argument-per-line shape appears instead
+        assert_clause_layout_survives_the_boundary(&FormatConfig {
+            max_line_length: limit,
+            space_between_command_parens: true,
+            ..Default::default()
+        });
+        // Pins the space-before-paren term, which a corpus sweep cannot catch:
+        // it is a one-column threshold, and no corpus file sits on it
+        assert_clause_layout_survives_the_boundary(&FormatConfig {
+            max_line_length: limit,
+            control_flow_space_before_paren: true,
+            ..Default::default()
+        });
+        assert_clause_layout_survives_the_boundary(&FormatConfig {
+            max_line_length: limit,
+            space_between_command_parens: true,
+            control_flow_space_before_paren: true,
+            use_tabs: false,
+            indent_width: 2,
+            ..Default::default()
+        });
+    }
+}
+
+#[test]
+fn test_a_multi_line_argument_is_measured_by_both_its_ends() {
+    // A multi-line quoted or bracket argument consumes the current line only as
+    // far as its first newline, and leaves the column at the width of whatever
+    // follows its last. Measuring it once by its last line answered both
+    // questions with the same number, so an argument was joined onto a line
+    // that then overflowed — at the default 80 columns.
+    let config = FormatConfig::default();
+    let long = "y".repeat(78);
+    let result = format_text(
+        &format!("if(A \"{}\nz\")\n\tmessage(x)\nendif()\n", long),
+        &config,
+    );
+
+    for line in result.lines() {
+        if line.split_whitespace().count() > 1 {
+            assert!(
+                line.chars().count() <= 80,
+                "line overflows: {} columns\n{}",
+                line.chars().count(),
+                result
+            );
+        }
+    }
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // And a `)` on its own line still has to follow arguments that are
+    // themselves split. This is the shape that made `broke` stop consulting
+    // `must_wrap`: the flat width counts the whole argument while the fill
+    // counts only its last line, so the two disagree about whether this wrapped.
+    let narrow = FormatConfig {
+        max_line_length: 20,
+        ..Default::default()
+    };
+    let result = format_text("if(A \"xxxxxxxxxxxxxxxxxx\nyy\")\nendif()\n", &narrow);
+    if let Some(closer) = result.lines().position(|l| l.trim() == ")") {
+        assert!(
+            closer >= 2,
+            "the closing paren was stranded under a joined condition:\n{}",
+            result
+        );
+    }
+    assert_eq!(result, format_text(&result, &narrow), "not idempotent");
+
+    // After a multi-line argument the column is the width of its last line, not
+    // that line added to what came before it. Getting that wrong made the
+    // formatter think the line was full and break the next argument away.
+    let at24 = FormatConfig {
+        max_line_length: 24,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(A \"xxxxxxxxxxxxxxxx\nyy\" BBBB)\n\tmessage(x)\nendif()\n",
+        &at24,
+    );
+    assert!(
+        result.contains("yy\" BBBB)"),
+        "an argument was broken away after a multi-line one:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &at24), "not idempotent");
 }

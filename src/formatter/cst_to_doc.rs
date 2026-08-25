@@ -733,12 +733,15 @@ fn format_command(
                     if closer_ctx.opener_args.is_empty() {
                         RcDoc::nil()
                     } else {
-                        // A closer echoing a condition gets the same clause
-                        // layout as its opener; laying the two out differently
-                        // is the thing including endif/endwhile is for. There is
-                        // no argument list to read signals from, so the
-                        // reconstructed condition is treated as written on one
-                        // line: it wraps only if it doesn't fit.
+                        // A closer echoing a condition is laid out by the same
+                        // rules as its opener, measured at its own width — which
+                        // is not the same as getting the same layout: `endif` is
+                        // three columns wider than `if`, so there is a band of
+                        // widths where the opener fits on one line and the
+                        // closer does not. There is also no argument list to
+                        // read signals from, so the reconstructed condition is
+                        // treated as written on one line: it wraps only if it
+                        // doesn't fit.
                         let signals = ArgumentFormatSignals {
                             force_multiline: false,
                             has_comments: false,
@@ -959,9 +962,11 @@ fn is_condition_command(name_lower: &str) -> bool {
 /// Operators that join the clauses of a condition.
 ///
 /// Recognised wherever they appear in the argument list — there is no
-/// paren-depth tracking here. Nothing needs it: a parenthesised sub-expression
-/// reaches this layout as a single argument, so an `AND` inside `(B OR C)` is
-/// part of that argument's text and is never tested.
+/// paren-depth tracking here, and on this branch nothing reaches it that would
+/// need any: a parenthesised sub-expression is dropped before this layout sees
+/// it, which is issue #5 and is fixed on a separate branch. Once that lands a
+/// group arrives as one argument, so an `AND` inside `(B OR C)` is part of that
+/// argument's text and still never tested.
 ///
 /// Case-sensitive, because CMake itself is: `if(A and B)` is not a lowercase
 /// spelling of the operator, it is an error ("Unknown arguments specified").
@@ -1076,15 +1081,23 @@ fn format_condition_args(
         let mut current = String::new();
 
         for (word_idx, word) in clause.iter().enumerate() {
-            // After an argument containing newlines the column is the width of
-            // whatever follows its last newline, not of the whole argument
-            let width = display_width(word.rsplit('\n').next().unwrap_or(word));
+            // An argument may itself span lines — a multi-line quoted or bracket
+            // argument. It then consumes the current line only as far as its
+            // first newline, and leaves the column at the width of whatever
+            // follows its last. Measuring it once, by its last line, answered
+            // both questions with the same number: two arguments were joined
+            // onto a line that then overflowed, at the default 80 columns.
+            let head = display_width(word.split('\n').next().unwrap_or(word));
+            let spans_lines = word.contains('\n');
+            let tail = if spans_lines {
+                display_width(word.rsplit('\n').next().unwrap_or(word))
+            } else {
+                head
+            };
             let is_final = clause_idx == last_clause && word_idx + 1 == clause.len();
             let reserved = if is_final { closing_width } else { 0 };
-            if current.is_empty() {
-                current.push_str(word);
-                used += width;
-            } else if limit > 0 && used + 1 + width + reserved > limit {
+
+            if !current.is_empty() && limit > 0 && used + 1 + head + reserved > limit {
                 // Fill up to the limit, then continue the clause one level deeper
                 let line = std::mem::take(&mut current);
                 if clause_idx == 0 && first_line.is_none() {
@@ -1093,13 +1106,16 @@ fn format_condition_args(
                     lines.push(format!("{}{}", indent, line));
                 }
                 indent = cont_indent.clone();
-                used = display_width(&cont_indent) + width;
-                current.push_str(word);
-            } else {
+                used = display_width(&cont_indent);
+            } else if !current.is_empty() {
                 current.push(' ');
-                current.push_str(word);
-                used += 1 + width;
+                used += 1;
             }
+            current.push_str(word);
+
+            // One rule for where the column ends up, so the three places a word
+            // can be placed cannot disagree about it
+            used = if spans_lines { tail } else { used + head };
         }
 
         if clause_idx == 0 && first_line.is_none() {
@@ -1116,10 +1132,11 @@ fn format_condition_args(
     let mut rendered = first_line.expect("clause 0 always yields a line");
     // Captured before the loop consumes `lines`. `must_wrap` says the condition
     // did not fit flat, which is not the same question as whether it *was*
-    // broken — and it is the second that decides where the `)` goes. With the
-    // closing width reserved above the two now agree on every input I can
-    // construct, but asking the direct question is what stops a stranded `)`
-    // from coming back if they ever disagree again.
+    // broken — and it is the second that decides where the `)` goes. The two do
+    // disagree: `flat_width` counts a multi-line argument's whole text while the
+    // fill counts only the line it occupies, so `if(A "xxx…\nyy")` at a narrow
+    // limit is "too wide" and yet fills onto one line. Asking `must_wrap` there
+    // put a `)` under a joined condition.
     let broke = !lines.is_empty();
     for line in lines {
         rendered.push('\n');
@@ -1133,10 +1150,10 @@ fn format_condition_args(
     // generic path would see force_multiline and explode it again.
     //
     // The flat case is emitted directly rather than as a `flat_alt` in a group:
-    // inside a group `pretty` re-decides using the rest of the line, including a
-    // trailing comment this layout never measured, and would strand the `)`
-    // again — `if(A STREQUAL "BBBB") # ccc` at a 30-column limit did exactly
-    // that.
+    // inside a group `pretty` re-decides using the rest of the line, and the
+    // pre-rendered text handed to it holds newlines whenever an argument spans
+    // lines, which its column tracking gets wrong. `if(A "xxx…\nyy")` at a
+    // narrow limit had its `)` stranded that way.
     let closing = if broke {
         closing_paren_position(config, ctx.indent_level, true)
     } else if config.space_between_command_parens {
