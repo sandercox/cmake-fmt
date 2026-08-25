@@ -24,8 +24,9 @@
 //! over the argument runs a grammar marks as unordered. Anything this module cannot model is compared verbatim, so an
 //! unrecognised shape reads as a difference rather than as agreement.
 //!
-//! Known holes, both in the direction of missing a change rather than inventing
-//! one: neither the reordering canonicalisation nor the closer exemption knows
+//! Known holes, all in the direction of missing a change rather than inventing
+//! one: a comment's position within a command is not compared, because the
+//! formatter re-places one legitimately; and neither the reordering canonicalisation nor the closer exemption knows
 //! about suppression, so inside a `# cmake-fmt: off` region — or after
 //! `no-sort` or `skip` — this would accept a permutation or a rewritten closer
 //! that the formatter must never produce there. Closing them means giving this
@@ -570,34 +571,44 @@ fn comparable_args(arg_list: &ArgumentList, name_lower: &str, rules: &Rules) -> 
         return canonical;
     }
 
-    // Nothing here may move, so order is part of the content.
+    // Argument order is part of the content here. A comment's *position* within
+    // the command is not: the formatter re-places one legitimately — a trailing
+    // comment on a property key moves past the value it precedes, and a comment
+    // before a keyword is re-attached inside its section — so comparing where it
+    // sits refused files the formatter had written correctly. Its text and its
+    // count are still compared, and a comment moving between commands still
+    // shows up as one command losing it and another gaining it.
     let mut args = Vec::new();
-    collect_args(arg_list.syntax(), rules.comment_style, &mut args);
+    collect_args_without_comments(arg_list.syntax(), rules.comment_style, &mut args);
+    let mut comments = Vec::new();
+    collect_comments(arg_list.syntax(), rules.comment_style, &mut comments);
+    comments.sort();
+    args.extend(comments);
     args
 }
 
-/// Walk one argument list, rendering a nested `( … )` group as a single atom.
-///
-/// This path compares arguments in order, so the atom is not what stops a
-/// multiset reading moving an argument across the parentheses — the reordering
-/// path never gets here, and renders groups through the section parser instead.
-/// Keeping a group whole still matters: it is one logical argument, and
-/// splitting it would make the two sides' argument lists differ in length for a
-/// file nothing changed.
-fn collect_args(node: &crate::SyntaxNode, comment_style: CommentStyle, out: &mut Vec<String>) {
+/// The same walk as [`collect_args`], with comment tokens left out.
+fn collect_args_without_comments(
+    node: &crate::SyntaxNode,
+    comment_style: CommentStyle,
+    out: &mut Vec<String>,
+) {
     for child in node.children_with_tokens() {
         match child {
             NodeOrToken::Token(token) => {
+                if matches!(
+                    token.kind(),
+                    SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT
+                ) {
+                    continue;
+                }
                 if let Some(text) = significant(&token, comment_style) {
                     out.push(text);
                 }
             }
             NodeOrToken::Node(nested) => {
-                // The nested list owns its own parens, so joining its tokens is
-                // already an unambiguous atom — wrapping it again rendered
-                // `(A OR B)` as `((A OR B))` in the warning.
                 let mut inner = Vec::new();
-                collect_args(&nested, comment_style, &mut inner);
+                collect_args_without_comments(&nested, comment_style, &mut inner);
                 out.push(inner.join(" "));
             }
         }
@@ -1054,6 +1065,28 @@ mod tests {
             "set(SOURCES (a.cpp c.cpp) b.cpp)\n",
             &config
         ));
+    }
+
+    #[test]
+    fn test_a_comment_may_move_within_its_command_but_not_out_of_it() {
+        // The formatter re-places a comment inside a command — a property key's
+        // trailing comment moves past the value it precedes — so comparing where
+        // it sits refused files it had written correctly. Its text and count are
+        // still compared, and a comment leaving its command still shows up.
+        let config = FormatConfig::default();
+        assert!(accepts(
+            "set_target_properties(t PROPERTIES K # note\nv)\n",
+            "set_target_properties(t PROPERTIES K v # note\n)\n",
+            &config
+        ));
+        // Leaving the command is a difference
+        assert!(!accepts(
+            "set(A b # note\n)\nset(C d)\n",
+            "set(A b)\nset(C d # note\n)\n",
+            &config
+        ));
+        // And losing it outright
+        assert!(!accepts("set(A b # note\n)\n", "set(A b)\n", &config));
     }
 
     #[test]
