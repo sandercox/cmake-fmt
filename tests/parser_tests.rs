@@ -357,16 +357,28 @@ fn test_unterminated_nested_group_roundtrips() {
             "roundtrip failed for {:?}",
             input
         );
-        let nested = cst
+        // The base parser recursed too, so counting nested nodes proves
+        // nothing. What changed is that a nested list *owns its parens*, which
+        // is what lets the formatter render the group verbatim instead of
+        // dropping it.
+        let nested: Vec<String> = cst
             .root
             .descendants()
             .filter(|n| n.kind() == SyntaxKind::ARGUMENT_LIST)
-            .count();
-        assert!(
-            nested >= 2,
-            "no nested group node for {:?}: found {} argument lists",
-            input,
-            nested
-        );
+            .filter(|n| {
+                n.parent()
+                    .is_some_and(|p| p.kind() == SyntaxKind::ARGUMENT_LIST)
+            })
+            .map(|n| n.text().to_string())
+            .collect();
+        assert!(!nested.is_empty(), "no nested group node for {:?}", input);
+        for text in &nested {
+            assert!(
+                text.starts_with('('),
+                "a nested group must own its opening paren, got {:?} for {:?}",
+                text,
+                input
+            );
+        }
     }
 }

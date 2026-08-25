@@ -811,6 +811,12 @@ pub fn parse_keyword_sections_with_grammar(
                     current_section.args.push(text);
                 }
                 saw_separator = false;
+            } else {
+                // Any other node — only an ERROR region can appear here — is a
+                // separator as far as adjacency goes. Both other copies of this
+                // walk do the same; leaving `saw_separator` stale would merge
+                // the next argument onto the previous one.
+                saw_separator = true;
             }
         }
     }

@@ -926,6 +926,13 @@ fn format_argument_list(
     } else {
         collect_logical_args(arg_list)
     };
+    // Known hole: with more than 200 arguments the guard below falls through to
+    // the walk, and this vector — groups already rendered — is discarded, so
+    // each group is rendered twice after all. Deciding earlier would mean
+    // counting logical arguments without merging adjacent ones, i.e. a second
+    // copy of the merge rule, which is the duplication that caused issue #5.
+    // A 200+ argument command containing a group is rare and the cost is 2x, not
+    // quadratic, so it stays as a known cost.
 
     // If no multiline signals, use auto-layout (flat_alt + group)
     // ARGL-03: For builtin commands, first arg stays on same line when broken
