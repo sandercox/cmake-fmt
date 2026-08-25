@@ -2058,6 +2058,41 @@ fn test_a_forced_closer_normalizes_the_openers_group() {
         result
     );
     assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // The normalization has to recurse: with only the top level normalized, a
+    // comment two groups deep was still written into the closer a second time
+    // while the depth-1 case above kept passing.
+    let result = format_text(
+        "if(W AND (X AND (Y # inner\nOR Z)))\n\tmessage(hi)\nendif()\n",
+        &config,
+    );
+    assert_eq!(
+        result.matches("# inner").count(),
+        1,
+        "a comment nested two groups deep was written twice:\n{}",
+        result
+    );
+    assert!(
+        result.contains("endif(W AND (X AND (Y OR Z)))"),
+        "the closer should carry the normalized nested condition:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // A file can turn `force` on for itself, and the closer reads that
+    // effective setting — so the opener has to be collected from it too.
+    // Gating on the file-level config deleted the closer's arguments.
+    let plain = default_config();
+    let result = format_text(
+        "# cmake-fmt: closing_style=force\nif(A AND B)\n\tmessage(hi)\nendif(A AND B)\n",
+        &plain,
+    );
+    assert!(
+        result.contains("endif(A AND B)"),
+        "an in-file directive lost the closer's arguments:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &plain), "not idempotent");
 }
 
 #[test]
@@ -2081,11 +2116,19 @@ fn test_a_group_glued_to_the_token_before_it_is_still_a_barrier() {
         );
     }
 
-    // A quoted value that merely contains a paren is a value, not a group
+    // A quoted value that merely contains a paren is a value, not a group.
+    // `"${GEN}"` does not test this — it has no paren, and the
+    // variable-reference test catches it either way. A quoted filename with a
+    // paren in it does.
     let sorting = FormatConfig {
         sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
         ..Default::default()
     };
+    assert_eq!(
+        format_text("set(SRCS z.cpp \"foo(1).cpp\" a.cpp)\n", &sorting),
+        "set(SRCS \"foo(1).cpp\" a.cpp z.cpp)\n",
+        "a quoted value containing a paren is a value, not a barrier"
+    );
     assert_eq!(
         format_text("set(SRCS \"${GEN}\" z.cpp a.cpp)\n", &sorting),
         "set(SRCS \"${GEN}\" a.cpp z.cpp)\n",

@@ -496,8 +496,17 @@ fn format_file(
                                 //
                                 // Only `force` reads these, and rendering a group
                                 // is not free, so nothing else pays for them.
+                                //
+                                // `config`, not `ctx.config`: a
+                                // `# cmake-fmt: closing_style=force` directive
+                                // mutates the effective config, which is what
+                                // the closer reads. Gating on the file-level one
+                                // made the opener collect nothing while the
+                                // closer took the `force` arm and emitted
+                                // nothing — deleting the arguments the author
+                                // wrote, with exit 0.
                                 let opener_args: Vec<String> =
-                                    if matches!(ctx.config.closing_style, ClosingStyle::Force) {
+                                    if matches!(config.closing_style, ClosingStyle::Force) {
                                         cmd.argument_list()
                                             .map(|al| collect_condition_args(&al))
                                             .unwrap_or_default()

@@ -820,7 +820,6 @@ pub fn parse_keyword_sections_with_grammar(
                 // stale `saw_separator` would merge the next argument onto the
                 // previous one if the lexer ever changed.
                 saw_separator = true;
-                consecutive_newlines = 0;
             }
         }
     }
