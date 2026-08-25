@@ -475,9 +475,16 @@ target_compile_definitions(mylib
 fn test_idempotency_unbalanced_parens_converges() {
     // Input CMake itself rejects. The formatter supplies one missing closer per
     // pass, so it takes as many passes as there are unclosed parens — not a
-    // fixed two, as this test first claimed. The deficit strictly decreases and
-    // never grows, so it is bounded; `--check` on the formatter's own output
-    // can disagree until it settles.
+    // fixed two, as this test first claimed. `--check` on the formatter's own
+    // output can disagree until it settles.
+    //
+    // The deficit shrinks by one per pass only because the closer lands where
+    // the parser can see it next time. That is not true in general: where the
+    // group's text ends inside an unterminated construct — a bracket comment,
+    // a quote, a bracket argument — the closer is swallowed by it and the next
+    // pass appends another, so the output grows without bound. Those shapes are
+    // covered by the content guard, which refuses to write any of this to disk;
+    // the lexer flag that would fix the cause is a follow-up.
     //
     // Pinned rather than fixed: closing them all at once would invent more
     // syntax into a file that is already invalid.
