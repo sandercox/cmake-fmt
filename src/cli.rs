@@ -196,6 +196,8 @@ fn print_grammar_help() {
     println!("        SOURCES: MultiValue");
     println!("        COMMAND: BinPack");
     println!("        PROPERTIES: PairValue");
+    println!("      sortable_keywords: [SOURCES]");
+    println!("      sortable_positional: false");
     println!();
     println!("Keyword types:");
     println!();
@@ -221,6 +223,15 @@ fn print_grammar_help() {
         "  {:<15} {}",
         "PairValue", "Consumes alternating key/value pairs (e.g., PROPERTIES CXX_STANDARD 17)"
     );
+    println!();
+    println!("Reordering:");
+    println!("  sort_sources and source_grouping only reorder keywords listed in");
+    println!("  'sortable_keywords', plus the keyword-less arguments when");
+    println!("  'sortable_positional: true'. Both default to leaving order alone,");
+    println!("  since argument order usually carries meaning. BinPack and PairValue");
+    println!("  keywords are never reordered, and a positional run additionally");
+    println!("  requires every value to look like a source file, so flag and");
+    println!("  library lists are left alone.");
     println!();
     println!("Multi-mode commands:");
     println!("  For commands like install() that have different keyword sets per sub-command,");

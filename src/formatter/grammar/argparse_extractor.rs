@@ -2,6 +2,17 @@ use super::{CommandGrammar, KeywordType};
 use crate::cst::CommandInvocation;
 use std::collections::{HashMap, HashSet};
 
+/// Keyword names that conventionally hold an unordered list of files.
+///
+/// Used only for auto-detected wrapper commands, where the grammar carries no
+/// semantics: `cmake_parse_arguments` reports a keyword's arity, not its
+/// meaning, so an auto-detected `COMMAND` looks like any other multi-value
+/// list. A project can mark any other keyword explicitly through
+/// `command_grammars` in `.cmake-fmt`.
+pub(super) fn is_conventional_file_list(keyword: &str) -> bool {
+    matches!(keyword, "SOURCES" | "SRCS" | "FILES")
+}
+
 /// Extract command grammar from function/macro body by analyzing cmake_parse_arguments calls
 ///
 /// Analyzes the body of a function/macro definition to find cmake_parse_arguments() calls
@@ -86,11 +97,19 @@ pub fn extract_command_grammars_from_body(
                 }
 
                 if !keywords.is_empty() {
+                    let sortable_keywords = keywords
+                        .keys()
+                        .filter(|kw| is_conventional_file_list(kw))
+                        .cloned()
+                        .collect();
+
                     return Some(CommandGrammar {
                         keywords,
                         force_args_on_new_line: false,
                         sub_keywords: HashSet::new(),
                         collection_keywords: HashSet::new(),
+                        sortable_keywords,
+                        sortable_positional: false,
                     });
                 }
             }

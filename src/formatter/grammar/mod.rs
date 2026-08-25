@@ -75,6 +75,20 @@ pub struct CommandGrammar {
     /// other MultiValue keywords (like TARGETS) will not.
     /// BinPack keywords always consume sub_keywords regardless.
     pub collection_keywords: HashSet<String>,
+    /// Keywords whose values are an unordered list, so `sort_sources` and
+    /// `source_grouping` may reorder them (e.g. PRIVATE for target_sources).
+    ///
+    /// Reordering is opt-in: a keyword absent from this set is never touched,
+    /// because argument order is meaningful far more often than not.
+    pub sortable_keywords: HashSet<String>,
+    /// True when the command's keyword-less arguments are an unordered list,
+    /// as in `set(VAR a.cpp b.cpp)` or `add_library(lib a.cpp b.cpp)`.
+    ///
+    /// The list's identifying name is never part of the sorted run: in a leading
+    /// positional run the first argument is pinned, and in a run opened by a
+    /// leading single-value keyword (`list(APPEND VAR a.cpp b.cpp)`) that
+    /// keyword has already consumed it.
+    pub sortable_positional: bool,
 }
 
 impl CommandGrammar {
@@ -85,6 +99,8 @@ impl CommandGrammar {
             force_args_on_new_line: false,
             sub_keywords: HashSet::new(),
             collection_keywords: HashSet::new(),
+            sortable_keywords: HashSet::new(),
+            sortable_positional: false,
         }
     }
 
@@ -99,12 +115,29 @@ impl CommandGrammar {
             force_args_on_new_line: false,
             sub_keywords: HashSet::new(),
             collection_keywords: HashSet::new(),
+            sortable_keywords: HashSet::new(),
+            sortable_positional: false,
         }
     }
 
     /// Get the type of a keyword (case-sensitive lookup - CMake keywords are case-sensitive)
     pub fn keyword_type(&self, keyword: &str) -> Option<KeywordType> {
         self.keywords.get(keyword).copied()
+    }
+
+    /// Whether a keyword's values may be reordered.
+    ///
+    /// BinPack (command lines) and PairValue (key/value runs) can never be
+    /// sortable whatever the declaration says, so a bad grammar cannot scramble
+    /// a `COMMAND` or a `PROPERTIES` run.
+    pub fn is_sortable_keyword(&self, keyword: &str) -> bool {
+        if matches!(
+            self.keyword_type(keyword),
+            Some(KeywordType::BinPack) | Some(KeywordType::PairValue)
+        ) {
+            return false;
+        }
+        self.sortable_keywords.contains(keyword)
     }
 }
 

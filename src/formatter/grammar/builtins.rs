@@ -30,6 +30,9 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         "PRIVATE" => MultiValue,
         "INTERFACE" => MultiValue,
         "FILE_SET" => SingleValue,
+        "TYPE" => SingleValue,
+        "BASE_DIRS" => MultiValue,
+        "FILES" => MultiValue,
     );
 
     // target_compile_options
@@ -100,6 +103,13 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
     grammar!("add_executable",
         "WIN32" => Flag, "MACOSX_BUNDLE" => Flag,
         "EXCLUDE_FROM_ALL" => Flag, "IMPORTED" => Flag, "ALIAS" => Flag,
+    );
+
+    // source_group
+    grammar!("source_group",
+        "TREE" => SingleValue,
+        "PREFIX" => SingleValue,
+        "FILES" => MultiValue,
     );
 
     // find_package
@@ -948,5 +958,110 @@ pub fn builtin_grammars() -> HashMap<String, Grammar> {
         grammars.insert(cmd.to_string(), Grammar::Simple(g));
     }
 
+    mark_sortable_lists(&mut grammars);
+
     grammars
+}
+
+/// Declare which argument lists `sort_sources` and `source_grouping` may reorder.
+///
+/// This is the complete allowlist: any command or keyword not named here is
+/// never reordered. Argument order carries meaning in most CMake commands —
+/// `COMMAND` holds an argv, `PROPERTIES` holds key/value pairs, `CACHE` holds a
+/// type followed by a docstring, `file(RENAME)` holds source then destination —
+/// so reordering has to be opted into per keyword, not inferred from what the
+/// arguments happen to look like.
+fn mark_sortable_lists(grammars: &mut HashMap<String, Grammar>) {
+    /// Mark a single-mode command.
+    fn mark(
+        grammars: &mut HashMap<String, Grammar>,
+        command: &str,
+        keywords: &[&str],
+        positional: bool,
+    ) {
+        let Some(Grammar::Simple(g)) = grammars.get_mut(command) else {
+            panic!("no single-mode grammar for {command}");
+        };
+        assert!(
+            g.sortable_keywords.is_empty() && !g.sortable_positional,
+            "{command} is marked twice; the second call would discard the first"
+        );
+        g.sortable_keywords = keywords.iter().map(|k| k.to_string()).collect();
+        g.sortable_positional = positional;
+    }
+
+    /// Mark one mode of a multi-mode command.
+    fn mark_mode(
+        grammars: &mut HashMap<String, Grammar>,
+        command: &str,
+        mode: &str,
+        keywords: &[&str],
+        positional: bool,
+    ) {
+        let Some(Grammar::Modes { modes }) = grammars.get_mut(command) else {
+            panic!("no multi-mode grammar for {command}");
+        };
+        let Some(g) = modes.get_mut(mode) else {
+            panic!("no mode {mode} for {command}");
+        };
+        assert!(
+            g.sortable_keywords.is_empty() && !g.sortable_positional,
+            "{command} mode {mode} is marked twice; the second call would discard the first"
+        );
+        g.sortable_keywords = keywords.iter().map(|k| k.to_string()).collect();
+        g.sortable_positional = positional;
+    }
+
+    // set(VAR a.cpp b.cpp) — the value run only. CACHE is deliberately absent:
+    // its values are a positional `<type> "<docstring>"` pair.
+    mark(grammars, "set", &[], true);
+
+    // add_library(lib [STATIC] a.cpp b.cpp) / add_executable(app a.cpp b.cpp).
+    // A type or option flag ends the positional run and collects the sources
+    // itself, so those flags are sortable too. ALIAS and IMPORTED are not:
+    // their trailing argument is a target name, not a source.
+    mark(
+        grammars,
+        "add_library",
+        &[
+            "STATIC",
+            "SHARED",
+            "MODULE",
+            "OBJECT",
+            "INTERFACE",
+            "EXCLUDE_FROM_ALL",
+        ],
+        true,
+    );
+    mark(
+        grammars,
+        "add_executable",
+        &["WIN32", "MACOSX_BUNDLE", "EXCLUDE_FROM_ALL"],
+        true,
+    );
+
+    // target_sources(t PRIVATE a.cpp) and the FILE_SET form's FILES list.
+    // BASE_DIRS is a search-path list, so it stays out.
+    mark(
+        grammars,
+        "target_sources",
+        &["PUBLIC", "PRIVATE", "INTERFACE", "FILES"],
+        false,
+    );
+
+    // source_group(name FILES a.cpp b.cpp) — purely presentational
+    mark(grammars, "source_group", &["FILES"], false);
+
+    // install(FILES ...) / install(PROGRAMS ...). Other install modes stay out;
+    // in particular DIRECTORY's FILES_MATCHING holds PATTERN/glob pairs.
+    mark_mode(grammars, "install", "FILES", &["FILES"], false);
+    mark_mode(grammars, "install", "PROGRAMS", &["PROGRAMS"], false);
+
+    // list(APPEND var a b), PREPEND, REMOVE_ITEM — the trailing element run.
+    // The mode keyword consumes the list variable, so the elements land in a
+    // positional overflow section. Every other list() mode has positional
+    // arguments (indices, out-vars, regex/replacement) and stays out.
+    for mode in ["APPEND", "PREPEND", "REMOVE_ITEM"] {
+        mark_mode(grammars, "list", mode, &[], true);
+    }
 }

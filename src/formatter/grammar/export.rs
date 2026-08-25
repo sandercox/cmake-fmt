@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use super::{CommandGrammar, Grammar, KeywordType};
@@ -29,6 +29,17 @@ pub struct GrammarEntry {
     pub mode: Option<String>,
     /// Map of keyword name to keyword type string
     pub keywords: BTreeMap<String, String>,
+    /// Keywords whose values may be reordered by sort_sources / source_grouping
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub sortable_keywords: BTreeSet<String>,
+    /// Whether the command's keyword-less arguments are an unordered list
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub sortable_positional: bool,
+}
+
+/// `skip_serializing_if` helper: keeps `sortable_positional: false` out of exports
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Top-level TOML grammar file structure
@@ -82,6 +93,8 @@ fn build_grammar_entries(grammars: &HashMap<String, Grammar>) -> Vec<GrammarEntr
                     command: command_name.clone(),
                     mode: None,
                     keywords,
+                    sortable_keywords: cg.sortable_keywords.iter().cloned().collect(),
+                    sortable_positional: cg.sortable_positional,
                 });
             }
             Grammar::Modes { modes } => {
@@ -98,6 +111,8 @@ fn build_grammar_entries(grammars: &HashMap<String, Grammar>) -> Vec<GrammarEntr
                         command: command_name.clone(),
                         mode: Some(mode_name.clone()),
                         keywords,
+                        sortable_keywords: cg.sortable_keywords.iter().cloned().collect(),
+                        sortable_positional: cg.sortable_positional,
                     });
                 }
             }
@@ -133,6 +148,8 @@ fn build_command_grammar_entries(
             command: display_name,
             mode: None, // User grammars are always simple
             keywords,
+            sortable_keywords: cg.sortable_keywords.iter().cloned().collect(),
+            sortable_positional: cg.sortable_positional,
         });
     }
 
@@ -256,6 +273,8 @@ pub fn import_grammar_file(content: &str) -> Result<HashMap<String, CommandGramm
                 force_args_on_new_line: false,
                 sub_keywords: HashSet::new(),
                 collection_keywords: HashSet::new(),
+                sortable_keywords: entry.sortable_keywords.into_iter().collect(),
+                sortable_positional: entry.sortable_positional,
             },
         );
     }

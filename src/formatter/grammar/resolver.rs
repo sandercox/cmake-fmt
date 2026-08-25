@@ -128,6 +128,31 @@ pub fn config_grammars_to_map(
             for kw in &cfg.bin_pack_keywords {
                 keywords.insert(kw.clone(), KeywordType::BinPack);
             }
+            // A config entry replaces the grammar auto-detected from
+            // `cmake_parse_arguments` wholesale, so a user who declared one for
+            // wrapping reasons silently lost the sorting the auto-detected
+            // grammar gave them, with no diagnostic. The conventional file-list
+            // names are a default here for the same reason they are one there —
+            // but only a *default*: naming any sortable keyword is the user
+            // saying what is unordered, and "reordering is opt-in, keywords not
+            // listed here are left alone" is what the config docs, the schema
+            // and `--help-grammar` all promise. Overriding that left no way to
+            // say "not this one".
+            //
+            // The default is drawn from the multi-value keywords, not from every
+            // declared keyword: a `FILES` declared as a flag takes no values, so
+            // marking it sortable only reorders whatever positional arguments
+            // happen to follow it.
+            let sortable_keywords: HashSet<String> = if cfg.sortable_keywords.is_empty() {
+                cfg.multi_value_keywords
+                    .iter()
+                    .filter(|kw| super::argparse_extractor::is_conventional_file_list(kw))
+                    .cloned()
+                    .collect()
+            } else {
+                cfg.sortable_keywords.iter().cloned().collect()
+            };
+
             (
                 name.to_lowercase(),
                 CommandGrammar {
@@ -135,6 +160,8 @@ pub fn config_grammars_to_map(
                     force_args_on_new_line: false,
                     sub_keywords: HashSet::new(),
                     collection_keywords: HashSet::new(),
+                    sortable_keywords,
+                    sortable_positional: cfg.sortable_positional,
                 },
             )
         })

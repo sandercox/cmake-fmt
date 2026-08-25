@@ -714,3 +714,97 @@ target_link_libraries(myapp PRIVATE Boost::filesystem)
         stderr
     );
 }
+
+#[test]
+fn test_grammar_file_roundtrips_sortable_fields() {
+    use cmake_fmt::formatter::import_grammar_file;
+
+    let yaml = r#"
+grammar:
+  - command: wrapper_lib
+    keywords:
+      SOURCES: MultiValue
+      COMMAND: MultiValue
+    sortable_keywords:
+      - SOURCES
+    sortable_positional: true
+"#;
+
+    let imported = import_grammar_file(yaml).expect("grammar file should parse");
+    let grammar = &imported["wrapper_lib"];
+
+    assert!(grammar.sortable_keywords.contains("SOURCES"));
+    assert!(!grammar.sortable_keywords.contains("COMMAND"));
+    assert!(grammar.sortable_positional);
+    assert!(grammar.is_sortable_keyword("SOURCES"));
+    assert!(!grammar.is_sortable_keyword("COMMAND"));
+}
+
+#[test]
+fn test_grammar_file_without_sortable_fields_defaults_to_unordered_off() {
+    use cmake_fmt::formatter::import_grammar_file;
+
+    let yaml = r#"
+grammar:
+  - command: legacy_cmd
+    keywords:
+      SOURCES: MultiValue
+"#;
+
+    let imported = import_grammar_file(yaml).expect("grammar file should parse");
+    let grammar = &imported["legacy_cmd"];
+
+    // Reordering is opt-in, so an older grammar file reorders nothing
+    assert!(grammar.sortable_keywords.is_empty());
+    assert!(!grammar.sortable_positional);
+    assert!(!grammar.is_sortable_keyword("SOURCES"));
+}
+
+#[test]
+fn test_exporting_and_reimporting_keeps_the_allowlist() {
+    // The import side was tested, the export side was not: blanking
+    // `sortable_keywords` and `sortable_positional` in all three export paths
+    // left the whole suite green, so a round trip through
+    // `--export-all-grammar` could silently drop the allowlist and nothing
+    // would notice.
+    use cmake_fmt::formatter::grammar::{CommandGrammar, KeywordType};
+    use cmake_fmt::formatter::{GrammarFormat, export_command_grammars, import_grammar_file};
+    use std::collections::HashMap;
+
+    let mut grammar = CommandGrammar::new();
+    grammar
+        .keywords
+        .insert("SOURCES".to_string(), KeywordType::MultiValue);
+    grammar
+        .keywords
+        .insert("COMMAND".to_string(), KeywordType::MultiValue);
+    grammar.sortable_keywords.insert("SOURCES".to_string());
+    grammar.sortable_positional = true;
+
+    let mut grammars = HashMap::new();
+    grammars.insert("wrapper_lib".to_string(), grammar);
+
+    for format in [GrammarFormat::Yaml, GrammarFormat::Toml] {
+        let exported = export_command_grammars(&grammars, &format, None);
+        let reimported = import_grammar_file(&exported)
+            .unwrap_or_else(|e| panic!("re-importing {:?} failed: {}", format, e));
+        let round_tripped = &reimported["wrapper_lib"];
+
+        assert!(
+            round_tripped.sortable_keywords.contains("SOURCES"),
+            "{:?} export lost sortable_keywords:\n{}",
+            format,
+            exported
+        );
+        assert!(
+            !round_tripped.sortable_keywords.contains("COMMAND"),
+            "{:?} export invented a sortable keyword",
+            format
+        );
+        assert!(
+            round_tripped.sortable_positional,
+            "{:?} export lost sortable_positional:\n{}",
+            format, exported
+        );
+    }
+}

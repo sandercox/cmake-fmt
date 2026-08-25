@@ -263,3 +263,298 @@ fn test_corpus_files_exist() {
     println!("  KDE: {}", kde_count);
     println!("  OpenCV: {}", opencv_count);
 }
+
+/// What the allowlist permits, keyed by command and — for multi-mode commands
+/// like `list` and `install` — by mode: which keywords' values may be permuted,
+/// and whether the keyword-less run may be.
+///
+/// Kept as a literal table rather than read from the grammar, so that widening
+/// the allowlist in `builtins.rs` cannot silently widen this test with it.
+/// Coverage is bounded by what the corpus contains, so the synthetic cases in
+/// `tests/sort_sources_tests.rs` are the other half of this guard.
+const ALLOWED_REORDERING: &[(&str, Option<&str>, &[&str], bool)] = &[
+    ("set", None, &[], true),
+    ("list", Some("APPEND"), &[], true),
+    ("list", Some("PREPEND"), &[], true),
+    ("list", Some("REMOVE_ITEM"), &[], true),
+    (
+        "add_library",
+        None,
+        &[
+            "STATIC",
+            "SHARED",
+            "MODULE",
+            "OBJECT",
+            "INTERFACE",
+            "EXCLUDE_FROM_ALL",
+        ],
+        true,
+    ),
+    (
+        "add_executable",
+        None,
+        &["WIN32", "MACOSX_BUNDLE", "EXCLUDE_FROM_ALL"],
+        true,
+    ),
+    (
+        "target_sources",
+        None,
+        &["PUBLIC", "PRIVATE", "INTERFACE", "FILES"],
+        false,
+    ),
+    ("source_group", None, &["FILES"], false),
+    ("install", Some("FILES"), &["FILES"], false),
+    ("install", Some("PROGRAMS"), &["PROGRAMS"], false),
+];
+
+/// Keyword names that auto-detected wrapper commands may reorder.
+const CONVENTIONAL_FILE_LISTS: &[&str] = &["SOURCES", "SRCS", "FILES"];
+
+/// `sub_keywords` and `collection_keywords` are deliberately not modelled. They
+/// are set on `install`'s TARGETS and DIRECTORY modes and on `file`'s COPY and
+/// INSTALL modes; none of those has a table entry, so every run there must be
+/// byte-identical anyway. Splitting more finely than the parser is strictly
+/// stricter, and both sides go through this same function, so the decomposition
+/// stays canonical. A future table entry for one of those commands would need
+/// this revisited.
+///
+/// Split an argument list into `(governing keyword, values)` runs using the
+/// command's real grammar, so the split does not have to guess which tokens are
+/// keywords. Guessing got this wrong both ways: an all-caps list *variable*
+/// (`list(APPEND SOURCES …)`) read as a keyword, and a keyword moving between
+/// runs was invisible.
+fn split_into_keyword_runs(command: &str, args: &[String]) -> Vec<(Option<String>, Vec<String>)> {
+    use cmake_fmt::formatter::grammar::{GrammarRegistry, KeywordType};
+
+    let registry = GrammarRegistry::global();
+    let grammar = registry.get(command);
+    // Multi-mode commands resolve on their first argument
+    let resolved = grammar.and_then(|g| {
+        if g.is_multi_mode() {
+            g.resolve(args.first().map(String::as_str))
+        } else {
+            g.resolve(None)
+        }
+    });
+
+    let keyword_type = |arg: &str| match resolved {
+        Some(cg) => cg.keyword_type(arg),
+        // No grammar to ask, so treat any all-caps token as a keyword. Using
+        // CONVENTIONAL_FILE_LISTS here would be circular: a keyword the
+        // formatter starts reordering but this test doesn't know about would be
+        // absorbed into a neighbouring run and vanish into its multiset check.
+        // Over-splitting costs nothing now that keyword identity is compared.
+        None => (arg.len() > 1
+            && arg
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()))
+        .then_some(KeywordType::MultiValue),
+    };
+
+    let mut runs: Vec<(Option<String>, Vec<String>)> = vec![(None, Vec::new())];
+
+    for arg in args {
+        if keyword_type(arg).is_some() {
+            runs.push((Some(arg.clone()), Vec::new()));
+            continue;
+        }
+
+        let current = runs.last_mut().expect("runs is never empty");
+        // A single-value keyword takes exactly one value; the next argument
+        // overflows into a positional run. Same rule the formatter applies, and
+        // what makes `list(APPEND var a b)` two sections rather than one.
+        let at_capacity = !current.1.is_empty()
+            && current
+                .0
+                .as_deref()
+                .and_then(keyword_type)
+                .is_some_and(|ty| ty == KeywordType::SingleValue);
+
+        if at_capacity {
+            runs.push((None, vec![arg.clone()]));
+        } else {
+            current.1.push(arg.clone());
+        }
+    }
+
+    runs
+}
+
+/// The mode a multi-mode command resolved to, for looking up the table.
+fn resolved_mode(command: &str, args: &[String]) -> Option<String> {
+    use cmake_fmt::formatter::grammar::GrammarRegistry;
+
+    let grammar = GrammarRegistry::global().get(command)?;
+    if !grammar.is_multi_mode() {
+        return None;
+    }
+    let first = args.first()?;
+    grammar.resolve(Some(first.as_str())).map(|_| first.clone())
+}
+
+#[test]
+fn test_corpus_reordering_confined_to_allowlist() {
+    // The guard that was missing: `test_corpus_semantic_preservation` runs with
+    // FormatConfig::default(), where both reordering passes are off, so it never
+    // exercised sort_sources or source_grouping at all. Enabling them used to
+    // rewrite `set(... CACHE PATH "docs")`, tear `PATTERN` keywords off their
+    // globs in `install(DIRECTORY ... FILES_MATCHING ...)`, shuffle MSVC flag
+    // lists, and reorder GCC warning flags in
+    // tests/corpus/llvm/HandleLLVMOptions.cmake.
+    //
+    // Every keyword keeps its identity and position, and only the runs the
+    // allowlist names may be permuted — so re-marking `set`'s CACHE keyword or
+    // `install`'s DIRECTORY mode as sortable fails this test. A mode the corpus
+    // never uses cannot fail it: nothing here calls `list(POP_BACK ...)`, which
+    // is what `test_unlisted_list_modes_hold` is for.
+    let plain = FormatConfig::default();
+    let reordering = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
+
+    let files = corpus_files();
+    assert!(!files.is_empty(), "No corpus files found in tests/corpus/");
+
+    let mut problems: Vec<String> = Vec::new();
+
+    for path in &files {
+        let input = std::fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("Failed to read {}", path.display()));
+
+        let baseline = extract_semantic_commands(&format_text(&input, &plain));
+        let reordered = extract_semantic_commands(&format_text(&input, &reordering));
+
+        assert_eq!(
+            baseline.len(),
+            reordered.len(),
+            "Command count changed in {}",
+            path.display()
+        );
+
+        for (index, ((name, plain_args), (reordered_name, reordered_args))) in
+            baseline.iter().zip(reordered.iter()).enumerate()
+        {
+            assert_eq!(
+                name,
+                reordered_name,
+                "Command {} changed name in {}",
+                index,
+                path.display()
+            );
+
+            let command_has_grammar = cmake_fmt::formatter::grammar::GrammarRegistry::global()
+                .get(name)
+                .is_some();
+            let mode = resolved_mode(name, plain_args);
+            let entry = ALLOWED_REORDERING
+                .iter()
+                .find(|(cmd, cmd_mode, _, _)| cmd == name && *cmd_mode == mode.as_deref());
+
+            let plain_runs = split_into_keyword_runs(name, plain_args);
+            let reordered_runs = split_into_keyword_runs(name, reordered_args);
+
+            if plain_runs.len() != reordered_runs.len() {
+                problems.push(format!(
+                    "{}:{} {} changed its keyword structure",
+                    path.display(),
+                    index,
+                    name
+                ));
+                continue;
+            }
+
+            for (run_index, ((keyword, plain_run), (reordered_keyword, reordered_run))) in
+                plain_runs.iter().zip(reordered_runs.iter()).enumerate()
+            {
+                // A keyword moving is the original bug — PATTERN piled up at the
+                // end of FILES_MATCHING — so identity and order are compared.
+                if keyword != reordered_keyword {
+                    problems.push(format!(
+                        "{}:{} {} moved keyword {:?} to {:?}",
+                        path.display(),
+                        index,
+                        name,
+                        keyword,
+                        reordered_keyword
+                    ));
+                    continue;
+                }
+
+                // The formatter permits a keyword-less run only when it leads
+                // the command, or when it overflowed from the command's first
+                // section (`list(APPEND var a b)`). A stray run later on is not
+                // the command's argument list.
+                let positional_run_permitted = run_index == 0
+                    || (run_index == 2
+                        && plain_runs[0].1.is_empty()
+                        && plain_runs[1].0.is_some()
+                        && plain_runs[1].1.len() == 1);
+
+                let may_permute = match (entry, keyword.as_deref()) {
+                    (Some((_, _, _, positional)), None) => *positional && positional_run_permitted,
+                    (Some((_, _, keywords, _)), Some(kw)) => keywords.contains(&kw),
+                    // A command with no grammar at all: only conventionally
+                    // named file lists, which is all the formatter reorders
+                    // there. A command that HAS a grammar but no table entry is
+                    // a different thing and gets nothing — otherwise marking,
+                    // say, add_custom_target's SOURCES sortable would be
+                    // permitted without the table saying so.
+                    (None, Some(kw)) if !command_has_grammar => {
+                        CONVENTIONAL_FILE_LISTS.contains(&kw)
+                    }
+                    (None, _) => false,
+                };
+
+                if may_permute {
+                    let mut a = plain_run.clone();
+                    let mut b = reordered_run.clone();
+                    a.sort();
+                    b.sort();
+                    if a != b {
+                        problems.push(format!(
+                            "{}:{} {} {:?} gained or lost an argument",
+                            path.display(),
+                            index,
+                            name,
+                            keyword
+                        ));
+                    }
+                    // The leading positional run starts with the variable or
+                    // target name, which is pinned. A run opened by a mode
+                    // keyword has already given up its name to that keyword.
+                    if run_index == 0
+                        && keyword.is_none()
+                        && plain_run.first() != reordered_run.first()
+                    {
+                        problems.push(format!(
+                            "{}:{} {} moved its first positional argument {:?}",
+                            path.display(),
+                            index,
+                            name,
+                            plain_run.first()
+                        ));
+                    }
+                } else if plain_run != reordered_run {
+                    problems.push(format!(
+                        "{}:{} {} reordered {:?}, which is not allowlisted:\n    {:?}\n -> {:?}",
+                        path.display(),
+                        index,
+                        name,
+                        keyword,
+                        plain_run,
+                        reordered_run
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "reordering escaped the allowlist in {} place(s):\n  {}",
+        problems.len(),
+        problems.join("\n  ")
+    );
+}
