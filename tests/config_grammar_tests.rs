@@ -890,7 +890,10 @@ sortable_positional = true
 
     let config: FormatConfig = toml::from_str(toml_str).unwrap();
     let grammar = &config.command_grammars["my_add_library"];
-    assert_eq!(grammar.sortable_keywords, vec!["SRC_FILES".to_string()]);
+    assert_eq!(
+        grammar.sortable_keywords,
+        Some(vec!["SRC_FILES".to_string()])
+    );
     assert!(grammar.sortable_positional);
 }
 
@@ -904,7 +907,7 @@ fn test_config_grammar_sortable_keywords_applied() {
         CommandGrammarConfig {
             one_value_keywords: vec!["NAME".to_string()],
             multi_value_keywords: vec!["SRC_FILES".to_string(), "COMMAND".to_string()],
-            sortable_keywords: vec!["SRC_FILES".to_string()],
+            sortable_keywords: Some(vec!["SRC_FILES".to_string()]),
             ..Default::default()
         },
     );
@@ -964,7 +967,7 @@ fn test_config_grammar_cannot_make_bin_pack_sortable() {
         "my_runner".to_string(),
         CommandGrammarConfig {
             bin_pack_keywords: vec!["COMMAND".to_string()],
-            sortable_keywords: vec!["COMMAND".to_string()],
+            sortable_keywords: Some(vec!["COMMAND".to_string()]),
             ..Default::default()
         },
     );

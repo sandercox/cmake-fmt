@@ -3438,3 +3438,71 @@ fn test_a_lone_value_still_goes_inline_with_its_keyword() {
         result
     );
 }
+
+#[test]
+fn test_comments_survive_every_keyword_shortcut() {
+    // Three arms had the same defect: they emit the keyword and its value and
+    // nothing else, so anything else the section carried was deleted. One was
+    // fixed; these are the other two, plus the `PairValue` branch that computed
+    // the comments into its own gate and then never emitted them.
+    let config = FormatConfig::default();
+
+    for (input, comments) in [
+        (
+            "list(APPEND V\n\t# note\n\ta.cpp\n\tb.cpp\n)\n",
+            &["# note"][..],
+        ),
+        (
+            "install(TARGETS t\n\t# note\n\tDESTINATION lib)\n",
+            &["# note"][..],
+        ),
+        (
+            "set_target_properties(t PROPERTIES\n\tK1 v1 # one\n\tK2 v2 # two\n)\n",
+            &["# one", "# two"][..],
+        ),
+        (
+            "set_target_properties(t PROPERTIES\n\t# why\n\tK1 v1\n\tK2 v2\n)\n",
+            &["# why"][..],
+        ),
+        (
+            "add_test(NAME t\n\t# note\n\tCOMMAND runner)\n",
+            &["# note"][..],
+        ),
+        // A comment on a bare key — the last pair with no value — is indexed to
+        // the key, not the value, and only the value's index was emitted
+        (
+            "set_target_properties(t PROPERTIES\n\tK1 v1\n\tK2 # dangling\n)\n",
+            &["# dangling"][..],
+        ),
+        (
+            "file(WRITE out.txt\n\t# note\n\t\"body\")\n",
+            &["# note"][..],
+        ),
+    ] {
+        let result = format_text(input, &config);
+        for comment in comments {
+            assert!(
+                result.contains(comment),
+                "comment {} lost for {:?}:\n{}",
+                comment,
+                input,
+                result
+            );
+        }
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+#[test]
+fn test_a_keyword_shortcut_still_applies_without_comments() {
+    // The guards must not cost the layout they guard.
+    let config = FormatConfig::default();
+    assert_eq!(
+        format_text("set_target_properties(t PROPERTIES K1 v1 K2 v2)\n", &config),
+        "set_target_properties(t PROPERTIES K1 v1 K2 v2)\n"
+    );
+    assert_eq!(
+        format_text("list(APPEND V a.cpp b.cpp)\n", &config),
+        "list(APPEND V a.cpp b.cpp)\n"
+    );
+}

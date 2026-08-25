@@ -97,10 +97,18 @@ pub fn extract_command_grammars_from_body(
                 }
 
                 if !keywords.is_empty() {
+                    // Only a multi-value keyword: a `FILES` declared as a flag
+                    // takes no values, so marking it sortable would reorder
+                    // whatever positional arguments happen to follow it —
+                    // `compile_unit(FILES -Wall -O3)` became
+                    // `compile_unit(FILES -O3 -Wall)`. The config copy of this
+                    // default was narrowed; this one was missed.
                     let sortable_keywords = keywords
-                        .keys()
-                        .filter(|kw| is_conventional_file_list(kw))
-                        .cloned()
+                        .iter()
+                        .filter(|(kw, ty)| {
+                            **ty == KeywordType::MultiValue && is_conventional_file_list(kw)
+                        })
+                        .map(|(kw, _)| kw.clone())
                         .collect();
 
                     return Some(CommandGrammar {

@@ -143,14 +143,17 @@ pub fn config_grammars_to_map(
             // declared keyword: a `FILES` declared as a flag takes no values, so
             // marking it sortable only reorders whatever positional arguments
             // happen to follow it.
-            let sortable_keywords: HashSet<String> = if cfg.sortable_keywords.is_empty() {
-                cfg.multi_value_keywords
+            let sortable_keywords: HashSet<String> = match &cfg.sortable_keywords {
+                // Named, however short the list: that list is the whole list
+                Some(declared) => declared.iter().cloned().collect(),
+                // Not named at all: the same default an auto-detected grammar
+                // would have carried
+                None => cfg
+                    .multi_value_keywords
                     .iter()
                     .filter(|kw| super::argparse_extractor::is_conventional_file_list(kw))
                     .cloned()
-                    .collect()
-            } else {
-                cfg.sortable_keywords.iter().cloned().collect()
+                    .collect(),
             };
 
             (

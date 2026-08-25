@@ -227,7 +227,10 @@ fn print_grammar_help() {
     println!("Reordering:");
     println!("  sort_sources and source_grouping only reorder keywords listed in");
     println!("  'sortable_keywords', plus the keyword-less arguments when");
-    println!("  'sortable_positional: true'. Both default to leaving order alone,");
+    println!("  'sortable_positional: true'. Omitting 'sortable_keywords' falls");
+    println!("  back to keywords named SOURCES, SRCS or FILES; writing it as an");
+    println!("  empty list means nothing in that command is sortable.");
+    println!("  Both default to leaving order alone,");
     println!("  since argument order usually carries meaning. BinPack and PairValue");
     println!("  keywords are never reordered, and a positional run additionally");
     println!("  requires every value to look like a source file, so flag and");

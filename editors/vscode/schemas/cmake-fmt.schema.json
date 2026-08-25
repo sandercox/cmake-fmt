@@ -185,7 +185,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "Keywords whose values are an unordered list, so sort_sources and source_grouping may reorder them (e.g., SOURCES). Keywords not listed here are never reordered."
+          "description": "Keywords whose values are an unordered list, so sort_sources and source_grouping may reorder them (e.g., SOURCES). Keywords not listed here are never reordered. Omit this key to fall back to the conventional file-list names (SOURCES, SRCS, FILES); write an empty list to say nothing is sortable."
         },
         "sortable_positional": {
           "type": "boolean",

@@ -745,8 +745,10 @@ pub fn parse_keyword_sections_with_grammar(
 fn is_search_path_variable(name: &str) -> bool {
     // Compared case-insensitively: CMake variable names are case-sensitive, and
     // project-local lists are conventionally lowercase (`warning_flags`), so a
-    // byte comparison would miss most of them.
-    let name = name.to_ascii_uppercase();
+    // byte comparison would miss most of them. Unquoted first, as every sibling
+    // predicate does — `"CMAKE_MODULE_PATH"` is as ordinary a spelling as the
+    // bare one, and only the `FLAGS` substring test survived the quotes.
+    let name = name.trim_matches('"').to_ascii_uppercase();
 
     const EXACT: &[&str] = &[
         "CMAKE_MODULE_PATH",
@@ -1449,8 +1451,16 @@ pub fn format_keyword_aware_args(
                     }
                 }
 
-                // SingleValue keywords: keep value inline (ignore force_multiline for idempotency)
-                Some(KeywordType::SingleValue) if section.args.len() == 1 => {
+                // SingleValue keywords: keep value inline (ignore force_multiline for
+                // idempotency). Guarded on comments for the same reason the
+                // MultiValue shortcut below is: this arm emits the keyword and
+                // the value and nothing else, so a comment written in the
+                // section had nowhere to go and was deleted.
+                Some(KeywordType::SingleValue)
+                    if section.args.len() == 1
+                        && section.comments.is_empty()
+                        && section.trailing_comments.is_empty() =>
+                {
                     // Add separator before the keyword
                     if is_first_arg && first_keyword_inline {
                         is_first_arg = false;
@@ -1536,8 +1546,25 @@ pub fn format_keyword_aware_args(
                                 docs.push(RcDoc::text(pairs[0][1].clone()));
                             }
                         } else if use_per_line || signals.force_multiline {
-                            // Per-line pairs
-                            for chunk in pairs {
+                            // Per-line pairs. The comments are what put us on
+                            // this branch — `use_per_line` is set by them — and
+                            // they were then never emitted, so a `PROPERTIES`
+                            // run with comments lost every one of them.
+                            let mut comment_iter = section.comments.iter().peekable();
+                            for (pair_idx, chunk) in pairs.iter().enumerate() {
+                                let key_index = pair_idx * 2;
+
+                                // Own-line comments written before this pair
+                                while let Some((position, comment)) = comment_iter.peek() {
+                                    if *position > key_index {
+                                        break;
+                                    }
+                                    docs.push(RcDoc::hardline());
+                                    docs.push(RcDoc::text(value_indent.clone()));
+                                    docs.push(RcDoc::text((*comment).clone()));
+                                    comment_iter.next();
+                                }
+
                                 if signals.force_multiline {
                                     docs.push(RcDoc::hardline());
                                     docs.push(RcDoc::text(value_indent.clone()));
@@ -1549,11 +1576,28 @@ pub fn format_keyword_aware_args(
                                 }
                                 // key
                                 docs.push(RcDoc::text(chunk[0].clone()));
+                                for (tc_index, tc_text) in &section.trailing_comments {
+                                    if *tc_index == key_index {
+                                        docs.push(RcDoc::text(format!(" {}", tc_text)));
+                                    }
+                                }
                                 // value (if present — odd number of args means last key has no value)
                                 if chunk.len() > 1 {
                                     docs.push(RcDoc::space());
                                     docs.push(RcDoc::text(chunk[1].clone()));
+                                    for (tc_index, tc_text) in &section.trailing_comments {
+                                        if *tc_index == key_index + 1 {
+                                            docs.push(RcDoc::text(format!(" {}", tc_text)));
+                                        }
+                                    }
                                 }
+                            }
+
+                            // Anything written after the last pair
+                            for (_, comment) in comment_iter {
+                                docs.push(RcDoc::hardline());
+                                docs.push(RcDoc::text(value_indent.clone()));
+                                docs.push(RcDoc::text(comment.clone()));
                             }
                         } else {
                             // Auto-layout: flat_alt pairs inherit from outer group

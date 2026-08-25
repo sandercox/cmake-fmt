@@ -874,7 +874,7 @@ fn test_a_config_grammar_can_say_what_is_not_sortable() {
         CommandGrammarConfig {
             one_value_keywords: vec!["OUT".to_string()],
             multi_value_keywords: vec!["FILES".to_string(), "PARTS".to_string()],
-            sortable_keywords: vec!["PARTS".to_string()],
+            sortable_keywords: Some(vec!["PARTS".to_string()]),
             ..Default::default()
         },
     );
@@ -998,5 +998,107 @@ fn test_grouping_keeps_a_comment_with_its_argument_across_a_barrier() {
         comment_line > 1,
         "the comment was hoisted to the head of the list:\n{}",
         result
+    );
+}
+
+#[test]
+fn test_the_blocklist_reads_a_quoted_variable_name() {
+    // Every sibling predicate strips quotes; this one only uppercased, so a
+    // quoted name defeated all of it except the `FLAGS` substring test — and
+    // `"CMAKE_MODULE_PATH"` is as ordinary a spelling as the bare one.
+    let config = reordering_config();
+    for input in [
+        "list(APPEND \"CMAKE_MODULE_PATH\" cmake/zz.cmake cmake/aa.cmake)\n",
+        "list(APPEND \"CMAKE_PREFIX_PATH\" zz.cmake aa.cmake)\n",
+        "set(\"MY_LIBS\" zz.cpp aa.cpp)\n",
+        "set(\"MY_INCLUDE_DIRS\" zz.cmake aa.cmake)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &config),
+            input,
+            "a quoted search-path or flag variable was sorted"
+        );
+    }
+}
+
+#[test]
+fn test_an_auto_detected_flag_does_not_vouch_for_what_follows_it() {
+    // The conventional file-list default is drawn from multi-value keywords
+    // only: a `FILES` declared as a flag takes no values, so marking it sortable
+    // reorders whatever positional arguments happen to follow it. The config
+    // copy of that default was narrowed and this one — read from
+    // `cmake_parse_arguments` — was missed, which reordered a flag list.
+    let config = reordering_config();
+    let input = concat!(
+        "function(compile_unit)\n",
+        "\tcmake_parse_arguments(ARG \"FILES;QUIET\" \"\" \"\" ${ARGN})\n",
+        "endfunction()\n",
+        "\n",
+        "compile_unit(FILES -Wall -Wno-unused -O3 -O0)\n"
+    );
+    let result = format_text(input, &config);
+    assert!(
+        result.contains("compile_unit(FILES -Wall -Wno-unused -O3 -O0)"),
+        "a flag's trailing positionals were sorted:\n{}",
+        result
+    );
+
+    // Declared as a multi-value keyword, the same name does sort
+    let input = concat!(
+        "function(compile_unit)\n",
+        "\tcmake_parse_arguments(ARG \"QUIET\" \"\" \"FILES\" ${ARGN})\n",
+        "endfunction()\n",
+        "\n",
+        "compile_unit(FILES z.cpp a.cpp)\n"
+    );
+    let result = format_text(input, &config);
+    assert!(
+        result.contains("compile_unit(FILES a.cpp z.cpp)"),
+        "a conventionally named multi-value list should sort:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_an_empty_sortable_keywords_list_means_none() {
+    // The default applies when the key is absent. Writing it as an empty list is
+    // the user saying nothing here is sortable — the only way to refuse a
+    // conventionally named keyword when it is the command's only one, and what
+    // three doc surfaces promise.
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_wrap".to_string(),
+        CommandGrammarConfig {
+            multi_value_keywords: vec!["SOURCES".to_string()],
+            sortable_keywords: Some(Vec::new()),
+            ..Default::default()
+        },
+    );
+    let config = FormatConfig {
+        command_grammars,
+        ..reordering_config()
+    };
+    assert_eq!(
+        format_text("my_wrap(SOURCES z.cpp a.cpp)\n", &config),
+        "my_wrap(SOURCES z.cpp a.cpp)\n",
+        "an empty sortable_keywords list should mean nothing is sortable"
+    );
+
+    // And omitting the key keeps the conventional default
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_wrap".to_string(),
+        CommandGrammarConfig {
+            multi_value_keywords: vec!["SOURCES".to_string()],
+            ..Default::default()
+        },
+    );
+    let config = FormatConfig {
+        command_grammars,
+        ..reordering_config()
+    };
+    assert_eq!(
+        format_text("my_wrap(SOURCES z.cpp a.cpp)\n", &config),
+        "my_wrap(SOURCES a.cpp z.cpp)\n"
     );
 }
