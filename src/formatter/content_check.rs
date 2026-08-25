@@ -257,20 +257,6 @@ impl StyleOverrides {
 }
 
 impl Content {
-    /// Read the content of `source` under `config`.
-    pub(crate) fn read(
-        source: &str,
-        config: &FormatConfig,
-        overrides: &StyleOverrides,
-        grammars: &UserGrammars,
-        side: Side,
-    ) -> Self {
-        Self::from_cst(
-            &parse_text(source),
-            &Rules::new(config, overrides, grammars, side),
-        )
-    }
-
     fn from_cst(cst: &CSTRoot, rules: &Rules) -> Self {
         let mut entries = Vec::new();
         // Arguments of the block openers still open, innermost last. A forced
