@@ -998,7 +998,7 @@ fn test_user_grammar_cannot_hijack_a_condition() {
         "if".to_string(),
         CommandGrammarConfig {
             multi_value_keywords: vec!["AND".to_string(), "OR".to_string()],
-            sortable_keywords: vec!["AND".to_string()],
+            sortable_keywords: Some(vec!["AND".to_string()]),
             ..Default::default()
         },
     );
