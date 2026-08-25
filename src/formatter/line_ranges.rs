@@ -1,5 +1,5 @@
 use crate::formatter::{
-    FormatConfig, SuppressionWarning,
+    FormatConfig, FormatWarning,
     config::{FinalNewline, LineEnding},
     detect_line_ending, format_text_with_diagnostics_and_path,
 };
@@ -87,7 +87,7 @@ pub fn format_with_line_ranges(
     ranges: &[LineRange],
     file_path: Option<&Path>,
     verbose: bool,
-) -> (String, Vec<SuppressionWarning>) {
+) -> (String, Vec<FormatWarning>) {
     // Step 1: Format the full file
     let (formatted, warnings) =
         format_text_with_diagnostics_and_path(input, config, file_path, verbose);

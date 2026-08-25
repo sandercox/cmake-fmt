@@ -1,5 +1,5 @@
 use cmake_fmt::formatter::{
-    CommentStyle, FormatConfig, SuppressionWarning, format_text, format_text_with_diagnostics,
+    CommentStyle, FormatConfig, FormatWarning, format_text, format_text_with_diagnostics,
 };
 
 // ============================================================================
@@ -270,7 +270,7 @@ set(AFTER value)
     assert_eq!(warnings.len(), 1, "Should have exactly one warning");
 
     match &warnings[0] {
-        SuppressionWarning::UnmatchedOn { line } => {
+        FormatWarning::UnmatchedOn { line } => {
             assert_eq!(
                 *line, 3,
                 "Warning should point to line 3 where 'on' appears"
@@ -297,7 +297,7 @@ set(  UGLY2   value  )
     // Check for NestedOff warning
     let has_nested_off = warnings
         .iter()
-        .any(|w| matches!(w, SuppressionWarning::NestedOff { line: 4 }));
+        .any(|w| matches!(w, FormatWarning::NestedOff { line: 4 }));
     assert!(has_nested_off, "Should have NestedOff warning on line 4");
 }
 

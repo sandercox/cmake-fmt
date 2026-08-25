@@ -2,6 +2,7 @@ mod builtins;
 mod cmake_rules;
 mod comments;
 pub mod config;
+mod content_check;
 mod cst_to_doc;
 pub mod grammar;
 pub mod line_ranges;
@@ -18,7 +19,7 @@ pub use grammar::{
     export_grammars, export_grammars_to_toml, export_grammars_to_yaml, import_grammar_file,
 };
 pub use line_ranges::{LineRange, format_with_line_ranges, parse_line_ranges};
-pub use suppression::SuppressionWarning;
+pub use suppression::FormatWarning;
 
 use crate::cst::parse_text;
 use std::path::Path;
@@ -59,7 +60,7 @@ pub fn format_text_with_diagnostics_and_path(
     config: &FormatConfig,
     file_path: Option<&Path>,
     verbose: bool,
-) -> (String, Vec<SuppressionWarning>) {
+) -> (String, Vec<FormatWarning>) {
     // Early return if formatting is disabled
     if config.disable_format {
         return (input.to_string(), Vec::new());
@@ -156,6 +157,17 @@ pub fn format_text_with_diagnostics_and_path(
         result = result.replace('\n', "\r\n");
     }
 
+    // Refuse to hand back output that says something different from the input.
+    // Re-indenting and re-casing are the formatter's job; inventing or dropping
+    // an argument is not, and both have shipped as bugs before.
+    if let Some(difference) = content_check::check(input, &result, config) {
+        let mut warnings = warnings;
+        warnings.push(FormatWarning::ContentChanged {
+            detail: difference.summary,
+        });
+        return (input.to_string(), warnings);
+    }
+
     (result, warnings)
 }
 
@@ -172,7 +184,7 @@ pub fn format_text_with_diagnostics_and_path(
 pub fn format_text_with_diagnostics(
     input: &str,
     config: &FormatConfig,
-) -> (String, Vec<SuppressionWarning>) {
+) -> (String, Vec<FormatWarning>) {
     format_text_with_diagnostics_and_path(input, config, None, false)
 }
 
