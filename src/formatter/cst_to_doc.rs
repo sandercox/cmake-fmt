@@ -485,11 +485,14 @@ fn format_file(
                             if is_block_opener(&cmd_name) {
                                 current_indent += 1;
                                 // Extract opener arguments for scope tracking
+                                // `arguments()` yields tokens only, so a
+                                // parenthesized group was dropped here and a
+                                // forced closer came out as `endif(AND B)` for
+                                // an `if((A) AND B)` — a mismatch CMake itself
+                                // warns about. A group is one logical argument.
                                 let opener_args: Vec<String> = cmd
                                     .argument_list()
-                                    .map(|al| {
-                                        al.arguments().map(|t| t.text().to_string()).collect()
-                                    })
+                                    .map(|al| collect_logical_args(&al))
                                     .unwrap_or_default();
                                 scope_stack.push(ScopeFrame { opener_args });
                             }
@@ -864,9 +867,12 @@ pub(crate) fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> Arg
                 // comment that argument is multi-line, which the renderer
                 // measures as a single long line — so the containing command
                 // can break where it need not have. That mis-measure is
-                // one-directional (it over-estimates, so it only ever causes a
-                // spurious break, never a line over max_line_length) and the
-                // result is idempotent. Recursing here would make the
+                // one-directional: it over-estimates, so it only ever causes a
+                // spurious break, never a line over max_line_length. It does not
+                // make the result idempotent — `add_library((x # c\ny)\n\nSTATIC)`
+                // is not a fixed point, and neither is the same shape without a
+                // group, so that is a separate pre-existing bug in how a blank
+                // line before a Flag keyword is re-read. Recursing here would make the
                 // measurement honest but the output worse: the command would
                 // then take the force-multiline path and put every remaining
                 // argument on its own line, where today the tail stays compact.

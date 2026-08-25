@@ -44,12 +44,69 @@ fn extract_semantic_commands(source: &str) -> Vec<(String, Vec<String>)> {
                 Vec::new()
             } else {
                 cmd.argument_list()
-                    .map(|al| al.arguments().map(|a| a.text().to_string()).collect())
+                    .map(collect_all_args)
                     .unwrap_or_default()
             };
             (name, args)
         })
         .collect()
+}
+
+/// Every argument in a list, including those inside a nested `( ... )` group.
+///
+/// `ArgumentList::arguments()` yields direct token children only, which is how
+/// this guard missed issue #5: the formatter deleted every parenthesized group
+/// it saw — turning llvm/HandleLLVMOptions.cmake from 10,260 bytes into 5,324 —
+/// and `test_corpus_semantic_preservation` stayed green throughout, because the
+/// arguments it dropped were invisible to the comparison on both sides.
+fn collect_all_args(arg_list: cmake_fmt::cst::ArgumentList) -> Vec<String> {
+    let mut args = Vec::new();
+    walk_args(arg_list.syntax(), &mut args);
+    args
+}
+
+/// Depth-first in source order, so a moved argument shows as a moved argument.
+fn walk_args(node: &cmake_fmt::SyntaxNode, args: &mut Vec<String>) {
+    use cmake_fmt::syntax_kind::SyntaxKind;
+    use rowan::NodeOrToken;
+
+    for child in node.children_with_tokens() {
+        match child {
+            NodeOrToken::Token(token) => {
+                if matches!(
+                    token.kind(),
+                    SyntaxKind::UNQUOTED_ARGUMENT
+                        | SyntaxKind::QUOTED_ARGUMENT
+                        | SyntaxKind::BRACKET_ARGUMENT
+                        | SyntaxKind::VARIABLE_REF
+                        | SyntaxKind::ENV_VAR_REF
+                        | SyntaxKind::CACHE_VAR_REF
+                        | SyntaxKind::GENERATOR_EXPR
+                ) {
+                    args.push(token.text().to_string());
+                }
+            }
+            NodeOrToken::Node(nested) => walk_args(&nested, args),
+        }
+    }
+}
+
+/// The detector itself, on the shape it used to be blind to.
+///
+/// No file under `tests/corpus/` contains a parenthesized group, so the corpus
+/// runs cannot fail when this regresses — which is why the guard stayed green
+/// while the formatter deleted every group it saw.
+#[test]
+fn test_the_semantic_extractor_sees_inside_a_group() {
+    let commands = extract_semantic_commands("if((A AND B) OR C)\nendif()\n");
+    assert_eq!(
+        commands[0].1,
+        vec!["A", "AND", "B", "OR", "C"],
+        "arguments inside a group must be compared too"
+    );
+
+    let commands = extract_semantic_commands("set(V (a b) c)\n");
+    assert_eq!(commands[0].1, vec!["V", "a", "b", "c"]);
 }
 
 // ============================================================================

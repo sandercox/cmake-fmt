@@ -2002,3 +2002,32 @@ fn test_nested_group_gets_paren_spacing() {
     );
     assert_eq!(format_text("if()\nendif()\n", &config), "if()\nendif()\n");
 }
+
+#[test]
+fn test_a_forced_closer_keeps_the_opener_s_groups() {
+    // The opener's arguments were collected with the token-only iterator, which
+    // skips a nested `( ... )` node, so `if((A) AND B)` produced `endif(AND B)`
+    // — arguments that do not match the opener, which CMake itself warns about
+    // ("A logical block opening on the line ... closes on the line ... with
+    // mis-matching arguments").
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if((A) AND B)\n\tmessage(x)\nelse()\n\tmessage(z)\nendif()\n",
+        &config,
+    );
+
+    assert!(
+        result.contains("endif((A) AND B)"),
+        "the closer dropped the group:\n{}",
+        result
+    );
+    assert!(
+        result.contains("else((A) AND B)"),
+        "the mid-block command dropped the group:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}

@@ -339,7 +339,10 @@ fn test_nested_group_node_owns_its_parens() {
 
 #[test]
 fn test_unterminated_nested_group_roundtrips() {
-    // Error recovery must still reproduce the input byte for byte
+    // Error recovery must still reproduce the input byte for byte — which the
+    // old parser did too, so the roundtrip alone says nothing about this change.
+    // What it has to also do is record the failure and still build the group
+    // node, so the formatter has something to render instead of dropping it.
     for input in [
         "if((A)\n",
         "if((\n",
@@ -353,6 +356,17 @@ fn test_unterminated_nested_group_roundtrips() {
             input,
             "roundtrip failed for {:?}",
             input
+        );
+        let nested = cst
+            .root
+            .descendants()
+            .filter(|n| n.kind() == SyntaxKind::ARGUMENT_LIST)
+            .count();
+        assert!(
+            nested >= 2,
+            "no nested group node for {:?}: found {} argument lists",
+            input,
+            nested
         );
     }
 }

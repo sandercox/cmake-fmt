@@ -503,10 +503,15 @@ fn test_idempotency_unbalanced_parens_converges() {
             current = next;
         }
 
-        assert_eq!(
-            passes, expected_passes,
-            "{:?} should reach a fixed point in {} passes, took {}",
-            input, expected_passes, passes
+        // A bound, not an exact count: how many passes recovery takes is not a
+        // promise to anyone, and pinning it exactly turns any change to error
+        // recovery into a test edit.
+        assert!(
+            passes <= expected_passes,
+            "{:?} should reach a fixed point within {} passes, took {}",
+            input,
+            expected_passes,
+            passes
         );
         assert!(current.contains("# c"), "comment lost:\n{}", current);
         assert!(current.contains("cmd("), "command lost:\n{}", current);
@@ -539,15 +544,21 @@ fn test_idempotency_unterminated_group_with_comment() {
 
 #[test]
 fn test_idempotency_balanced_nested_groups() {
-    // The ordinary case is a fixed point on the first pass
+    // The ordinary case is a fixed point on the first pass, *and* the group is
+    // still there. Asserting only idempotency passed before the fix too:
+    // deleting the group is idempotent as well.
     let config = FormatConfig::default();
-    for input in [
-        "if((TRUE))\nendif()\n",
-        "if((A AND B) OR (C AND D))\nendif()\n",
-        "if(NOT(TRUE))\nendif()\n",
-        "set(V (a b) c.cpp)\n",
+    for (input, expected) in [
+        ("if((TRUE))\nendif()\n", "if((TRUE))\nendif()\n"),
+        (
+            "if((A AND B) OR (C AND D))\nendif()\n",
+            "if((A AND B) OR (C AND D))\nendif()\n",
+        ),
+        ("if(NOT(TRUE))\nendif()\n", "if(NOT(TRUE))\nendif()\n"),
+        ("set(V (a b) c.cpp)\n", "set(V (a b) c.cpp)\n"),
     ] {
         let once = format_text(input, &config);
+        assert_eq!(once, expected, "wrong output for {:?}", input);
         assert_eq!(
             once,
             format_text(&once, &config),
