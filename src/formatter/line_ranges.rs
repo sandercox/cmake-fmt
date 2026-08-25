@@ -157,6 +157,23 @@ pub fn format_with_line_ranges(
         }
     }
 
+    // Step 7: the splice above takes lines by index from two texts whose line
+    // counts differ as soon as formatting re-wraps anything, so the result can
+    // say something neither of them said — dropping a target's whole source
+    // list, for instance. The formatter checks its own output; this is the
+    // buffer actually about to be written, so it needs checking too.
+    if let Some(detail) = super::describe_content_change(input, &result, config, file_path, verbose)
+    {
+        let mut warnings = warnings;
+        if !warnings
+            .iter()
+            .any(|w| matches!(w, FormatWarning::ContentChanged { .. }))
+        {
+            warnings.push(FormatWarning::ContentChanged { detail });
+        }
+        return (input.to_string(), warnings);
+    }
+
     (result, warnings)
 }
 

@@ -13,7 +13,7 @@ use std::io::Write;
 use std::path::Path;
 use tempfile::NamedTempFile;
 
-use crate::formatter::{FormatConfig, format_text_with_diagnostics_and_path};
+use crate::formatter::{FormatConfig, FormatWarning, format_text_with_diagnostics_and_path};
 
 /// Result of interactive formatting session
 #[derive(Debug, Clone)]
@@ -40,8 +40,26 @@ pub fn run_interactive(file_path: &Path, config: &FormatConfig) -> Result<Intera
         .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
 
     // Format the text
-    let (formatted, _warnings) =
+    let (formatted, warnings) =
         format_text_with_diagnostics_and_path(&original, config, Some(file_path), false);
+
+    // A file the formatter refused to touch also comes back unchanged, so say
+    // which of the two happened rather than reporting it as already formatted
+    if let Some(detail) = warnings.iter().find_map(|w| match w {
+        FormatWarning::ContentChanged { detail } => Some(detail),
+        _ => None,
+    }) {
+        let term = Term::stderr();
+        term.write_line(&format!(
+            "Left unchanged: formatting would have changed this file's contents ({}). This is a bug in cmake-fmt.",
+            detail
+        ))?;
+        return Ok(InteractiveResult {
+            accepted: 0,
+            rejected: 0,
+            suppressed: 0,
+        });
+    }
 
     // Check if already formatted
     if original == formatted {

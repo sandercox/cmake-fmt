@@ -214,3 +214,133 @@ fn test_ordinary_files_are_unaffected() {
         "set(A b)\nif(X)\n\tmessage(hi)\nendif()\n"
     );
 }
+
+#[test]
+fn test_line_ranges_output_is_checked_too() {
+    // --line-ranges splices lines from the formatted text into the original by
+    // index, so as soon as formatting changes the line count the result says
+    // something neither text said. The guard sat one level below that splice,
+    // so this destroyed two thirds of the file and exited 0.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let path = tempdir.path().join("CMakeLists.txt");
+    let input = "target_sources(t PRIVATE aaaaaaaaaa.cpp bbbbbbbbbb.cpp cccccccccc.cpp dddddddddd.cpp)\nmessage(hi)\n";
+    std::fs::write(&path, input).expect("Failed to write file");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["-i", "--line-ranges", "1:1", path.to_str().unwrap()])
+        .output()
+        .expect("Failed to run cmake-fmt");
+
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("Failed to read back"),
+        input,
+        "the spliced output was written to the file"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "the run should fail: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_line_ranges_still_formats_what_it_can() {
+    // The guard must not turn --line-ranges off: a range whose formatting does
+    // not change the line count still applies.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let path = tempdir.path().join("CMakeLists.txt");
+    std::fs::write(&path, "set(A    b)\nset(C    d)\n").expect("Failed to write file");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["-i", "--line-ranges", "1:1", path.to_str().unwrap()])
+        .output()
+        .expect("Failed to run cmake-fmt");
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read back"),
+        "set(A b)\nset(C    d)\n"
+    );
+}
+
+#[test]
+fn test_stdout_mode_fails_when_a_file_is_left_alone() {
+    // Printing to stdout is the mode a person runs by hand; it returned success
+    // unconditionally, so it was the one mode that said nothing was wrong.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let path = tempdir.path().join("CMakeLists.txt");
+    let input = "f((A # c";
+    std::fs::write(&path, input).expect("Failed to write file");
+
+    let output = Command::new(cmake_fmt_bin())
+        .arg(path.to_str().unwrap())
+        .output()
+        .expect("Failed to run cmake-fmt");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), input);
+}
+
+#[test]
+fn test_recasing_a_user_command_is_not_a_content_change() {
+    // command_case and user_command_case are independent settings. Only the
+    // first was consulted, so `command_case = preserve` — an ordinary choice —
+    // reported every re-cased user command as a content change and quietly
+    // stopped formatting the file.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let path = tempdir.path().join("CMakeLists.txt");
+    std::fs::write(
+        &path,
+        "function(my_helper arg)\n\tmessage(${arg})\nendfunction()\n\nMY_HELPER(hello)\nset(X    y)\n",
+    )
+    .expect("Failed to write file");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args([
+            "-i",
+            "--style",
+            "command_case=preserve,user_command_case=lowercase",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to run cmake-fmt");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "guard fired on a permitted re-casing: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let formatted = std::fs::read_to_string(&path).expect("read back");
+    assert!(
+        formatted.contains("my_helper(hello)") && formatted.contains("set(X y)"),
+        "the file was not formatted:\n{}",
+        formatted
+    );
+}
+
+#[test]
+fn test_an_invented_closing_paren_is_refused() {
+    // The parser hangs a command's own parens off the invocation rather than the
+    // argument list, so a model built only from the argument list could not see
+    // the formatter supply a missing `)` — one of the bugs this guard exists
+    // for. A real corpus file (llvm/HandleLLVMOptions.cmake) ends this way,
+    // with its closing paren inside a trailing comment.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let path = tempdir.path().join("CMakeLists.txt");
+    let input = "set(flags\n\t/wd4324  # padded due to alignment specifier)\n";
+    std::fs::write(&path, input).expect("Failed to write file");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["-i", path.to_str().unwrap()])
+        .output()
+        .expect("Failed to run cmake-fmt");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read back"),
+        input,
+        "the file should be byte-identical"
+    );
+}

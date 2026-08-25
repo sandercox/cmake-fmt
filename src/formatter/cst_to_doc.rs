@@ -1314,7 +1314,7 @@ pub(crate) fn render_nested_group(group: &ArgumentList) -> String {
 
 /// Detect the mode keyword for multi-mode commands
 /// Returns the first unquoted argument, or None if the first arg is a variable reference
-fn detect_mode_keyword(arg_list: &ArgumentList) -> Option<String> {
+pub(super) fn detect_mode_keyword(arg_list: &ArgumentList) -> Option<String> {
     for child in arg_list.syntax().children_with_tokens() {
         if let NodeOrToken::Token(token) = child {
             match token.kind() {

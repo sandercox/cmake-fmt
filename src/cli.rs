@@ -810,6 +810,7 @@ fn process_files(
         // SEQUENTIAL PATH: stdout mode
         let mut stdout_handle = stdout().lock();
         let mut config_cache: HashMap<PathBuf, FormatConfig> = HashMap::new();
+        let mut any_content_changed = false;
 
         for file in files {
             // Validate file exists
@@ -842,10 +843,19 @@ fn process_files(
                 )
             };
             print_warnings(&warnings, &file.display().to_string());
+            if content_changed(&warnings) {
+                any_content_changed = true;
+            }
             write!(stdout_handle, "{}", formatted)?;
         }
 
-        return Ok(ExitCode::SUCCESS);
+        // A file the formatter refused to touch fails the run in every mode, or
+        // the one mode a user runs by hand is the one that says nothing is wrong
+        return Ok(if any_content_changed {
+            ExitCode::from(1)
+        } else {
+            ExitCode::SUCCESS
+        });
     }
 
     // PARALLEL PATH: in-place, check, or diff mode
@@ -980,6 +990,7 @@ fn process_files(
     // Step 7: Aggregate results
     let mut any_need_formatting = false;
     let mut any_content_changed = false;
+    let mut any_error = false;
     for result in results {
         match result {
             Ok(outcome) => {
@@ -987,7 +998,11 @@ fn process_files(
                 any_content_changed |= outcome.content_changed;
             }
             Err(e) => {
+                // A file that could not be read or written is a failed run: a
+                // report nobody reads is how an unformatted file reaches a
+                // release
                 eprintln!("Error processing file: {:#}", e);
+                any_error = true;
             }
         }
     }
@@ -1000,7 +1015,7 @@ fn process_files(
 
     // A file left alone because formatting would have changed it fails the run
     // in every mode, so CI sees it rather than only whoever reads stderr.
-    if any_content_changed || ((check_mode || diff_mode) && any_need_formatting) {
+    if any_error || any_content_changed || ((check_mode || diff_mode) && any_need_formatting) {
         Ok(ExitCode::from(1))
     } else {
         Ok(ExitCode::SUCCESS)

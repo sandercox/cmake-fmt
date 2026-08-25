@@ -22,6 +22,7 @@ pub use line_ranges::{LineRange, format_with_line_ranges, parse_line_ranges};
 pub use suppression::FormatWarning;
 
 use crate::cst::parse_text;
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Detect the line ending style used in the input text.
@@ -41,6 +42,88 @@ pub fn detect_line_ending(input: &str) -> LineEnding {
     } else {
         LineEnding::Lf
     }
+}
+
+/// Whether `output` says something different from `input`, for a caller that
+/// assembles the buffer itself rather than taking the formatter's.
+///
+/// `--line-ranges` is the one such caller: it splices lines from the formatted
+/// text into the original by index, so its result is neither text and has to be
+/// checked in its own right.
+pub(crate) fn describe_content_change(
+    input: &str,
+    output: &str,
+    config: &FormatConfig,
+    file_path: Option<&Path>,
+    verbose: bool,
+) -> Option<String> {
+    let cst = parse_text(&input.replace('\r', ""));
+    let grammars = resolve_user_grammars(&cst.root, config, file_path, verbose);
+    content_check::check(input, output, config, &grammars).map(|difference| difference.summary)
+}
+
+/// The grammars the formatter will use for one file: auto-detected from
+/// `cmake_parse_arguments`, then the project's, then the config's, then any
+/// grammar files. Extracted so the content check can resolve them the same way
+/// the formatter did — a check that used different grammars would disagree
+/// about which lists may be reordered.
+fn resolve_user_grammars(
+    root: &crate::SyntaxNode,
+    config: &FormatConfig,
+    file_path: Option<&Path>,
+    verbose: bool,
+) -> HashMap<String, grammar::CommandGrammar> {
+    // Get single-file grammars from cmake_parse_arguments in current file
+    let single_file_grammars = grammar::user_scanner::extract_grammars_from_file(root);
+
+    // Get project-wide user grammars if file_path is provided
+    let user_grammars = if let Some(path) = file_path {
+        let mut merged = grammar::get_project_user_grammars(path, verbose);
+        // Single-file grammars override project-wide (local wins, matching user_defs behavior)
+        merged.extend(single_file_grammars);
+        merged
+    } else {
+        // Stdin case: use only single-file grammars
+        single_file_grammars
+    };
+
+    // Convert config grammars and merge (config overrides auto-detected)
+    let config_grammar_map = grammar::config_grammars_to_map(&config.command_grammars);
+    // Start with auto-detected grammars, then override with config grammars
+    let mut merged_grammars = user_grammars;
+    merged_grammars.extend(config_grammar_map);
+
+    // Load external grammar files (precedence: config > grammar_files > auto-detected)
+    for grammar_path in &config.grammar_files {
+        match std::fs::read_to_string(grammar_path) {
+            Ok(content) => {
+                match grammar::import_grammar_file(&content) {
+                    Ok(imported) => {
+                        // Imported grammars: insert only if not already present (config takes precedence)
+                        for (name, cg) in imported {
+                            merged_grammars.entry(name).or_insert(cg);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Failed to parse grammar file {}: {}",
+                            grammar_path.display(),
+                            e
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to read grammar file {}: {}",
+                    grammar_path.display(),
+                    e
+                );
+            }
+        }
+    }
+
+    merged_grammars
 }
 
 /// Format CMake code with the given configuration and return diagnostics
@@ -97,57 +180,7 @@ pub fn format_text_with_diagnostics_and_path(
         single_file_defs
     };
 
-    // Get single-file grammars from cmake_parse_arguments in current file
-    let single_file_grammars = grammar::user_scanner::extract_grammars_from_file(&cst.root);
-
-    // Get project-wide user grammars if file_path is provided
-    let user_grammars = if let Some(path) = file_path {
-        let mut merged = grammar::get_project_user_grammars(path, verbose);
-        // Single-file grammars override project-wide (local wins, matching user_defs behavior)
-        merged.extend(single_file_grammars);
-        merged
-    } else {
-        // Stdin case: use only single-file grammars
-        single_file_grammars
-    };
-
-    // Convert config grammars and merge (config overrides auto-detected)
-    let config_grammar_map = grammar::config_grammars_to_map(&config.command_grammars);
-    // Start with auto-detected grammars, then override with config grammars
-    let mut merged_grammars = user_grammars;
-    merged_grammars.extend(config_grammar_map);
-
-    // Load external grammar files (precedence: config > grammar_files > auto-detected)
-    for grammar_path in &config.grammar_files {
-        match std::fs::read_to_string(grammar_path) {
-            Ok(content) => {
-                match grammar::import_grammar_file(&content) {
-                    Ok(imported) => {
-                        // Imported grammars: insert only if not already present (config takes precedence)
-                        for (name, cg) in imported {
-                            merged_grammars.entry(name).or_insert(cg);
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to parse grammar file {}: {}",
-                            grammar_path.display(),
-                            e
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!(
-                    "Warning: Failed to read grammar file {}: {}",
-                    grammar_path.display(),
-                    e
-                );
-            }
-        }
-    }
-
-    let user_grammars = merged_grammars;
+    let user_grammars = resolve_user_grammars(&cst.root, config, file_path, verbose);
 
     let (mut result, warnings) =
         cst_to_doc::format_cst(&cst, config, parse_input, &user_defs, &user_grammars);
@@ -160,7 +193,7 @@ pub fn format_text_with_diagnostics_and_path(
     // Refuse to hand back output that says something different from the input.
     // Re-indenting and re-casing are the formatter's job; inventing or dropping
     // an argument is not, and both have shipped as bugs before.
-    if let Some(difference) = content_check::check(input, &result, config) {
+    if let Some(difference) = content_check::check(input, &result, config, &user_grammars) {
         let mut warnings = warnings;
         warnings.push(FormatWarning::ContentChanged {
             detail: difference.summary,
