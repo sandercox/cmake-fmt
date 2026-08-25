@@ -666,13 +666,14 @@ fn collect_cmake_files(
             } else {
                 dir.clone()
             };
-            // Only the .cmake-fmt-ignore chain decides here, never
-            // --ignore-file. The walk applies its own add_ignore matcher to
-            // every entry it visits, so consulting it for the root as well
-            // would drop the whole tree for the ordinary allowlist idiom
-            // (`*` plus `!*.cmake`) before the re-inclusion could apply — and
-            // the walk never tests its own root as an entry either.
-            let excluded = is_dir_ignored(&absolute, None, false);
+            // --ignore-file decides here too, or `--ignore-file` naming
+            // `build/` would exclude a file under `build/` on the stdin path
+            // while `cmake-fmt -r build` formatted it. What it may not do is
+            // decide about its own root directory: the allowlist idiom (`*`
+            // plus `!*.cmake`) matches that directory with `*`, and the walk
+            // never tests its own root as an entry either. `ignore_decision`
+            // enforces that.
+            let excluded = is_dir_ignored(&absolute, ignore_file, false);
             if excluded {
                 eprintln!("Skipping {}: excluded by an ignore file", dir.display());
             }
@@ -860,10 +861,17 @@ fn ignore_decision(
         // no say about that directory itself.
         .filter(|(root, _)| root.as_path() != target && target.starts_with(root))
         .find_map(|(_, matcher)| consult(matcher))
-        // --ignore-file is consulted without that containment check: rooted at
+        // --ignore-file is consulted without the containment check: rooted at
         // the working directory like the walk's add_ignore, its basename
-        // patterns still have to apply to a file outside that directory.
-        .or_else(|| extra.and_then(|(_, matcher)| consult(matcher)))
+        // patterns still have to apply to a file outside that directory. The
+        // one rule it does share is that it has no say about its own root —
+        // otherwise `*` in the allowlist idiom excludes the working directory
+        // and takes the whole tree with it.
+        .or_else(|| {
+            extra
+                .filter(|(root, _)| root.as_path() != target)
+                .and_then(|(_, matcher)| consult(matcher))
+        })
 }
 
 /// Build a gitignore matcher for `file`, anchored at `root`.
