@@ -447,6 +447,33 @@ pub fn run() -> Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     }
 
+    // `--ignore-file` is read by the walk-root check, once per root, and again
+    // by the walk itself. A one-shot stream — the fifo behind `<(...)`, or
+    // `/dev/stdin` — is empty by the second read, so the first root examined ate
+    // the patterns and everything after it was formatted. Copy such a source
+    // once so every reader sees the same content; a regular file needs nothing.
+    let mut materialized: Option<tempfile::NamedTempFile> = None;
+    let ignore_file: Option<PathBuf> = match cli.ignore_file.as_deref() {
+        Some(path) if !path.is_file() => match copy_ignore_file(path) {
+            Ok(temp) => {
+                let owned = temp.path().to_path_buf();
+                materialized = Some(temp);
+                Some(owned)
+            }
+            Err(err) => {
+                eprintln!(
+                    "error: --ignore-file {} cannot be read: {}",
+                    path.display(),
+                    err
+                );
+                return Ok(ExitCode::FAILURE);
+            }
+        },
+        other => other.map(|path| path.to_path_buf()),
+    };
+    // Held so the copy outlives every reader
+    let _materialized = &materialized;
+
     // Handle interactive mode first (if --interactive flag is set)
     if cli.interactive {
         // Determine if stdin input is specified
@@ -527,7 +554,7 @@ pub fn run() -> Result<ExitCode> {
         // pipe the buffer through --assume-filename skip the same files the
         // directory walk skips (e.g. format-on-save in the VS Code extension).
         if let Some(path) = assume_path.as_deref()
-            && is_path_ignored(path, cli.ignore_file.as_deref(), cli.verbose)
+            && is_path_ignored(path, ignore_file.as_deref(), cli.verbose)
         {
             return passthrough_stdin(check_mode, diff_mode);
         }
@@ -558,7 +585,7 @@ pub fn run() -> Result<ExitCode> {
         let collected = collect_cmake_files(
             &paths_to_search,
             cli.recursive,
-            cli.ignore_file.as_deref(),
+            ignore_file.as_deref(),
             cli.verbose,
         )?;
 
@@ -802,6 +829,7 @@ fn is_dir_ignored(path: &Path, ignore_file: Option<&Path>, verbose: bool) -> boo
 }
 
 fn is_ignored(path: &Path, is_dir: bool, ignore_file: Option<&Path>, verbose: bool) -> bool {
+    let spelled = path.to_path_buf();
     let path = resolve_path(path);
 
     // Directories from the filesystem root down to the file's own directory.
@@ -864,7 +892,9 @@ fn is_ignored(path: &Path, is_dir: bool, ignore_file: Option<&Path>, verbose: bo
     );
 
     if verbose && ignored {
-        eprintln!("verbose: {} is ignored, skipping", path.display());
+        // Named as the caller spelled it, so this line and the "Skipping …"
+        // line right after it are about a recognisably single directory
+        eprintln!("verbose: {} is ignored, skipping", spelled.display());
     }
 
     ignored
@@ -947,6 +977,20 @@ fn respell(path: &Path, roots: &[(PathBuf, PathBuf)]) -> PathBuf {
         }
     }
     path.to_path_buf()
+}
+
+/// Copy an ignore file that can only be read once into a temporary file.
+///
+/// Bounded by the same limit the readability check applies, so a device that
+/// never ends cannot fill the disk either.
+fn copy_ignore_file(path: &Path) -> std::io::Result<tempfile::NamedTempFile> {
+    use std::io::{Read, Write};
+
+    let mut temp = tempfile::NamedTempFile::new()?;
+    let mut source = std::fs::File::open(path)?.take(1 << 20);
+    std::io::copy(&mut source, temp.as_file_mut())?;
+    temp.as_file_mut().flush()?;
+    Ok(temp)
 }
 
 /// Whether `--ignore-file` can actually be read, and why not when it cannot.
@@ -1032,10 +1076,14 @@ fn resolve_path(path: &Path) -> PathBuf {
     } else {
         path.to_path_buf()
     };
-    let normalized = normalize_path(&absolute);
 
+    // Deliberately *not* normalized first. `link/..` is the parent of what
+    // `link` points at, not the directory `link` sits in, and only the
+    // filesystem knows which — collapsing `..` as text first named a different
+    // directory, and since walk roots are resolved here that meant walking one
+    // nobody asked for.
     let mut unresolved: Vec<std::ffi::OsString> = Vec::new();
-    let mut cursor = normalized.as_path();
+    let mut cursor = absolute.as_path();
     loop {
         if let Ok(real) = cursor.canonicalize() {
             let mut resolved = real;
@@ -1047,8 +1095,8 @@ fn resolve_path(path: &Path) -> PathBuf {
                 unresolved.push(name.to_os_string());
                 cursor = parent;
             }
-            // Nothing on this path exists; its own spelling is all there is
-            _ => return normalized,
+            // Nothing on this path exists, so a lexical answer is all there is
+            _ => return normalize_path(&absolute),
         }
     }
 }

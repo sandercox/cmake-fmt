@@ -1577,3 +1577,144 @@ fn test_interactive_validates_the_ignore_file() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn test_reported_paths_use_the_spelling_the_user_gave() {
+    // The walk runs on resolved roots so its verdicts do not depend on how a
+    // directory was named, but every message has to name the directory the user
+    // typed. Nothing asserted that, and the `..`-through-a-symlink case is also
+    // what catches a resolver that collapses `..` as text: `link/..` is the
+    // parent of link's *target*, not of the directory link sits in.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::create_dir_all(root.join("outer").join("inner")).expect("dirs");
+    std::fs::create_dir(root.join("outer").join("other")).expect("dirs");
+    let unformatted = "set(A   b)\n";
+    std::fs::write(
+        root.join("outer").join("inner").join("f.cmake"),
+        unformatted,
+    )
+    .expect("write");
+    std::os::unix::fs::symlink("outer/other", root.join("link")).expect("symlink");
+
+    for spelling in ["outer/inner", "./outer/inner", "link/../inner"] {
+        let output = Command::new(cmake_fmt_bin())
+            .args(["-r", "--check", spelling])
+            .current_dir(root)
+            .output()
+            .expect("run");
+        let report = String::from_utf8_lossy(&output.stdout).to_string()
+            + &String::from_utf8_lossy(&output.stderr);
+        assert!(
+            report.contains(&format!("{}/f.cmake", spelling)),
+            "the report should name the path as {:?} was spelled:\n{}",
+            spelling,
+            report
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "the file needs formatting and should be found:\n{}",
+            report
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn test_a_one_shot_ignore_file_is_read_once() {
+    // `--ignore-file` is read by the walk-root check, once per root, and again
+    // by the walk. A fifo — which is what `<(...)` is — is empty by the second
+    // read, so the first root examined ate the patterns and everything after it
+    // was formatted, with the verdict depending on argument order.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::create_dir(root.join("a")).expect("dirs");
+    std::fs::create_dir(root.join("b")).expect("dirs");
+    let unformatted = "set(A   b)\n";
+    std::fs::write(root.join("a").join("f.cmake"), unformatted).expect("write");
+    std::fs::write(root.join("b").join("f.cmake"), unformatted).expect("write");
+
+    // A fifo with a writer, which is what process substitution gives the tool
+    let fifo = root.join("patterns");
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(format!("mkfifo {}", fifo.display()))
+        .status()
+        .expect("mkfifo");
+    if !status.success() {
+        return; // no mkfifo on this platform
+    }
+
+    for args in [
+        vec!["a", "b", "--check"],
+        vec!["b", "a", "--check"],
+        vec!["-r", ".", "--check"],
+    ] {
+        // A writer that closes after one line; each run gets its own
+        // Bounded: if a regression makes the tool read the fifo twice, the
+        // second read must fail rather than block the test for ever
+        let feeder = Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "printf 'f.cmake\\n' > {} & sleep 2; kill %1 2>/dev/null",
+                fifo.display()
+            ))
+            .spawn()
+            .expect("spawn writer");
+
+        let mut full = args.clone();
+        full.push("--ignore-file");
+        let fifo_str = fifo.to_str().unwrap().to_string();
+        full.push(&fifo_str);
+        let output = Command::new(cmake_fmt_bin())
+            .args(&full)
+            .current_dir(root)
+            .output()
+            .expect("run");
+        let mut feeder = feeder;
+        let _ = feeder.wait();
+
+        let report = String::from_utf8_lossy(&output.stdout).to_string()
+            + &String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !report.contains("Would reformat"),
+            "{:?} formatted a file the ignore file excludes:\n{}",
+            args,
+            report
+        );
+    }
+}
+
+#[test]
+fn test_a_large_ignored_buffer_is_drained() {
+    // check and diff modes emit nothing for an ignored file, but the pipe still
+    // has to be drained or a writer larger than the pipe buffer dies of SIGPIPE.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join(".cmake-fmt-ignore"), "a.cmake\n").expect("write");
+
+    let mut child = Command::new(cmake_fmt_bin())
+        .args(["-", "--assume-filename", "a.cmake", "--check"])
+        .current_dir(root)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn");
+
+    // Comfortably larger than a pipe buffer
+    let big = "set(A   b)\n".repeat(200_000);
+    let wrote = child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(big.as_bytes());
+    assert!(wrote.is_ok(), "the writer was killed: {:?}", wrote);
+    drop(child.stdin.take());
+
+    let output = child.wait_with_output().expect("wait");
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stdout.is_empty(), "--check should emit nothing");
+}
