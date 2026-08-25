@@ -158,6 +158,10 @@ struct Rules<'a> {
     force_possible: bool,
     /// A closer's arguments may be dropped.
     remove_possible: bool,
+    /// A comment's whitespace may be rewritten, so it is not comparable.
+    /// `normalize_comment` only asks whether the style is `Preserve`, so any
+    /// other value stands for "the formatter may move it".
+    comment_style: CommentStyle,
     side: Side,
 }
 
@@ -180,6 +184,13 @@ impl<'a> Rules<'a> {
             force_possible: config.closing_style == ClosingStyle::Force || overrides.forces_closers,
             remove_possible: config.closing_style == ClosingStyle::Remove
                 || overrides.removes_closers,
+            comment_style: if config.comment_style != CommentStyle::Preserve
+                || overrides.restyles_comments
+            {
+                CommentStyle::HashSpace
+            } else {
+                CommentStyle::Preserve
+            },
             side,
         }
     }
@@ -192,31 +203,55 @@ pub(crate) struct StyleOverrides {
     reorders: bool,
     forces_closers: bool,
     removes_closers: bool,
+    restyles_comments: bool,
 }
 
 impl StyleOverrides {
-    /// Read every style directive in `source`, whether or not the formatter
+    /// Read every style directive in the file, whether or not the formatter
     /// reached it — a directive applies from where it appears, and widening for
     /// one that turns out to be unreachable costs only strictness.
-    fn read(source: &str) -> Self {
+    ///
+    /// Each directive is applied to a copy of the config through the same
+    /// `apply_override` the formatter uses, and the *result* is inspected. Doing
+    /// it by matching keys and values by hand missed `comment_style` entirely —
+    /// one of this module's own four exemptions — and accepted values
+    /// `apply_override` rejects, so a typo opened an exemption for the whole
+    /// file.
+    ///
+    /// The comments come from the tree, not from scanning lines for a `#`: the
+    /// first `#` on a line can be inside a quoted argument, a bracket argument
+    /// or a bracket comment, and a directive after one of those was invisible.
+    fn read(cst: &CSTRoot, config: &FormatConfig) -> Self {
         let mut overrides = Self::default();
-        for line in source.lines() {
-            let Some(hash) = line.find('#') else { continue };
+
+        for token in cst
+            .root
+            .descendants_with_tokens()
+            .filter_map(|child| child.into_token())
+            .filter(|token| token.kind() == SyntaxKind::COMMENT)
+        {
             let Some(super::suppression::Directive::Style { key, value }) =
-                super::suppression::parse_directive(line[hash..].trim())
+                super::suppression::parse_directive(token.text().trim())
             else {
                 continue;
             };
-            match key.as_str() {
-                "command_case" | "user_command_case" => overrides.recases |= value != "preserve",
-                "sort_sources" | "source_grouping" => overrides.reorders |= value != "none",
-                "closing_style" => {
-                    overrides.forces_closers |= value == "force";
-                    overrides.removes_closers |= value == "remove";
-                }
-                _ => {}
+
+            let mut probe = config.clone();
+            // A value the formatter rejects is a value the formatter never
+            // applied, so it must not widen anything
+            if probe.apply_override(&key, &value).is_err() {
+                continue;
             }
+
+            overrides.recases |= probe.command_case != CommandCase::Preserve
+                || probe.user_command_case != UserCommandCase::Preserve;
+            overrides.reorders |= probe.sort_sources != SortSources::None
+                || probe.source_grouping != SourceGrouping::None;
+            overrides.forces_closers |= probe.closing_style == ClosingStyle::Force;
+            overrides.removes_closers |= probe.closing_style == ClosingStyle::Remove;
+            overrides.restyles_comments |= probe.comment_style != CommentStyle::Preserve;
         }
+
         overrides
     }
 }
@@ -257,13 +292,13 @@ impl Content {
                         .descendants_with_tokens()
                         .filter_map(|it| it.into_token())
                     {
-                        if let Some(text) = significant(&token, rules.config.comment_style) {
+                        if let Some(text) = significant(&token, rules.comment_style) {
                             entries.push(Entry::Loose(text));
                         }
                     }
                 }
                 NodeOrToken::Token(token) => {
-                    if let Some(text) = significant(&token, rules.config.comment_style) {
+                    if let Some(text) = significant(&token, rules.comment_style) {
                         entries.push(Entry::Loose(text));
                     }
                 }
@@ -428,7 +463,7 @@ fn command_entry(
             NodeOrToken::Token(token) => {
                 // The parens, and any comment the parser bumped out of the
                 // argument list. Nothing here is the formatter's to change.
-                if let Some(text) = significant(&token, rules.config.comment_style) {
+                if let Some(text) = significant(&token, rules.comment_style) {
                     shape.push(text);
                 }
             }
@@ -442,7 +477,7 @@ fn command_entry(
                     .descendants_with_tokens()
                     .filter_map(|it| it.into_token())
                 {
-                    if let Some(text) = significant(&token, rules.config.comment_style) {
+                    if let Some(text) = significant(&token, rules.comment_style) {
                         shape.push(text);
                     }
                 }
@@ -466,7 +501,7 @@ fn command_entry(
         openers.push(
             arg_list
                 .as_ref()
-                .map(|list| logical_values(list, rules.config.comment_style))
+                .map(|list| logical_values(list, rules.comment_style))
                 .unwrap_or_default(),
         );
         None
@@ -551,7 +586,7 @@ fn comparable_args(arg_list: &ArgumentList, name_lower: &str, rules: &Rules) -> 
 
     // Nothing here may move, so order is part of the content.
     let mut args = Vec::new();
-    collect_args(arg_list.syntax(), rules.config.comment_style, &mut args);
+    collect_args(arg_list.syntax(), rules.comment_style, &mut args);
     args
 }
 
@@ -637,7 +672,7 @@ fn reorderable_args(
     // the sorting pass moves a comment with the argument it belongs to. So a
     // comment's content is compared, its place in the list is not.
     let mut comments: Vec<String> = Vec::new();
-    collect_comments(arg_list.syntax(), rules.config.comment_style, &mut comments);
+    collect_comments(arg_list.syntax(), rules.comment_style, &mut comments);
     comments.sort();
     out.extend(comments);
 
@@ -769,10 +804,24 @@ pub(crate) fn check(
     // The input is what carries the directives; the output should carry the same
     // ones, but reading them from the input is what makes a dropped directive a
     // difference rather than a silent widening.
-    let overrides = StyleOverrides::read(&input);
+    // Nothing to compare when nothing changed, and `--check` over an
+    // already-formatted tree is the common case
+    if input == output {
+        return None;
+    }
 
-    Content::read(&input, config, &overrides, grammars, Side::Input).diff(
-        &Content::read(&output, config, &overrides, grammars, Side::Output),
+    let input_cst = parse_text(&input);
+    let overrides = StyleOverrides::read(&input_cst, config);
+
+    Content::from_cst(
+        &input_cst,
+        &Rules::new(config, &overrides, grammars, Side::Input),
+    )
+    .diff(
+        &Content::from_cst(
+            &parse_text(&output),
+            &Rules::new(config, &overrides, grammars, Side::Output),
+        ),
         &input,
     )
 }
@@ -875,6 +924,51 @@ mod tests {
             "target_sources(t PRIVATE a.cpp b.cpp)\n",
             &config
         ));
+    }
+
+    #[test]
+    fn test_the_block_lists_match_the_formatters() {
+        // `block`/`endblock` were here and not in the formatter's lists, so on an
+        // unbalanced `endblock()` this stack popped a frame the formatter kept
+        // and then disagreed about which opener a later closer belonged to.
+        let config = FormatConfig {
+            closing_style: ClosingStyle::Force,
+            ..Default::default()
+        };
+        // The formatter leaves `endblock` alone, so its arguments are its own
+        assert!(accepts(
+            "if(A)\nendblock()\nendif()\n",
+            "if(A)\nendblock()\nendif(A)\n",
+            &config
+        ));
+        // And an `endblock` must not be offered the `if`'s arguments
+        assert!(!accepts(
+            "if(A)\nendblock()\nendif()\n",
+            "if(A)\nendblock(A)\nendif(A)\n",
+            &config
+        ));
+    }
+
+    #[test]
+    fn test_a_closer_reading_is_offered_only_when_its_setting_is_reachable() {
+        // The two alternatives are gated on the setting being possible somewhere
+        // in the file. Offering them unconditionally accepts a closer rewritten
+        // under a setting nobody asked for.
+        let preserve = FormatConfig {
+            closing_style: ClosingStyle::Preserve,
+            ..Default::default()
+        };
+        assert!(!accepts("if(A)\nendif()\n", "if(A)\nendif(A)\n", &preserve));
+        assert!(!accepts("if(A)\nendif(A)\n", "if(A)\nendif()\n", &preserve));
+    }
+
+    #[test]
+    fn test_a_gained_or_lost_command_is_a_difference() {
+        // The length comparison is what catches a whole command appearing or
+        // disappearing; nothing else looks at the entry count.
+        let config = FormatConfig::default();
+        assert!(!accepts("set(A b)\n", "set(A b)\nset(C d)\n", &config));
+        assert!(!accepts("set(A b)\nset(C d)\n", "set(A b)\n", &config));
     }
 
     #[test]

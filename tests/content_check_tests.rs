@@ -596,3 +596,99 @@ fn test_a_command_the_formatter_does_not_treat_as_a_block_is_left_alone() {
         );
     }
 }
+
+#[test]
+fn test_a_file_that_sets_its_own_style_is_still_formatted() {
+    // End to end, because the unit tests drive the check with a hand-built
+    // output and cannot see whether the formatter and the check agree about what
+    // a directive turned on. Two ways they did not: `comment_style` was missing
+    // from the union entirely, and the scan took the first `#` on the line —
+    // which can be inside a quoted argument.
+    let tempdir = TempDir::new().expect("tempdir");
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "comment_style=hash_space",
+            "comment_style=preserve",
+            "# cmake-fmt: comment_style=hash_space\nset(A b)\n#foo\n",
+        ),
+        (
+            "sort_sources behind a quoted hash",
+            "",
+            "set(X \"#h\") # cmake-fmt: sort_sources=alphabetical\nset(SRCS b.cpp a.cpp)\n",
+        ),
+        (
+            "sort_sources after a bracket comment",
+            "",
+            "#[[c]] # cmake-fmt: sort_sources=alphabetical\nset(SRCS b.cpp a.cpp)\n",
+        ),
+        (
+            "closing_style=force",
+            "closing_style=preserve",
+            "# cmake-fmt: closing_style=force\nif(A)\n\tmessage(x)\nendif()\n",
+        ),
+        (
+            "command_case=uppercase",
+            "command_case=preserve,user_command_case=preserve",
+            "# cmake-fmt: command_case=uppercase\nset(C d)\n",
+        ),
+        (
+            "source_grouping=headers_first",
+            "",
+            "# cmake-fmt: source_grouping=headers_first\nset(SRCS a.cpp a.h)\n",
+        ),
+    ];
+
+    for (name, style, source) in cases {
+        let path = tempdir.path().join("CMakeLists.txt");
+        std::fs::write(&path, source).expect("write");
+
+        let mut args = vec!["-i".to_string()];
+        if !style.is_empty() {
+            args.push("--style".to_string());
+            args.push((*style).to_string());
+        }
+        args.push(path.to_str().unwrap().to_string());
+
+        let output = Command::new(cmake_fmt_bin())
+            .args(&args)
+            .output()
+            .expect("run");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{} was refused: {}",
+            name,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn test_an_invalid_directive_value_does_not_open_an_exemption() {
+    // The formatter rejects the value and carries on with the old setting, so
+    // the check must not widen for it. Comparing raw strings accepted anything
+    // that was not the literal default.
+    let tempdir = TempDir::new().expect("tempdir");
+    let path = tempdir.path().join("CMakeLists.txt");
+    std::fs::write(&path, "# cmake-fmt: command_case=garbage\nset(A   b)\n").expect("write");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args([
+            "-i",
+            "--style",
+            "command_case=preserve,user_command_case=preserve",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run");
+
+    // The file still formats — the invalid value changes nothing — and the
+    // command's case is preserved
+    assert_eq!(output.status.code(), Some(0));
+    let formatted = std::fs::read_to_string(&path).expect("read back");
+    assert!(
+        formatted.contains("set(A b)"),
+        "the file should still be formatted:\n{}",
+        formatted
+    );
+}
