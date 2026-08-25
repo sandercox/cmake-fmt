@@ -2841,3 +2841,88 @@ fn test_a_single_argument_condition_keeps_the_generic_layout() {
     );
     assert_eq!(result, format_text(&result, &config), "not idempotent");
 }
+
+#[test]
+fn test_the_trailing_comment_is_measured_as_it_will_be_written() {
+    // The layout counted the source text of the trailing comment, but the
+    // renderer rewrites that region: one space before the `#`, the whitespace
+    // after it set by `comment_style`, trailing whitespace dropped, and only the
+    // first comment kept on the line. So the decision was made against a line
+    // that is never written — two spellings that render identically wrapped
+    // differently, and the two-space form stayed wrapped for ever.
+    let config = default_config();
+    let comment = "c".repeat(60);
+
+    let one_space = format_text(
+        &format!("if(AAAA AND BBBB) # {}\nendif()\n", comment),
+        &config,
+    );
+    let two_spaces = format_text(
+        &format!("if(AAAA AND BBBB)  # {}\nendif()\n", comment),
+        &config,
+    );
+    assert_eq!(
+        one_space, two_spaces,
+        "two spellings of the same rendered line formatted differently"
+    );
+    assert_eq!(one_space.lines().next().unwrap().chars().count(), 80);
+    assert_eq!(
+        one_space,
+        format_text(&one_space, &config),
+        "not idempotent"
+    );
+
+    // Each of the renderer's rewrites has to be counted. `#x` gains a space
+    // after the hash, and trailing whitespace is stripped only *after* the
+    // renderer has decided where to break — so it counts toward the line even
+    // though it never reaches the file. Getting either wrong makes the layout
+    // decline and the generic one-argument-per-line shape get written.
+    let result = format_text(
+        &format!(
+            "if(AA AND BBBB) #{}   \n\tmessage(x)\nendif()\n",
+            "c".repeat(60)
+        ),
+        &config,
+    );
+    assert!(
+        result.contains("\tAND BBBB\n"),
+        "the clause layout gave way to the generic one:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // `#x` gains a space, so it is one column wider than the source says
+    let tight = format_text(
+        &format!("if(AAAA AND BBBB) #{}\nendif()\n", "c".repeat(62)),
+        &config,
+    );
+    for line in tight.lines() {
+        if line.split_whitespace().count() > 1 {
+            assert!(
+                line.chars().count() <= 80,
+                "line overflows: {}\n{}",
+                line.chars().count(),
+                tight
+            );
+        }
+    }
+    assert_eq!(tight, format_text(&tight, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_broken_condition_does_not_reserve_room_for_the_trailing_comment() {
+    // Once the condition has broken, the `)` and the comment take their own
+    // line, so reserving room for the comment pushed the last word down for
+    // nothing.
+    let config = default_config();
+    let result = format_text(
+        "if(AAAA AND BBBBBBBB CCCCCCCC DDDDDDDD EEEEEEEE FFFFFFFF GGGG) # cccccccccccccccccccccccccccccc\n\tmessage(x)\nendif()\n",
+        &config,
+    );
+    assert!(
+        result.contains("FFFFFFFF GGGG\n"),
+        "the last word was pushed onto its own line:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}

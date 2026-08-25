@@ -990,26 +990,43 @@ fn is_condition_operator(arg: &str) -> bool {
 /// sibling token, so the layout has to reach for it — and it has to, because it
 /// decides whether the condition fits on the line and the comment is part of
 /// that line.
-fn trailing_width_after(arg_list: &ArgumentList) -> usize {
+fn trailing_width_after(arg_list: &ArgumentList, config: &FormatConfig) -> usize {
     let Some(invocation) = arg_list.syntax().parent() else {
         return 0;
     };
 
-    let mut width = 0;
+    // What the renderer emits, not what the source says. It writes exactly one
+    // space, keeps only the first comment on the line, normalizes the whitespace
+    // after the `#` according to `comment_style`, and drops trailing whitespace
+    // — so measuring the raw tokens measured a line that is never written, and
+    // a condition that fits was wrapped for ever while one that does not was
+    // left to overflow.
     let mut next = invocation.next_sibling_or_token();
     while let Some(sibling) = next {
         match sibling.kind() {
-            SyntaxKind::WHITESPACE | SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
-                if let Some(token) = sibling.as_token() {
-                    width += display_width(token.text());
-                }
+            SyntaxKind::WHITESPACE => {}
+            SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
+                let Some(token) = sibling.as_token() else {
+                    return 0;
+                };
+                let rendered =
+                    cmake_rules::normalize_comment_whitespace(token.text(), config.comment_style);
+                // A bracket comment can span lines; only its first one shares
+                // this line
+                let first_line = rendered.split('\n').next().unwrap_or(&rendered);
+                // Not trimmed: trailing whitespace is stripped after the
+                // renderer has already decided where to break, so `pretty`
+                // measures it and this has to as well. Trimming it here made the
+                // model declare a fit the renderer then refused, and the generic
+                // one-argument-per-line layout is what got written.
+                return 1 + display_width(first_line);
             }
             // A newline, or anything that starts a new construct, ends the line
             _ => break,
         }
         next = sibling.next_sibling_or_token();
     }
-    width
+    0
 }
 
 /// Lay out an `if`/`elseif`/`while` condition that doesn't fit on one line.
@@ -1143,7 +1160,19 @@ fn format_condition_args(
                 head
             };
             let is_final = clause_idx == last_clause && word_idx + 1 == clause.len();
-            let reserved = if is_final { closing_width } else { 0 };
+            // Once the condition has broken, the `)` and whatever follows it go
+            // on their own line, so reserving room for the trailing text pushed
+            // the last word down for nothing.
+            let still_one_line = lines.is_empty() && first_line.is_none();
+            let reserved = if is_final {
+                if still_one_line {
+                    closing_width
+                } else {
+                    closing_width - trailing
+                }
+            } else {
+                0
+            };
 
             if !current.is_empty() && limit > 0 && used + 1 + head + reserved > limit {
                 // Fill up to the limit, then continue the clause one level deeper
@@ -1236,7 +1265,7 @@ fn format_argument_list(
             ctx,
             name_lower,
             &args,
-            trailing_width_after(arg_list),
+            trailing_width_after(arg_list, ctx.config),
         )
     {
         return doc;
