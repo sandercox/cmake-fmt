@@ -747,11 +747,15 @@ fn format_command(
                             has_comments: false,
                         };
                         let laid_out = if is_condition_command(&name_lower) {
+                            // A reconstructed closer has no argument list to
+                            // read a trailing comment from, and the closer's own
+                            // trailing comment is the caller's to place
                             format_condition_args(
                                 &signals,
                                 ctx,
                                 &name_lower,
                                 &closer_ctx.opener_args,
+                                0,
                             )
                         } else {
                             None
@@ -950,8 +954,12 @@ fn display_width(s: &str) -> usize {
 
 /// Commands whose argument list is a boolean expression, not a list of values.
 ///
-/// `endif`/`endwhile` are included because with `closing_style = preserve` they
-/// echo the opener's condition, and the two should not be laid out differently.
+/// `endif`/`endwhile`/`else` are included because they can echo the opener's
+/// condition — under `closing_style = preserve` as written, under `force` as
+/// rebuilt — and a condition should be laid out as a condition wherever it
+/// appears. That is not the same as the two getting the *same* layout: `endif`
+/// is three columns wider than `if`, so there is a band of widths where the
+/// opener fits on one line and the closer does not.
 fn is_condition_command(name_lower: &str) -> bool {
     matches!(
         name_lower,
@@ -976,6 +984,34 @@ fn is_condition_operator(arg: &str) -> bool {
     arg == "AND" || arg == "OR"
 }
 
+/// The width of whatever will follow this command's `)` on the same line.
+///
+/// In practice a trailing comment. It lives outside the command node, as a
+/// sibling token, so the layout has to reach for it — and it has to, because it
+/// decides whether the condition fits on the line and the comment is part of
+/// that line.
+fn trailing_width_after(arg_list: &ArgumentList) -> usize {
+    let Some(invocation) = arg_list.syntax().parent() else {
+        return 0;
+    };
+
+    let mut width = 0;
+    let mut next = invocation.next_sibling_or_token();
+    while let Some(sibling) = next {
+        match sibling.kind() {
+            SyntaxKind::WHITESPACE | SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
+                if let Some(token) = sibling.as_token() {
+                    width += display_width(token.text());
+                }
+            }
+            // A newline, or anything that starts a new construct, ends the line
+            _ => break,
+        }
+        next = sibling.next_sibling_or_token();
+    }
+    width
+}
+
 /// Lay out an `if`/`elseif`/`while` condition that doesn't fit on one line.
 ///
 /// A condition reads as clauses joined by AND/OR, so it breaks before each
@@ -991,19 +1027,24 @@ fn is_condition_operator(arg: &str) -> bool {
 /// A clause too long for one line is filled across continuation lines indented
 /// one level deeper, so it still reads as a single clause.
 ///
-/// Applies whenever the condition will occupy more than one line — it either
-/// doesn't fit, or the author already broke it. Returns `None` when the generic
-/// layout should stay in charge: a condition that fits on one line and was
-/// written that way, one with fewer than two arguments, or one carrying
-/// comments, which have to keep their own lines. A blank line inside a
-/// condition is not preserved.
+/// Applies whenever the condition would occupy more than one line — it either
+/// doesn't fit, or the author already broke it. It may still collapse the result
+/// onto one line, if that is what fits. Returns `None` when the generic layout
+/// should stay in charge: a condition that fits on one line and was written that
+/// way, one with fewer than two arguments, or one carrying comments, which have
+/// to keep their own lines. A blank line inside a condition is not preserved.
+///
+/// "Fits" counts what the caller will append after the `)` as well — see
+/// `trailing`.
 fn format_condition_args(
     signals: &ArgumentFormatSignals,
     ctx: &FormatContext,
     name_lower: &str,
     args: &[String],
+    trailing: usize,
 ) -> Option<RcDoc<'static, ()>> {
-    // args.len() >= 2 is relied on by the `args.len() - 1` below
+    // A one-argument condition has nothing to split into clauses, so the generic
+    // layout is the right one for it. (`args.len() - 1` below only needs one.)
     if args.len() < 2 {
         return None;
     }
@@ -1027,7 +1068,14 @@ fn format_condition_args(
     // either it doesn't fit, or the author already broke it and the generic
     // layout would honour that by putting every word on its own line.
     let args_width: usize = args.iter().map(|a| display_width(a)).sum::<usize>() + args.len() - 1;
-    let flat_width = opening_width + args_width + paren_space + 1;
+    // `trailing` is whatever the caller will put after the `)` on the same line
+    // — a trailing comment, in practice. Leaving it out meant a condition that
+    // fits while its *line* does not: this layout declined, the generic path
+    // broke the line because it can see the comment, and on that broken input
+    // this layout took over and joined the condition again. A two-pass cycle
+    // with no fixed point, at default settings, so `--check` rejected the
+    // tool's own output forever.
+    let flat_width = opening_width + args_width + paren_space + 1 + trailing;
     let must_wrap = limit > 0 && flat_width > limit;
     if !must_wrap && !signals.force_multiline {
         return None;
@@ -1064,7 +1112,7 @@ fn format_condition_args(
     // fits, and the fill has to agree — otherwise a condition that overflows
     // *only* because of the `)` is filled onto one line and then the `)` is
     // pushed underneath it on its own, which reads as a bug.
-    let closing_width = paren_space + 1;
+    let closing_width = paren_space + 1 + trailing;
     let last_clause = clauses.len() - 1;
 
     for (clause_idx, clause) in clauses.iter().enumerate() {
@@ -1183,7 +1231,13 @@ fn format_argument_list(
     // `if`/`elseif`/`while` hold a boolean expression rather than a list, so
     // they get a layout that keeps each clause readable when it has to wrap.
     if is_condition_command(name_lower)
-        && let Some(doc) = format_condition_args(&signals, ctx, name_lower, &args)
+        && let Some(doc) = format_condition_args(
+            &signals,
+            ctx,
+            name_lower,
+            &args,
+            trailing_width_after(arg_list),
+        )
     {
         return doc;
     }

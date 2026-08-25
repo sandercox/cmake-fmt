@@ -2667,9 +2667,10 @@ fn test_a_multi_line_argument_is_measured_by_both_its_ends() {
     assert_eq!(result, format_text(&result, &config), "not idempotent");
 
     // And a `)` on its own line still has to follow arguments that are
-    // themselves split. This is the shape that made `broke` stop consulting
-    // `must_wrap`: the flat width counts the whole argument while the fill
-    // counts only its last line, so the two disagree about whether this wrapped.
+    // themselves split. (The shape where `broke` and `must_wrap` genuinely
+    // disagree is narrower than this one — `if(A "xx\nyy")` at a 10-column
+    // limit stays joined while `must_wrap` is true — so this asserts the
+    // invariant rather than that particular discrimination.)
     let narrow = FormatConfig {
         max_line_length: 20,
         ..Default::default()
@@ -2701,4 +2702,142 @@ fn test_a_multi_line_argument_is_measured_by_both_its_ends() {
         result
     );
     assert_eq!(result, format_text(&result, &at24), "not idempotent");
+}
+
+#[test]
+fn test_a_trailing_comment_counts_toward_the_conditions_line() {
+    // The layout measured only the condition, not the comment the caller
+    // appends after the `)`. So a condition that fits while its *line* does not:
+    // the layout declined, the generic path broke the line because it can see
+    // the comment, and on that broken input the layout took over and joined the
+    // condition again. A two-pass cycle with no fixed point, at default
+    // settings, which made `--check` reject the tool's own output forever.
+    let config = default_config();
+
+    for (name, closer) in [("if", "endif"), ("while", "endwhile")] {
+        for condition_len in [4, 8, 20] {
+            for comment_len in [40, 60, 67, 70] {
+                let input = format!(
+                    "{}({} BBBB) # {}\n{}()\n",
+                    name,
+                    "A".repeat(condition_len),
+                    "c".repeat(comment_len),
+                    closer
+                );
+                let once = format_text(&input, &config);
+                assert_eq!(
+                    once,
+                    format_text(&once, &config),
+                    "not a fixed point for a {}-column condition and a {}-column comment:\n{}",
+                    condition_len,
+                    comment_len,
+                    once
+                );
+            }
+        }
+    }
+
+    // And the clause layout is what breaks it: without the comment counted in
+    // the fit decision the layout declines and the generic path puts every
+    // argument on its own line
+    let result = format_text(
+        "if(FIRST_CONDITION AND SECOND_CONDITION) # explain why both of these have to hold\nendif()\n",
+        &config,
+    );
+    assert!(
+        result.contains("\tAND SECOND_CONDITION\n"),
+        "the clause layout gave way to the generic one:\n{}",
+        result
+    );
+
+    // The comment is what makes the difference: an 83-column line is broken,
+    // and the same condition with no comment stays on one line
+    let long = format!("if(AAAA BBBB) # {}\nendif()\n", "c".repeat(67));
+    assert_eq!(long.lines().next().unwrap().chars().count(), 83);
+    let with_comment = format_text(&long, &config);
+    assert!(
+        with_comment.lines().count() > 2,
+        "an 83-column line should have been broken:\n{}",
+        with_comment
+    );
+    assert_eq!(
+        format_text("if(AAAA BBBB)\nendif()\n", &config),
+        "if(AAAA BBBB)\nendif()\n"
+    );
+}
+
+#[test]
+fn test_the_column_after_a_multi_line_argument_is_its_last_line() {
+    // The column after an argument that spans lines is the width of its last
+    // line, not that width added to what came before it, and not the width of
+    // its first line. Both errors let the next argument join a line that then
+    // overflows.
+    let config = FormatConfig {
+        max_line_length: 30,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(A \"x\nyyyyyyyyyyyyyyyyyyyyyyyy\" BBBB)\n\tmessage(x)\nendif()\n",
+        &config,
+    );
+    for line in result.lines() {
+        if line.split_whitespace().count() > 1 {
+            assert!(
+                line.chars().count() <= 30,
+                "line overflows: {} columns\n{}",
+                line.chars().count(),
+                result
+            );
+        }
+    }
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // The column after it *replaces* what came before rather than adding to it:
+    // at a 12-column limit `yy" B)` fits, and adding the widths breaks `B` away
+    let narrow = FormatConfig {
+        max_line_length: 12,
+        ..Default::default()
+    };
+    let result = format_text("if(AAAA \"xx\nyy\" B)\n\tmessage(x)\nendif()\n", &narrow);
+    assert!(
+        result.contains("yy\" B)"),
+        "the column after a multi-line argument was added, not replaced:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &narrow), "not idempotent");
+
+    // And the flat closing space is emitted, which a mutation of it made
+    // non-idempotent
+    let spaced = FormatConfig {
+        space_between_command_parens: true,
+        ..Default::default()
+    };
+    let result = format_text("if(\n\tAAAA BBBB\n)\nendif()\n", &spaced);
+    assert!(
+        result.contains("if( AAAA BBBB )"),
+        "the flat closing paren space is missing:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &spaced), "not idempotent");
+}
+
+#[test]
+fn test_a_single_argument_condition_keeps_the_generic_layout() {
+    // A one-argument condition has nothing to split into clauses, so the clause
+    // layout must decline. Nothing pinned that boundary.
+    let config = FormatConfig {
+        max_line_length: 20,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA)\nendif()\n",
+        &config,
+    );
+    // The argument itself cannot be broken, so it overflows and the `)` takes
+    // the next line — the generic path's answer, not the clause layout's
+    assert_eq!(
+        result, "if(AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n)\nendif()\n",
+        "a one-argument condition should not reach the clause layout"
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
 }
