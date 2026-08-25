@@ -3396,3 +3396,45 @@ fn test_inline_single_keyword_source_grouping_with_blank_lines() {
         result
     );
 }
+
+#[test]
+fn test_an_own_line_comment_in_a_keyword_section_survives() {
+    // The shortcut that puts a lone value inline with its keyword emitted the
+    // keyword and the value and nothing else, so a comment written on its own
+    // line inside that section was deleted outright — silent content loss in an
+    // everyday shape. It now only applies when there is nothing else to place.
+    let config = FormatConfig::default();
+
+    for input in [
+        "target_sources(t PRIVATE\n\t# impl\n\tb.cpp\n)\n",
+        "install(TARGETS t\n\t# note\n\tDESTINATION lib)\n",
+        "target_sources(t PRIVATE\n\t# one\n\t# two\n\tb.cpp\n)\n",
+        "target_compile_definitions(t PUBLIC\n\t# why\n\tFOO=1\n)\n",
+    ] {
+        let result = format_text(input, &config);
+        for comment in ["# impl", "# note", "# one", "# two", "# why"] {
+            assert_eq!(
+                input.contains(comment),
+                result.contains(comment),
+                "comment {} lost for {:?}:\n{}",
+                comment,
+                input,
+                result
+            );
+        }
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+#[test]
+fn test_a_lone_value_still_goes_inline_with_its_keyword() {
+    // The guard above must not cost the layout it guards: with no comment, a
+    // single value still sits on the keyword's line.
+    let config = FormatConfig::default();
+    let result = format_text("target_sources(t PRIVATE\n\tb.cpp\n)\n", &config);
+    assert!(
+        result.contains("PRIVATE b.cpp"),
+        "a lone value should stay inline:\n{}",
+        result
+    );
+}

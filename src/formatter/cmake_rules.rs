@@ -1573,7 +1573,18 @@ pub fn format_keyword_aware_args(
                 }
 
                 // MultiValue with exactly 1 arg: keep inline like SingleValue
-                Some(KeywordType::MultiValue) if section.args.len() == 1 => {
+                // A single value goes inline with its keyword — but only when
+                // there is nothing else to place. This arm emits the keyword and
+                // the value and nothing else, so a comment written on its own
+                // line inside the section was silently deleted:
+                // `target_sources(t PRIVATE\n\t# impl\n\tb.cpp)` lost `# impl`
+                // entirely. The `inline_single_keyword` path already guards its
+                // equivalent shortcut this way; the general path did not.
+                Some(KeywordType::MultiValue)
+                    if section.args.len() == 1
+                        && section.comments.is_empty()
+                        && section.trailing_comments.is_empty() =>
+                {
                     // Add separator before the keyword
                     if is_first_arg {
                         is_first_arg = false;
