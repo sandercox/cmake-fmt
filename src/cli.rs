@@ -691,12 +691,26 @@ fn collect_cmake_files(
         .collect();
 
     if !dir_paths.is_empty() {
-        let first = dir_paths[0].clone();
-        let mut builder = WalkBuilder::new(&first);
+        // Walk the physical path of each root, and map the results back to the
+        // spelling the user gave.
+        //
+        // The `ignore` crate matches an `--ignore-file` pattern against the path
+        // as spelled while canonicalizing for the ignore files it reads above an
+        // entry, so an anchored pattern like `sub/deep/**` excluded
+        // `cmake-fmt -r sub` and not `cmake-fmt -r link-to-sub` or
+        // `cmake-fmt -r sub/../sub` — three verdicts for one directory, none of
+        // which the stdin path could agree with. Resolving first makes the
+        // verdict a property of the directory rather than of how it was named.
+        let roots: Vec<(PathBuf, PathBuf)> = dir_paths
+            .iter()
+            .map(|dir| (resolve_path(dir), dir.clone()))
+            .collect();
+
+        let mut builder = WalkBuilder::new(&roots[0].0);
 
         // Add remaining directories
-        for dir in &dir_paths[1..] {
-            builder.add(dir);
+        for (resolved, _) in &roots[1..] {
+            builder.add(resolved);
         }
 
         // Depth: 1 means the directory itself + its immediate children (depth 0 = root only)
@@ -733,7 +747,9 @@ fn collect_cmake_files(
                     if e.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
                         let p = e.into_path();
                         if is_cmake_file(&p) {
-                            result.push(p);
+                            // Report the path the user would recognise, not the
+                            // resolved one the walk ran on
+                            result.push(respell(&p, &roots));
                         }
                     }
                 }
@@ -919,6 +935,20 @@ fn build_ignore_matcher(file: &Path, root: &Path) -> Option<Gitignore> {
     }
 }
 
+/// Put a walked path back into the spelling its root was given as.
+///
+/// The walk runs on resolved roots so its verdicts do not depend on how a
+/// directory was named, but every message the user sees should name the
+/// directory they typed.
+fn respell(path: &Path, roots: &[(PathBuf, PathBuf)]) -> PathBuf {
+    for (resolved, original) in roots {
+        if let Ok(relative) = path.strip_prefix(resolved) {
+            return original.join(relative);
+        }
+    }
+    path.to_path_buf()
+}
+
 /// Whether `--ignore-file` can actually be read, and why not when it cannot.
 ///
 /// `is_file()` answers a different question: it is true for a file whose mode
@@ -927,19 +957,59 @@ fn build_ignore_matcher(file: &Path, root: &Path) -> Option<Gitignore> {
 /// `/dev/null` and for the fifo behind `<(...)`, which are both ordinary ways to
 /// pass patterns.
 ///
-/// So a regular file is probed by opening it, and anything else that exists and
-/// is not a directory is accepted: opening a fifo blocks until a writer appears,
-/// which is the reader's problem to have, not the argument check's.
+/// So a regular file — and a character device, which is what `/dev/null` and
+/// `/dev/zero` are — is probed by reading a bounded amount of it. A fifo is not
+/// probed at all: reading one consumes what the matcher will need, and
+/// `<(...)` is a fifo. Blocking on a writerless fifo is then the reader's
+/// problem to have rather than the argument check's.
+///
+/// The bound matters as much as the open: `GitignoreBuilder::add` reads the
+/// whole file, and a line-less one like `/dev/zero` never ends, so the process
+/// aborted trying to hold it. An ignore file larger than the bound is refused
+/// rather than read.
 fn check_ignore_file_readable(path: &Path) -> std::result::Result<(), String> {
-    match std::fs::metadata(path) {
-        Err(err) => Err(format!("cannot be read: {}", err)),
-        Ok(metadata) if metadata.is_dir() => Err("is a directory".to_string()),
-        Ok(metadata) if metadata.is_file() => match std::fs::File::open(path) {
-            Ok(_) => Ok(()),
-            Err(err) => Err(format!("cannot be read: {}", err)),
-        },
-        Ok(_) => Ok(()),
+    /// Generous for an ignore file, and small enough to hold comfortably.
+    const LIMIT: u64 = 1 << 20;
+
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) => return Err(format!("cannot be read: {}", err)),
+    };
+    if metadata.is_dir() {
+        return Err("is a directory".to_string());
     }
+    if !metadata.is_file() && !is_character_device(&metadata) {
+        // A fifo or socket: that it exists is all we can learn without taking
+        // the bytes the matcher needs
+        return Ok(());
+    }
+
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) => return Err(format!("cannot be read: {}", err)),
+    };
+    match std::io::copy(
+        &mut std::io::Read::take(file, LIMIT + 1),
+        &mut std::io::sink(),
+    ) {
+        Ok(read) if read > LIMIT => Err(format!(
+            "is larger than {} KiB, which is not an ignore file",
+            LIMIT / 1024
+        )),
+        Ok(_) => Ok(()),
+        Err(err) => Err(format!("cannot be read: {}", err)),
+    }
+}
+
+#[cfg(unix)]
+fn is_character_device(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    metadata.file_type().is_char_device()
+}
+
+#[cfg(not(unix))]
+fn is_character_device(_metadata: &std::fs::Metadata) -> bool {
+    false
 }
 
 /// Resolve `path` as far as the filesystem allows, then re-join what is left.
@@ -1020,14 +1090,19 @@ fn normalize_path(path: &Path) -> PathBuf {
 
 /// Copy stdin to stdout untouched, for a file that ignore rules exclude
 fn passthrough_stdin(check_mode: bool, diff_mode: bool) -> Result<ExitCode> {
-    use std::io::{Read, Write, stdin, stdout};
+    use std::io::{copy, sink, stdin, stdout};
 
-    let mut input = String::new();
-    stdin().lock().read_to_string(&mut input)?;
-
-    // check/diff modes report "nothing to do" rather than echoing the buffer
-    if !check_mode && !diff_mode {
-        write!(stdout().lock(), "{}", input)?;
+    // Copy bytes rather than decoding them. This path exists because the ignore
+    // rules said to leave the file alone, so refusing it for not being UTF-8
+    // would report an error about a file nobody asked us to look at — and
+    // format-on-save would show that error every time it was saved.
+    let mut input = stdin().lock();
+    if check_mode || diff_mode {
+        // Those modes report "nothing to do" rather than echoing the buffer, but
+        // the pipe still has to be drained
+        copy(&mut input, &mut sink())?;
+    } else {
+        copy(&mut input, &mut stdout().lock())?;
     }
 
     Ok(ExitCode::SUCCESS)

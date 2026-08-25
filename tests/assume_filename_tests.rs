@@ -1416,3 +1416,164 @@ fn test_ignore_file_ancestors_are_bounded_by_the_working_directory() {
         "an ancestor under the cwd must be consulted"
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn test_a_walk_roots_spelling_does_not_change_the_verdict() {
+    // The ignore crate matches an --ignore-file pattern against the path as
+    // spelled, while canonicalizing for the ignore files it reads above an
+    // entry. So an anchored pattern excluded `-r sub` and not `-r link-to-sub`
+    // or `-r sub/../sub` — three verdicts for one directory, and the stdin path
+    // (which resolves) could not agree with all three.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::create_dir_all(root.join("sub").join("deep")).expect("dirs");
+    std::fs::write(root.join("ignorefile"), "sub/deep/**\n").expect("write");
+    let unformatted = "set(A   b)\n";
+    std::fs::write(root.join("sub").join("deep").join("d.cmake"), unformatted).expect("write");
+    std::os::unix::fs::symlink("sub", root.join("link_sub")).expect("symlink");
+
+    for spelling in ["sub", "link_sub", "sub/../sub", "./sub"] {
+        let output = Command::new(cmake_fmt_bin())
+            .args(["-r", "--check", spelling, "--ignore-file", "ignorefile"])
+            .current_dir(root)
+            .output()
+            .expect("run");
+        let report = String::from_utf8_lossy(&output.stdout).to_string()
+            + &String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !report.contains("Would reformat"),
+            "walk root spelled {:?} disagreed:\n{}",
+            spelling,
+            report
+        );
+    }
+
+    // And the stdin path agrees, through either spelling
+    for target in ["sub/deep/d.cmake", "link_sub/deep/d.cmake"] {
+        let (_, stdout) = run_with_stdin_in(
+            Some(root),
+            &[
+                "-",
+                "--assume-filename",
+                target,
+                "--ignore-file",
+                "ignorefile",
+            ],
+            unformatted,
+        );
+        assert_eq!(stdout, unformatted, "stdin formatted {}", target);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn test_an_endless_ignore_file_is_refused_rather_than_read() {
+    // `GitignoreBuilder::add` reads the whole file, and a line-less device like
+    // /dev/zero never ends, so the process aborted trying to hold it. The probe
+    // is bounded now. /dev/null is the same kind of file and must still work.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join("a.cmake"), "set(A   b)\n").expect("write");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["-r", "--check", ".", "--ignore-file", "/dev/zero"])
+        .current_dir(root)
+        .output()
+        .expect("run");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "an endless ignore file should be refused"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not an ignore file"),
+        "no diagnostic: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["-r", "--check", ".", "--ignore-file", "/dev/null"])
+        .current_dir(root)
+        .output()
+        .expect("run");
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("error:"),
+        "/dev/null was refused: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_an_ignored_file_is_passed_through_as_bytes() {
+    // The passthrough decoded the buffer it only needed to copy, so a file the
+    // ignore rules said to leave alone was rejected for not being UTF-8 — an
+    // error about a file nobody asked us to look at, on every save.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join(".cmake-fmt-ignore"), "a.cmake\n").expect("write");
+
+    let mut child = Command::new(cmake_fmt_bin())
+        .args(["-", "--assume-filename", "a.cmake"])
+        .current_dir(root)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    let invalid = [0xffu8, 0xfe, 0x00, b'b', b'a', b'd'];
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(&invalid)
+        .expect("write");
+    let output = child.wait_with_output().expect("wait");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, invalid, "the bytes were not passed through");
+}
+
+#[test]
+fn test_diff_mode_on_an_ignored_file_reports_nothing() {
+    // The mode split inside the passthrough had no test: --diff must emit no
+    // diff for a file the ignore rules exclude, and still succeed.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join(".cmake-fmt-ignore"), "a.cmake\n").expect("write");
+
+    let (ok, stdout) = run_with_stdin_in(
+        Some(root),
+        &["-", "--assume-filename", "a.cmake", "--diff"],
+        "set(A   b)\n",
+    );
+    assert!(ok, "--diff on an ignored file should succeed");
+    assert!(stdout.is_empty(), "unexpected diff output: {:?}", stdout);
+}
+
+#[test]
+fn test_interactive_validates_the_ignore_file() {
+    // The check sits before the interactive early return, so every mode
+    // validates the argument. Nothing covered that ordering.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join("a.cmake"), "set(A   b)\n").expect("write");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["--interactive", "a.cmake", "--ignore-file", "typo.txt"])
+        .current_dir(root)
+        .output()
+        .expect("run");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--ignore-file"),
+        "no diagnostic: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

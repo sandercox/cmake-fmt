@@ -186,9 +186,16 @@ named directly. Note the alternative would be worse: a pattern like
 `build/` or `tmp/` matches by basename, so testing every ancestor would let a
 directory far above your project disable the entire run.
 
-Pointing `--ignore-file` at something that is not a readable file is an error
-rather than a warning — a typo there would otherwise format every file you meant
-to exclude and exit 0.
+Pointing `--ignore-file` at something that cannot be read is an error rather
+than a warning — a typo there would otherwise format every file you meant to
+exclude and exit 0. `/dev/null` and a `<(...)` pattern list both work; a
+directory, an unreadable file, and anything larger than 1 MiB are refused.
+
+A directory named as the walk root is resolved before it is walked, so its
+verdict is a property of the directory rather than of how you spelled it —
+`cmake-fmt -r sub`, `-r ./sub`, `-r sub/../sub` and `-r link-to-sub` all agree
+with each other and with the stdin path. Reported paths still use the spelling
+you gave.
 
 If you use `pre-commit`, `lint-staged` or a similar hook, note that those pass an
 explicit file list, which is the one invocation that ignores `.cmake-fmt-ignore`
