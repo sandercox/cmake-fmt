@@ -467,21 +467,38 @@ fn test_a_line_range_leaves_an_untouched_closer_alone() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_an_unreadable_file_fails_the_run() {
     // The aggregation now treats a file it could not process as a failed run; a
     // report nobody reads is how an unformatted file reaches a release.
+    //
+    // The file has to *exist* and be unreadable: a path that does not exist is
+    // reported by an earlier check that returns success, so naming one tested
+    // nothing.
+    use std::os::unix::fs::PermissionsExt;
+
     let tempdir = TempDir::new().expect("tempdir");
-    let path = tempdir.path().join("missing-dir").join("CMakeLists.txt");
+    let path = tempdir.path().join("CMakeLists.txt");
+    std::fs::write(&path, "set(A   b)\n").expect("write");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+
+    // Root ignores the mode, so only assert when the file really is unreadable
+    if std::fs::read_to_string(&path).is_ok() {
+        return;
+    }
 
     let output = Command::new(cmake_fmt_bin())
-        .args(["-i", "--check", path.to_str().unwrap()])
+        .args(["-i", path.to_str().unwrap()])
         .output()
         .expect("run");
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod back");
 
     assert_ne!(
         output.status.code(),
         Some(0),
-        "a file that could not be read should fail the run"
+        "a file that could not be read should fail the run: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 

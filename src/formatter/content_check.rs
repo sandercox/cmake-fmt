@@ -18,11 +18,18 @@
 //! - `sort_sources` and `source_grouping` permute an unordered list
 //!
 //! Each of those is a hole in the check, so each is cut as narrowly as the
-//! setting that needs it: a closer is compared against what `closing_style`
-//! will actually emit for it rather than having its arguments discarded, and a
-//! list is compared as a multiset only over the argument runs a grammar marks
-//! as unordered. Anything this module cannot model is compared verbatim, so an
+//! setting that needs it: a closer may say either what its author wrote or what
+//! `closing_style` would emit for it — which is what makes comparing a text
+//! against itself impossible to fail — and a list is compared as a multiset only
+//! over the argument runs a grammar marks as unordered. Anything this module cannot model is compared verbatim, so an
 //! unrecognised shape reads as a difference rather than as agreement.
+//!
+//! Known holes, both in the direction of missing a change rather than inventing
+//! one: neither the reordering canonicalisation nor the closer exemption knows
+//! about suppression, so inside a `# cmake-fmt: off` region — or after
+//! `no-sort` or `skip` — this would accept a permutation or a rewritten closer
+//! that the formatter must never produce there. Closing them means giving this
+//! module the same region tracking the formatter has.
 
 use std::collections::HashMap;
 
@@ -41,11 +48,10 @@ type UserGrammars = HashMap<String, CommandGrammar>;
 
 /// Which text a [`Content`] was read from.
 ///
-/// `closing_style` rewrites a closer's arguments in one direction only — from
-/// the opener's, or to nothing — so the two sides are not normalised the same
-/// way. The input is normalised to what the setting says the output should
-/// contain; the output is read as written, so output that says something else
-/// is still a difference.
+/// Only the input side carries the readings a closer is allowed to have, since
+/// only it can see the opener. Nothing else differs between the sides, so this
+/// is an optimisation — computing the alternatives for the output too would be
+/// harmless and unused.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Side {
     Input,
@@ -84,7 +90,7 @@ enum Entry {
         /// construction — `check(x, x)` cannot fire — while still refusing a
         /// closer that says something neither the author nor the setting asked
         /// for.
-        closer_alternative: Option<Vec<String>>,
+        closer_alternatives: Vec<Vec<String>>,
         /// Byte offset of the command in its source, for the warning's line
         /// number.
         offset: usize,
@@ -103,7 +109,7 @@ impl Entry {
                     name: input_name,
                     shape: input_shape,
                     args: input_args,
-                    closer_alternative,
+                    closer_alternatives,
                     ..
                 },
                 Entry::Command {
@@ -116,9 +122,9 @@ impl Entry {
                 input_name == output_name
                     && input_shape == output_shape
                     && (input_args == output_args
-                        || closer_alternative
-                            .as_ref()
-                            .is_some_and(|allowed| allowed == output_args))
+                        || closer_alternatives
+                            .iter()
+                            .any(|allowed| allowed == output_args))
             }
             (Entry::Loose(input), Entry::Loose(output)) => input == output,
             _ => false,
@@ -132,28 +138,86 @@ pub(crate) struct Difference {
 }
 
 /// The exemptions in force for one comparison.
+///
+/// Every one of them is keyed to a setting, and a file can change its own
+/// settings with `# cmake-fmt: <key>=<value>` — which the formatter applies as
+/// it goes. So the settings here are the *union* of the file-level config and
+/// every override the file sets on itself: an exemption the formatter had open
+/// while this one was closed refused the file outright, at default settings, for
+/// a documented feature of the tool. Taking the union can miss a change; keying
+/// off a config the formatter has already discarded invents one.
 struct Rules<'a> {
     config: &'a FormatConfig,
     grammars: &'a UserGrammars,
     /// Either casing setting can rewrite a command's name, so the name is
-    /// compared case-folded unless both are set to preserve it.
+    /// compared case-folded unless both preserve it everywhere in the file.
     fold_case: bool,
     /// Either reordering pass can permute an unordered list.
     reorders: bool,
+    /// A closer's arguments may be rebuilt from its opener's.
+    force_possible: bool,
+    /// A closer's arguments may be dropped.
+    remove_possible: bool,
     side: Side,
 }
 
 impl<'a> Rules<'a> {
-    fn new(config: &'a FormatConfig, grammars: &'a UserGrammars, side: Side) -> Self {
+    fn new(
+        config: &'a FormatConfig,
+        overrides: &StyleOverrides,
+        grammars: &'a UserGrammars,
+        side: Side,
+    ) -> Self {
         Self {
             config,
             grammars,
             fold_case: config.command_case != CommandCase::Preserve
-                || config.user_command_case != UserCommandCase::Preserve,
+                || config.user_command_case != UserCommandCase::Preserve
+                || overrides.recases,
             reorders: config.sort_sources != SortSources::None
-                || config.source_grouping != SourceGrouping::None,
+                || config.source_grouping != SourceGrouping::None
+                || overrides.reorders,
+            force_possible: config.closing_style == ClosingStyle::Force || overrides.forces_closers,
+            remove_possible: config.closing_style == ClosingStyle::Remove
+                || overrides.removes_closers,
             side,
         }
+    }
+}
+
+/// What the file's own `# cmake-fmt: <key>=<value>` directives can turn on.
+#[derive(Default)]
+pub(crate) struct StyleOverrides {
+    recases: bool,
+    reorders: bool,
+    forces_closers: bool,
+    removes_closers: bool,
+}
+
+impl StyleOverrides {
+    /// Read every style directive in `source`, whether or not the formatter
+    /// reached it — a directive applies from where it appears, and widening for
+    /// one that turns out to be unreachable costs only strictness.
+    fn read(source: &str) -> Self {
+        let mut overrides = Self::default();
+        for line in source.lines() {
+            let Some(hash) = line.find('#') else { continue };
+            let Some(super::suppression::Directive::Style { key, value }) =
+                super::suppression::parse_directive(line[hash..].trim())
+            else {
+                continue;
+            };
+            match key.as_str() {
+                "command_case" | "user_command_case" => overrides.recases |= value != "preserve",
+                "sort_sources" | "source_grouping" => overrides.reorders |= value != "none",
+                "closing_style" => {
+                    overrides.forces_closers |= value == "force";
+                    overrides.removes_closers |= value == "remove";
+                }
+                _ => {}
+            }
+        }
+        overrides
     }
 }
 
@@ -162,10 +226,14 @@ impl Content {
     pub(crate) fn read(
         source: &str,
         config: &FormatConfig,
+        overrides: &StyleOverrides,
         grammars: &UserGrammars,
         side: Side,
     ) -> Self {
-        Self::from_cst(&parse_text(source), &Rules::new(config, grammars, side))
+        Self::from_cst(
+            &parse_text(source),
+            &Rules::new(config, overrides, grammars, side),
+        )
     }
 
     fn from_cst(cst: &CSTRoot, rules: &Rules) -> Self {
@@ -412,34 +480,64 @@ fn command_entry(
         }
     };
 
-    let closer_alternative = if rules.side == Side::Input {
-        opener_args.and_then(|opener| match rules.config.closing_style {
-            ClosingStyle::Preserve => None,
-            ClosingStyle::Remove => Some(Vec::new()),
-            ClosingStyle::Force => Some(opener),
-        })
-    } else {
-        None
-    };
+    // Every reading the output may have, given what any part of the file may
+    // have turned on. The input's own arguments are always accepted separately,
+    // which is what makes the comparison reflexive.
+    let mut closer_alternatives = Vec::new();
+    if rules.side == Side::Input
+        && let Some(opener) = opener_args
+    {
+        if rules.force_possible {
+            closer_alternatives.push(opener);
+        }
+        if rules.remove_possible {
+            closer_alternatives.push(Vec::new());
+        }
+    }
 
     Some(Entry::Command {
         name: if rules.fold_case { name_lower } else { name },
         shape,
         args,
-        closer_alternative,
+        closer_alternatives,
         offset: usize::from(node.text_range().start()),
     })
 }
 
 /// The argument list's values with comments left out, the way the formatter
 /// collects an opener's arguments to rebuild a closer from.
+///
+/// At every depth: the formatter renders a group normalized for this purpose, so
+/// a comment written *inside* the opener's group is dropped from the closer too.
+/// Removing only the top-level ones left the group's atom carrying its comment,
+/// and the guard then refused a correct forced closer.
 fn logical_values(arg_list: &ArgumentList, comment_style: CommentStyle) -> Vec<String> {
-    let mut all = Vec::new();
-    collect_args(arg_list.syntax(), comment_style, &mut all);
-    let mut comments = Vec::new();
-    collect_comments(arg_list.syntax(), comment_style, &mut comments);
-    all.retain(|arg| !comments.contains(arg));
-    all
+    let mut values = Vec::new();
+    collect_values(arg_list.syntax(), comment_style, &mut values);
+    values
+}
+
+fn collect_values(node: &crate::SyntaxNode, comment_style: CommentStyle, out: &mut Vec<String>) {
+    for child in node.children_with_tokens() {
+        match child {
+            NodeOrToken::Token(token) => {
+                if matches!(
+                    token.kind(),
+                    SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT
+                ) {
+                    continue;
+                }
+                if let Some(text) = significant(&token, comment_style) {
+                    out.push(text);
+                }
+            }
+            NodeOrToken::Node(nested) => {
+                let mut inner = Vec::new();
+                collect_values(&nested, comment_style, &mut inner);
+                out.push(inner.join(" "));
+            }
+        }
+    }
 }
 
 /// The arguments of one command, with the runs a grammar marks as unordered
@@ -586,10 +684,15 @@ fn resolve_grammar<'a>(
 }
 
 /// Commands that open a block whose closer `closing_style` governs.
+///
+/// The same list the formatter uses, and it has to stay the same list: `block`
+/// and `endblock` were here and not there, so on an unbalanced `endblock()` this
+/// stack popped a frame the formatter kept and the two disagreed about which
+/// opener a later closer belonged to.
 fn is_block_opener(name_lower: &str) -> bool {
     matches!(
         name_lower,
-        "if" | "foreach" | "while" | "function" | "macro" | "block"
+        "if" | "foreach" | "while" | "function" | "macro"
     )
 }
 
@@ -608,9 +711,7 @@ enum Governed {
 /// have let `elseif(B)` become `elseif(NOT B)` unnoticed.
 fn closer_kind(name_lower: &str) -> Option<Governed> {
     match name_lower {
-        "endif" | "endforeach" | "endwhile" | "endfunction" | "endmacro" | "endblock" => {
-            Some(Governed::Closer)
-        }
+        "endif" | "endforeach" | "endwhile" | "endfunction" | "endmacro" => Some(Governed::Closer),
         "else" => Some(Governed::MidBlock),
         _ => None,
     }
@@ -665,8 +766,13 @@ pub(crate) fn check(
     let input = input.replace('\r', "");
     let output = output.replace('\r', "");
 
-    Content::read(&input, config, grammars, Side::Input).diff(
-        &Content::read(&output, config, grammars, Side::Output),
+    // The input is what carries the directives; the output should carry the same
+    // ones, but reading them from the input is what makes a dropped directive a
+    // difference rather than a silent widening.
+    let overrides = StyleOverrides::read(&input);
+
+    Content::read(&input, config, &overrides, grammars, Side::Input).diff(
+        &Content::read(&output, config, &overrides, grammars, Side::Output),
         &input,
     )
 }
@@ -751,6 +857,67 @@ mod tests {
         // An unmatched closer has no opener to rebuild it from, so the formatter
         // leaves its arguments alone and so must the check
         assert!(!accepts("endif(A)\n", "endif()\n", &config));
+    }
+
+    #[test]
+    fn test_the_reordering_exemption_needs_a_reordering_setting() {
+        // The exemption was confined by command but nothing asserted it is off
+        // entirely when neither pass is enabled — so a permutation with both
+        // settings at their defaults would have been accepted.
+        let config = FormatConfig::default();
+        assert!(!accepts(
+            "set(SRCS b.cpp a.cpp)\n",
+            "set(SRCS a.cpp b.cpp)\n",
+            &config
+        ));
+        assert!(!accepts(
+            "target_sources(t PRIVATE b.cpp a.cpp)\n",
+            "target_sources(t PRIVATE a.cpp b.cpp)\n",
+            &config
+        ));
+    }
+
+    #[test]
+    fn test_an_in_file_directive_widens_the_exemptions() {
+        // A file can turn a setting on for itself, and the formatter applies it.
+        // Keying the exemptions off the file-level config alone refused every
+        // such file — at default settings, for a documented feature.
+        let config = FormatConfig::default();
+        assert!(accepts(
+            "# cmake-fmt: sort_sources=alphabetical\nset(SRCS b.cpp a.cpp)\n",
+            "# cmake-fmt: sort_sources=alphabetical\nset(SRCS a.cpp b.cpp)\n",
+            &config
+        ));
+        assert!(accepts(
+            "# cmake-fmt: closing_style=force\nif(A)\nendif()\n",
+            "# cmake-fmt: closing_style=force\nif(A)\nendif(A)\n",
+            &config
+        ));
+        assert!(accepts(
+            "# cmake-fmt: closing_style=remove\nif(A)\nendif(A)\n",
+            "# cmake-fmt: closing_style=remove\nif(A)\nendif()\n",
+            &config
+        ));
+        // With both casing settings preserving, only the directive can license
+        // a re-casing — the default config already folds case, so asserting it
+        // there would prove nothing
+        let preserving = FormatConfig {
+            command_case: CommandCase::Preserve,
+            user_command_case: UserCommandCase::Preserve,
+            ..Default::default()
+        };
+        assert!(accepts(
+            "# cmake-fmt: command_case=uppercase\nset(C d)\n",
+            "# cmake-fmt: command_case=uppercase\nSET(C d)\n",
+            &preserving
+        ));
+        assert!(!accepts("set(C d)\n", "SET(C d)\n", &preserving));
+        // Widening is not licence: a file that says nothing still holds
+        assert!(!accepts(
+            "set(SRCS b.cpp a.cpp)\n",
+            "set(SRCS a.cpp b.cpp)\n",
+            &config
+        ));
     }
 
     #[test]
