@@ -869,6 +869,15 @@ fn test_walk_from_inside_an_excluded_directory_skips_too() {
         "walk from inside an excluded directory should skip:\n{}",
         report
     );
+    // Asserting only the absence of a substring passes on a crash, an abort or
+    // an argument error too — the silent-no-op that reads as success, which is
+    // the failure this whole branch is about
+    assert_eq!(
+        inside.status.code(),
+        Some(0),
+        "the run did not succeed:\n{}",
+        report
+    );
 
     // Naming it explicitly is the same answer
     let named = Command::new(cmake_fmt_bin())
@@ -883,6 +892,7 @@ fn test_walk_from_inside_an_excluded_directory_skips_too() {
         "explicitly naming an excluded directory should skip:\n{}",
         named_report
     );
+    assert_eq!(named.status.code(), Some(0), "the run did not succeed");
 
     // A non-excluded sibling is still walked
     let normal = Command::new(cmake_fmt_bin())
@@ -896,6 +906,11 @@ fn test_walk_from_inside_an_excluded_directory_skips_too() {
         normal_report.contains("top.cmake"),
         "the rest of the tree must still be walked:\n{}",
         normal_report
+    );
+    assert_eq!(
+        normal.status.code(),
+        Some(1),
+        "an unformatted file was found"
     );
 }
 
@@ -1070,4 +1085,186 @@ fn test_ignore_file_allowlist_idiom_survives_the_root_check() {
         unformatted,
     );
     assert_eq!(stdout, "set(FOO bar)\n", "stdin dropped a re-included file");
+}
+
+#[test]
+fn test_cmake_fmt_ignore_allowlist_idiom_survives_the_root_check() {
+    // The mirror of test_ignore_file_allowlist_idiom_survives_the_root_check,
+    // for the `.cmake-fmt-ignore` chain. Both halves of the rule that protects
+    // it — an ignore file has no say about its own directory, and it governs
+    // only what lies beneath it — could be deleted with the whole suite still
+    // green, and each one alone makes the stdin path skip a file the walk
+    // formats.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join(".cmake-fmt-ignore"), "*\n!*.cmake\n").expect("Failed to write");
+
+    let unformatted = "set(FOO   bar)\n";
+    std::fs::write(root.join("a.cmake"), unformatted).expect("Failed to write file");
+    std::fs::write(root.join("notes.txt"), "whatever\n").expect("Failed to write file");
+
+    let walk = Command::new(cmake_fmt_bin())
+        .args(["-r", "--check", "."])
+        .current_dir(root)
+        .output()
+        .expect("Failed to run walk");
+    let report =
+        String::from_utf8_lossy(&walk.stdout).to_string() + &String::from_utf8_lossy(&walk.stderr);
+    assert!(
+        report.contains("a.cmake"),
+        "the walk lost the re-included file:\n{}",
+        report
+    );
+
+    let (_, stdout) = run_with_stdin_in(
+        Some(root),
+        &[
+            "-",
+            "--assume-filename",
+            root.join("a.cmake").to_str().unwrap(),
+        ],
+        unformatted,
+    );
+    assert_eq!(stdout, "set(FOO bar)\n", "stdin dropped a re-included file");
+}
+
+#[test]
+fn test_a_symlinked_walk_root_is_still_excluded() {
+    // The walk canonicalizes when it reads the ignore files above an entry, so
+    // a root reached through a symlink has to be resolved before it is checked
+    // — otherwise `cmake-fmt -r link` formats files that both the same walk
+    // from the project root and the stdin path skip.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    let inner = root.join("proj").join("vendor").join("inner");
+    std::fs::create_dir_all(&inner).expect("Failed to create dirs");
+    std::fs::write(root.join("proj").join(".cmake-fmt-ignore"), "vendor/\n")
+        .expect("Failed to write ignore");
+    let unformatted = "set(FOO   bar)\n";
+    std::fs::write(inner.join("a.cmake"), unformatted).expect("Failed to write file");
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&inner, root.join("link")).expect("Failed to symlink");
+    #[cfg(not(unix))]
+    return;
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["-r", "--check", "link"])
+        .current_dir(root)
+        .output()
+        .expect("Failed to run walk");
+    let report = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !report.contains("Would reformat"),
+        "a symlink walked into an excluded directory:\n{}",
+        report
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", report);
+}
+
+#[test]
+fn test_an_unreadable_ignore_file_fails_the_run() {
+    // A typo in --ignore-file used to warn and then format everything the user
+    // meant to exclude, exiting 0 — the outcome this machinery exists to
+    // prevent, and it looked like a clean run.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join("a.cmake"), "set(FOO   bar)\n").expect("Failed to write file");
+
+    for args in [
+        vec!["-r", "--check", ".", "--ignore-file", "typo.txt"],
+        vec!["-r", "--check", ".", "--ignore-file", "."],
+    ] {
+        let output = Command::new(cmake_fmt_bin())
+            .args(&args)
+            .current_dir(root)
+            .output()
+            .expect("Failed to run cmake-fmt");
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{:?} should fail the run: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("not a readable file"),
+            "no diagnostic for {:?}",
+            args
+        );
+    }
+
+    // The stdin path agrees
+    let (ok, _) = run_with_stdin_in(
+        Some(root),
+        &[
+            "-",
+            "--assume-filename",
+            root.join("a.cmake").to_str().unwrap(),
+            "--ignore-file",
+            "typo.txt",
+        ],
+        "set(FOO   bar)\n",
+    );
+    assert!(!ok, "stdin should fail on an unreadable --ignore-file");
+}
+
+#[test]
+fn test_ignore_file_ancestors_are_bounded_by_the_working_directory() {
+    // Pins the approximation `is_ignored` makes, so it is a decision rather
+    // than an accident. The right boundary for --ignore-file is the walk root;
+    // the stdin path has none, so the working directory stands in for it. A
+    // target outside the working directory therefore has its ancestors left
+    // unconsulted, and this run formats a file that a walk rooted next to it
+    // would skip. Erring this way keeps a stray pattern from disabling a whole
+    // run, which is the failure that reads as success.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    let elsewhere = root.join("elsewhere");
+    std::fs::create_dir_all(elsewhere.join("vendor")).expect("Failed to create dirs");
+    std::fs::create_dir(root.join("work")).expect("Failed to create work dir");
+    std::fs::write(root.join("work").join("ig.txt"), "vendor/\n").expect("Failed to write");
+
+    let unformatted = "set(FOO   bar)\n";
+    let target = elsewhere.join("vendor").join("a.cmake");
+    std::fs::write(&target, unformatted).expect("Failed to write file");
+
+    // From `work`, `elsewhere/vendor` is not under the working directory
+    let (_, stdout) = run_with_stdin_in(
+        Some(&root.join("work")),
+        &[
+            "-",
+            "--assume-filename",
+            target.to_str().unwrap(),
+            "--ignore-file",
+            "ig.txt",
+        ],
+        unformatted,
+    );
+    assert_eq!(
+        stdout, "set(FOO bar)\n",
+        "documented approximation changed: an ancestor outside the working \
+         directory is not consulted for --ignore-file"
+    );
+
+    // From the directory that contains it, the same pattern does apply
+    let ignore_from_root = root.join("work").join("ig.txt");
+    std::fs::copy(&ignore_from_root, root.join("ig.txt")).expect("copy");
+    let (_, stdout) = run_with_stdin_in(
+        Some(root),
+        &[
+            "-",
+            "--assume-filename",
+            target.to_str().unwrap(),
+            "--ignore-file",
+            "ig.txt",
+        ],
+        unformatted,
+    );
+    assert_eq!(
+        stdout, unformatted,
+        "an ancestor under the cwd must be consulted"
+    );
 }

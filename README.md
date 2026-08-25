@@ -173,6 +173,24 @@ It can also skip *more*: `--ignore-file` ranks below all of them on the walk, so
 a negation in `.gitignore` or `.ignore` can override it there and has no
 counterpart on the stdin path.
 
+`--ignore-file` is resolved against the working directory, and on the stdin path
+its directory patterns are only tested against directories at or below that
+working directory. A walk tests them against every directory at or below its own
+root, and the stdin path has no root to use — so for a file outside the working
+directory, `cmake-fmt - --assume-filename …` can format something that
+`cmake-fmt -r` rooted next to that file would skip. Run both from the same
+directory and they agree. Note the alternative would be worse: a pattern like
+`build/` or `tmp/` matches by basename, so testing every ancestor would let a
+directory far above your project disable the entire run.
+
+Pointing `--ignore-file` at something that is not a readable file is an error
+rather than a warning — a typo there would otherwise format every file you meant
+to exclude and exit 0.
+
+If you use `pre-commit`, `lint-staged` or a similar hook, note that those pass an
+explicit file list, which is the one invocation that ignores `.cmake-fmt-ignore`
+entirely. Pass the directory instead if you want the ignore rules applied.
+
 When going through your files for the first time, you can use `--interactive` to review changes hunk-by-hunk and choose which ones to apply or skip/disable.
 
 ## Configuration

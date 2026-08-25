@@ -498,6 +498,19 @@ pub fn run() -> Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     }
 
+    // A typo here used to warn once per directory and then format everything
+    // the user meant to exclude, exiting 0 — which is the outcome the whole
+    // ignore-file machinery exists to prevent. Checked once, up front.
+    if let Some(path) = cli.ignore_file.as_deref()
+        && !path.is_file()
+    {
+        eprintln!(
+            "error: --ignore-file {} is not a readable file",
+            path.display()
+        );
+        return Ok(ExitCode::FAILURE);
+    }
+
     if is_stdin {
         // Handle --export-grammar with stdin (error)
         if cli.export_grammar.is_some() {
@@ -546,8 +559,12 @@ pub fn run() -> Result<ExitCode> {
         };
 
         // Collect files, expanding directories and glob patterns
-        let collected =
-            collect_cmake_files(&paths_to_search, cli.recursive, cli.ignore_file.as_deref())?;
+        let collected = collect_cmake_files(
+            &paths_to_search,
+            cli.recursive,
+            cli.ignore_file.as_deref(),
+            cli.verbose,
+        )?;
 
         // Handle case where no files found
         if collected.is_empty() {
@@ -606,6 +623,7 @@ fn collect_cmake_files(
     paths: &[PathBuf],
     recursive: bool,
     ignore_file: Option<&Path>,
+    verbose: bool,
 ) -> Result<Vec<PathBuf>> {
     use ignore::WalkBuilder;
 
@@ -673,7 +691,7 @@ fn collect_cmake_files(
             // plus `!*.cmake`) matches that directory with `*`, and the walk
             // never tests its own root as an entry either. `ignore_decision`
             // enforces that.
-            let excluded = is_dir_ignored(&absolute, ignore_file, false);
+            let excluded = is_dir_ignored(&absolute, ignore_file, verbose);
             if excluded {
                 eprintln!("Skipping {}: excluded by an ignore file", dir.display());
             }
@@ -764,10 +782,22 @@ fn is_path_ignored(path: &Path, ignore_file: Option<&Path>, verbose: bool) -> bo
     is_ignored(path, false, ignore_file, verbose)
 }
 
-/// The same question for a directory, where a directory-only pattern such as
-/// `build/` applies to the target itself and not only to its ancestors.
+/// The same question for a directory: the only difference is that the target is
+/// matched as one, so a directory-only pattern such as `build/` can match it.
 fn is_dir_ignored(path: &Path, ignore_file: Option<&Path>, verbose: bool) -> bool {
-    is_ignored(path, true, ignore_file, verbose)
+    // The walk resolves symlinks when it reads the ignore files above an entry
+    // (`Ignore::add_parents` canonicalizes), so a root reached through a symlink
+    // has to be resolved here too, or `cmake-fmt -r link` walks straight into an
+    // excluded directory that `link`'s target sits inside. A walk root always
+    // exists, so canonicalizing is safe here in a way it is not for a file the
+    // stdin path only stands in for.
+    let resolved = path.canonicalize();
+    is_ignored(
+        resolved.as_deref().unwrap_or(path),
+        true,
+        ignore_file,
+        verbose,
+    )
 }
 
 fn is_ignored(path: &Path, is_dir: bool, ignore_file: Option<&Path>, verbose: bool) -> bool {
@@ -808,9 +838,17 @@ fn is_ignored(path: &Path, is_dir: bool, ignore_file: Option<&Path>, verbose: bo
         // under its root. Without this, gitignore basename matching lets an
         // ordinary pattern like `build/` or `tmp/` match a component of the
         // absolute path — `/tmp/...`, a checkout under `build/` — and exclude a
-        // directory nobody was asking about. The walk never asks its own
-        // add_ignore matcher about anything above its root, so it cannot happen
-        // there either.
+        // directory nobody was asking about.
+        //
+        // The right boundary is the *walk root*: the walk asks its add_ignore
+        // matcher about every entry at or below that root and never about
+        // anything above it. There is no walk root on the stdin path, so the
+        // working directory stands in for one. That is an approximation, and it
+        // shows: for a target outside the working directory the stdin path
+        // consults fewer ancestors than a walk rooted near that target would,
+        // so it can format a file the walk would skip. Erring this way keeps a
+        // stray pattern from disabling a whole run, which is the failure that
+        // reads as success.
         let extra_here = extra.as_ref().filter(|(root, _)| dir.starts_with(root));
         matches!(
             ignore_decision(dir, true, &matchers, extra_here),
@@ -825,10 +863,7 @@ fn is_ignored(path: &Path, is_dir: bool, ignore_file: Option<&Path>, verbose: bo
     );
 
     if verbose && ignored {
-        eprintln!(
-            "verbose: {} is ignored, passing input through",
-            path.display()
-        );
+        eprintln!("verbose: {} is ignored, skipping", path.display());
     }
 
     ignored
@@ -912,8 +947,17 @@ fn normalize_path(path: &Path) -> PathBuf {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                if !out.pop() {
-                    out.push(Component::ParentDir.as_os_str());
+                // Only a real directory name can be cancelled. `out.pop()`
+                // succeeds on a trailing `..` as well — `Path::new("..")` has a
+                // parent — so `../../a` collapsed to `a`, a path pointing at a
+                // different tree entirely. A root cannot be escaped, so `/..`
+                // is just `/`.
+                match out.components().next_back() {
+                    Some(Component::Normal(_)) => {
+                        out.pop();
+                    }
+                    Some(Component::RootDir) | Some(Component::Prefix(_)) => {}
+                    _ => out.push(Component::ParentDir.as_os_str()),
                 }
             }
             other => out.push(other.as_os_str()),
@@ -1261,4 +1305,38 @@ fn write_file_atomically(path: &std::path::Path, content: &str) -> Result<()> {
     temp.persist(path)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `normalize_path` stands in for `canonicalize` on a path that may not
+    /// exist, so the paths it produces decide which ignore files are read. It
+    /// had no tests, and `out.pop()` succeeding on a trailing `..` — which it
+    /// does, because `Path::new("..")` has a parent — meant a relative path with
+    /// stacked `..` collapsed onto a different tree.
+    #[test]
+    fn test_normalize_path_keeps_leading_parent_components() {
+        for (input, expected) in [
+            ("a/b/c", "a/b/c"),
+            ("./a/./b", "a/b"),
+            ("a/b/../c", "a/c"),
+            ("a/../b", "b"),
+            ("../a", "../a"),
+            ("../../a", "../../a"),
+            ("../../../a/b", "../../../a/b"),
+            ("../a/../b", "../b"),
+            ("/a/../b", "/b"),
+            ("/../a", "/a"),
+            ("/../../a", "/a"),
+        ] {
+            assert_eq!(
+                normalize_path(Path::new(input)),
+                PathBuf::from(expected),
+                "normalizing {:?}",
+                input
+            );
+        }
+    }
 }
