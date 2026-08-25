@@ -438,6 +438,15 @@ pub fn run() -> Result<ExitCode> {
         None
     };
 
+    // A broken --ignore-file is a bad argument whatever mode follows, so it is
+    // rejected before any mode gets to return early
+    if let Some(path) = cli.ignore_file.as_deref()
+        && let Err(reason) = check_ignore_file_readable(path)
+    {
+        eprintln!("error: --ignore-file {} {}", path.display(), reason);
+        return Ok(ExitCode::FAILURE);
+    }
+
     // Handle interactive mode first (if --interactive flag is set)
     if cli.interactive {
         // Determine if stdin input is specified
@@ -495,19 +504,6 @@ pub fn run() -> Result<ExitCode> {
     // Validate --assume-filename is only used with stdin
     if cli.assume_filename.is_some() && !is_stdin {
         eprintln!("error: --assume-filename can only be used with stdin input");
-        return Ok(ExitCode::FAILURE);
-    }
-
-    // A typo here used to warn once per directory and then format everything
-    // the user meant to exclude, exiting 0 — which is the outcome the whole
-    // ignore-file machinery exists to prevent. Checked once, up front.
-    if let Some(path) = cli.ignore_file.as_deref()
-        && !path.is_file()
-    {
-        eprintln!(
-            "error: --ignore-file {} is not a readable file",
-            path.display()
-        );
         return Ok(ExitCode::FAILURE);
     }
 
@@ -677,13 +673,6 @@ fn collect_cmake_files(
     let dir_paths: Vec<PathBuf> = dir_paths
         .into_iter()
         .filter(|dir| {
-            // Relative roots (`.`, the common case) have no ancestors to scan
-            // until they are absolute
-            let absolute = if dir.is_relative() {
-                std::env::current_dir().unwrap_or_default().join(dir)
-            } else {
-                dir.clone()
-            };
             // --ignore-file decides here too, or `--ignore-file` naming
             // `build/` would exclude a file under `build/` on the stdin path
             // while `cmake-fmt -r build` formatted it. What it may not do is
@@ -691,7 +680,9 @@ fn collect_cmake_files(
             // plus `!*.cmake`) matches that directory with `*`, and the walk
             // never tests its own root as an entry either. `ignore_decision`
             // enforces that.
-            let excluded = is_dir_ignored(&absolute, ignore_file, verbose);
+            // `is_dir_ignored` absolutizes and resolves, so a relative root
+            // (`.`, the common case) needs no preparation here
+            let excluded = is_dir_ignored(dir, ignore_file, verbose);
             if excluded {
                 eprintln!("Skipping {}: excluded by an ignore file", dir.display());
             }
@@ -724,9 +715,14 @@ fn collect_cmake_files(
         // Do NOT skip hidden directories/files — let ignore rules handle exclusions
         builder.hidden(false);
 
-        // Load the user-specified extra ignore file if provided
-        if let Some(extra) = ignore_file {
-            builder.add_ignore(extra);
+        // Load the user-specified extra ignore file if provided. Discarding this
+        // error is how a broken --ignore-file used to reach the walk with no
+        // diagnostic at all; the up-front readability check should mean it never
+        // fires, so say so loudly if it does.
+        if let Some(extra) = ignore_file
+            && let Some(err) = builder.add_ignore(extra)
+        {
+            eprintln!("Warning: {}: {:#}", extra.display(), err);
         }
 
         let walk = builder.build();
@@ -772,8 +768,9 @@ fn is_cmake_file(path: &Path) -> bool {
 /// Returns true if `path` is excluded by a `.cmake-fmt-ignore` file in one of
 /// its ancestor directories, or by the extra `--ignore-file` if one was given.
 ///
-/// Each ignore file uses gitignore syntax and is anchored at its own directory,
-/// exactly like the directory walk. Two rules decide the outcome: for any given
+/// Each `.cmake-fmt-ignore` uses gitignore syntax and is anchored at its own
+/// directory, exactly like the directory walk; `--ignore-file` is anchored at
+/// the working directory instead, matching `WalkBuilder::add_ignore`. Two rules decide the outcome: for any given
 /// path the deepest ignore file whose directory contains it wins, and an
 /// excluded ancestor directory is final — git cannot re-include a file whose
 /// parent directory is excluded, and the walk never descends into one to read a
@@ -785,23 +782,11 @@ fn is_path_ignored(path: &Path, ignore_file: Option<&Path>, verbose: bool) -> bo
 /// The same question for a directory: the only difference is that the target is
 /// matched as one, so a directory-only pattern such as `build/` can match it.
 fn is_dir_ignored(path: &Path, ignore_file: Option<&Path>, verbose: bool) -> bool {
-    // The walk resolves symlinks when it reads the ignore files above an entry
-    // (`Ignore::add_parents` canonicalizes), so a root reached through a symlink
-    // has to be resolved here too, or `cmake-fmt -r link` walks straight into an
-    // excluded directory that `link`'s target sits inside. A walk root always
-    // exists, so canonicalizing is safe here in a way it is not for a file the
-    // stdin path only stands in for.
-    let resolved = path.canonicalize();
-    is_ignored(
-        resolved.as_deref().unwrap_or(path),
-        true,
-        ignore_file,
-        verbose,
-    )
+    is_ignored(path, true, ignore_file, verbose)
 }
 
 fn is_ignored(path: &Path, is_dir: bool, ignore_file: Option<&Path>, verbose: bool) -> bool {
-    let path = normalize_path(path);
+    let path = resolve_path(path);
 
     // Directories from the filesystem root down to the file's own directory.
     // `ancestors()` yields deepest-first, so reverse it.
@@ -934,6 +919,70 @@ fn build_ignore_matcher(file: &Path, root: &Path) -> Option<Gitignore> {
     }
 }
 
+/// Whether `--ignore-file` can actually be read, and why not when it cannot.
+///
+/// `is_file()` answers a different question: it is true for a file whose mode
+/// forbids reading it, which left the old warn-and-carry-on path intact — one
+/// warning, then every excluded file formatted, exit 0. And it is false for
+/// `/dev/null` and for the fifo behind `<(...)`, which are both ordinary ways to
+/// pass patterns.
+///
+/// So a regular file is probed by opening it, and anything else that exists and
+/// is not a directory is accepted: opening a fifo blocks until a writer appears,
+/// which is the reader's problem to have, not the argument check's.
+fn check_ignore_file_readable(path: &Path) -> std::result::Result<(), String> {
+    match std::fs::metadata(path) {
+        Err(err) => Err(format!("cannot be read: {}", err)),
+        Ok(metadata) if metadata.is_dir() => Err("is a directory".to_string()),
+        Ok(metadata) if metadata.is_file() => match std::fs::File::open(path) {
+            Ok(_) => Ok(()),
+            Err(err) => Err(format!("cannot be read: {}", err)),
+        },
+        Ok(_) => Ok(()),
+    }
+}
+
+/// Resolve `path` as far as the filesystem allows, then re-join what is left.
+///
+/// The walk resolves symlinks for every entry whose ignore files it reads
+/// (`Ignore::add_parents` canonicalizes), so every path compared against one has
+/// to be resolved the same way — otherwise the two disagree about the same file
+/// and `cmake-fmt -r link` and `--assume-filename link/a.cmake` reach opposite
+/// verdicts. It also puts both sides of the working-directory comparison in the
+/// same spelling: `current_dir()` is always physical, so on a system whose temp
+/// directory is reached through a symlink (macOS, where `/var` is a link) a
+/// caller-supplied spelling never matched it.
+///
+/// Only the deepest existing ancestor is canonicalized. `--assume-filename`
+/// routinely names a file that does not exist yet, but its directory almost
+/// always does.
+fn resolve_path(path: &Path) -> PathBuf {
+    let absolute = if path.is_relative() {
+        std::env::current_dir().unwrap_or_default().join(path)
+    } else {
+        path.to_path_buf()
+    };
+    let normalized = normalize_path(&absolute);
+
+    let mut unresolved: Vec<std::ffi::OsString> = Vec::new();
+    let mut cursor = normalized.as_path();
+    loop {
+        if let Ok(real) = cursor.canonicalize() {
+            let mut resolved = real;
+            resolved.extend(unresolved.iter().rev());
+            return resolved;
+        }
+        match (cursor.parent(), cursor.file_name()) {
+            (Some(parent), Some(name)) => {
+                unresolved.push(name.to_os_string());
+                cursor = parent;
+            }
+            // Nothing on this path exists; its own spelling is all there is
+            _ => return normalized,
+        }
+    }
+}
+
 /// Collapse `.` and `..` components without touching the filesystem.
 ///
 /// `--assume-filename` routinely names a file that doesn't exist yet, so
@@ -956,7 +1005,10 @@ fn normalize_path(path: &Path) -> PathBuf {
                     Some(Component::Normal(_)) => {
                         out.pop();
                     }
-                    Some(Component::RootDir) | Some(Component::Prefix(_)) => {}
+                    // A root cannot be escaped, so `/..` is just `/`. A bare
+                    // Windows prefix can: `C:..\a` is relative to the drive's
+                    // current directory, so the `..` still means something.
+                    Some(Component::RootDir) => {}
                     _ => out.push(Component::ParentDir.as_os_str()),
                 }
             }
@@ -1316,6 +1368,20 @@ mod tests {
     /// had no tests, and `out.pop()` succeeding on a trailing `..` — which it
     /// does, because `Path::new("..")` has a parent — meant a relative path with
     /// stacked `..` collapsed onto a different tree.
+    /// `resolve_path` re-joins the components below the deepest existing
+    /// directory, so a target two levels below one has to come back in order.
+    #[test]
+    fn test_resolve_path_rejoins_a_missing_tail_in_order() {
+        let tempdir = tempfile::TempDir::new().expect("tempdir");
+        let root = tempdir.path().canonicalize().expect("canonicalize");
+
+        let target = root.join("a").join("b").join("c.cmake");
+        assert_eq!(resolve_path(&target), target, "a fully missing tail");
+
+        std::fs::create_dir(root.join("a")).expect("mkdir");
+        assert_eq!(resolve_path(&target), target, "one existing level");
+    }
+
     #[test]
     fn test_normalize_path_keeps_leading_parent_components() {
         for (input, expected) in [

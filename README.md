@@ -178,8 +178,11 @@ its directory patterns are only tested against directories at or below that
 working directory. A walk tests them against every directory at or below its own
 root, and the stdin path has no root to use — so for a file outside the working
 directory, `cmake-fmt - --assume-filename …` can format something that
-`cmake-fmt -r` rooted next to that file would skip. Run both from the same
-directory and they agree. Note the alternative would be worse: a pattern like
+`cmake-fmt -r` rooted next to that file would skip. Running both from the same
+directory removes most of the difference, though not all of it — a matcher never
+decides about its own root, so `--ignore-file ig.txt` containing `proj/`, run
+from inside `proj`, excludes the tree for `cmake-fmt -r ..` and not for a file
+named directly. Note the alternative would be worse: a pattern like
 `build/` or `tmp/` matches by basename, so testing every ancestor would let a
 directory far above your project disable the entire run.
 

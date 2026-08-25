@@ -1129,6 +1129,7 @@ fn test_cmake_fmt_ignore_allowlist_idiom_survives_the_root_check() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_a_symlinked_walk_root_is_still_excluded() {
     // The walk canonicalizes when it reads the ignore files above an entry, so
     // a root reached through a symlink has to be resolved before it is checked
@@ -1143,10 +1144,7 @@ fn test_a_symlinked_walk_root_is_still_excluded() {
     let unformatted = "set(FOO   bar)\n";
     std::fs::write(inner.join("a.cmake"), unformatted).expect("Failed to write file");
 
-    #[cfg(unix)]
     std::os::unix::fs::symlink(&inner, root.join("link")).expect("Failed to symlink");
-    #[cfg(not(unix))]
-    return;
 
     let output = Command::new(cmake_fmt_bin())
         .args(["-r", "--check", "link"])
@@ -1166,49 +1164,199 @@ fn test_a_symlinked_walk_root_is_still_excluded() {
 
 #[test]
 fn test_an_unreadable_ignore_file_fails_the_run() {
-    // A typo in --ignore-file used to warn and then format everything the user
-    // meant to exclude, exiting 0 — the outcome this machinery exists to
-    // prevent, and it looked like a clean run.
+    // A typo used to warn and then format everything the user meant to exclude,
+    // exiting 0 — the outcome this machinery exists to prevent, and it looked
+    // like a clean run. `is_file()` is not the question to ask, either: it is
+    // true for a file whose mode forbids reading it, which left that same path
+    // intact.
     let tempdir = TempDir::new().expect("Failed to create tempdir");
     let root = tempdir.path();
-    std::fs::write(root.join("a.cmake"), "set(FOO   bar)\n").expect("Failed to write file");
+    std::fs::create_dir(root.join("src")).expect("Failed to create src dir");
+    std::fs::write(root.join("src").join("a.cmake"), "set(FOO   bar)\n").expect("write");
 
-    for args in [
-        vec!["-r", "--check", ".", "--ignore-file", "typo.txt"],
-        vec!["-r", "--check", ".", "--ignore-file", "."],
-    ] {
+    let refused = |args: &[&str]| -> (Option<i32>, String) {
         let output = Command::new(cmake_fmt_bin())
-            .args(&args)
+            .args(args)
             .current_dir(root)
             .output()
             .expect("Failed to run cmake-fmt");
-        assert_eq!(
+        (
             output.status.code(),
-            Some(1),
-            "{:?} should fail the run: {}",
-            args,
-            String::from_utf8_lossy(&output.stderr)
-        );
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        )
+    };
+
+    for arg in ["typo.txt", "."] {
+        let (code, stderr) = refused(&["-r", "--check", ".", "--ignore-file", arg]);
+        assert_eq!(code, Some(1), "{:?} should fail the run: {}", arg, stderr);
         assert!(
-            String::from_utf8_lossy(&output.stderr).contains("not a readable file"),
-            "no diagnostic for {:?}",
-            args
+            stderr.contains("--ignore-file"),
+            "no diagnostic for {:?}: {}",
+            arg,
+            stderr
         );
     }
 
-    // The stdin path agrees
+    // A file that exists but cannot be read is the case `is_file()` misses
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let unreadable = root.join("ig.txt");
+        std::fs::write(&unreadable, "src/\n").expect("write");
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000))
+            .expect("chmod");
+        // Root ignores the mode, so only assert when the probe really fails
+        if std::fs::File::open(&unreadable).is_err() {
+            let (code, stderr) = refused(&["-r", "--check", ".", "--ignore-file", "ig.txt"]);
+            assert_eq!(
+                code,
+                Some(1),
+                "an unreadable ignore file should fail the run"
+            );
+            assert!(
+                stderr.contains("cannot be read"),
+                "no diagnostic: {}",
+                stderr
+            );
+        }
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod back");
+    }
+
+    // And the shapes that must keep working: `--ignore-file /dev/null` is the
+    // standard way to disable one in a script, and the check must not reject it
+    // for not being a regular file
+    #[cfg(unix)]
+    {
+        let (_, stderr) = refused(&["-r", "--check", ".", "--ignore-file", "/dev/null"]);
+        assert!(
+            !stderr.contains("error:"),
+            "/dev/null was rejected: {}",
+            stderr
+        );
+    }
+
+    // The stdin path agrees about the typo
     let (ok, _) = run_with_stdin_in(
         Some(root),
         &[
             "-",
             "--assume-filename",
-            root.join("a.cmake").to_str().unwrap(),
+            root.join("src").join("a.cmake").to_str().unwrap(),
             "--ignore-file",
             "typo.txt",
         ],
         "set(FOO   bar)\n",
     );
     assert!(!ok, "stdin should fail on an unreadable --ignore-file");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_a_symlinked_path_reaches_the_same_verdict_either_way() {
+    // The walk resolves symlinks for every entry whose ignore files it reads, so
+    // a path handed to the stdin path has to be resolved the same way. Round one
+    // canonicalized the walk-root check only, which made the two disagree in
+    // both directions — and format-on-save is exactly where an unresolved
+    // spelling arrives, because the editor hands over the path the user opened.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path().join("proj");
+    std::fs::create_dir_all(root.join("excluded").join("inner")).expect("dirs");
+    std::fs::create_dir(root.join("src")).expect("dirs");
+    std::fs::write(root.join(".cmake-fmt-ignore"), "excluded/\n").expect("write");
+
+    let unformatted = "set(FOO   bar)\n";
+    std::fs::write(
+        root.join("excluded").join("inner").join("b.cmake"),
+        unformatted,
+    )
+    .expect("write");
+    std::fs::write(root.join("src").join("a.cmake"), unformatted).expect("write");
+    // Into the excluded tree, and back out of it
+    std::os::unix::fs::symlink("excluded/inner", root.join("link-to-inner")).expect("symlink");
+    std::os::unix::fs::symlink("../src", root.join("excluded").join("link-to-src"))
+        .expect("symlink");
+
+    for (target, should_format) in [
+        ("link-to-inner/b.cmake", false),
+        ("excluded/link-to-src/a.cmake", true),
+    ] {
+        let (_, stdout) = run_with_stdin_in(
+            Some(&root),
+            &["-", "--assume-filename", target],
+            unformatted,
+        );
+        assert_eq!(
+            stdout != unformatted,
+            should_format,
+            "stdin reached the wrong verdict for {}",
+            target
+        );
+
+        let walk = Command::new(cmake_fmt_bin())
+            .args([
+                "-r",
+                "--check",
+                target.rsplit_once('/').expect("has a directory").0,
+            ])
+            .current_dir(&root)
+            .output()
+            .expect("Failed to run walk");
+        let report = String::from_utf8_lossy(&walk.stdout).to_string()
+            + &String::from_utf8_lossy(&walk.stderr);
+        assert_eq!(
+            report.contains("Would reformat"),
+            should_format,
+            "walk and stdin disagree about {}:\n{}",
+            target,
+            report
+        );
+    }
+}
+
+#[test]
+fn test_cmake_fmt_ignore_outranks_the_extra_ignore_file() {
+    // `--ignore-file` ranks below the `.cmake-fmt-ignore` chain, matching
+    // WalkBuilder::add_ignore (ignore's `matched_ignore` consults the custom
+    // ignore first). Nothing pinned the ordering, so consulting the extra file
+    // first left the whole suite green.
+    let tempdir = TempDir::new().expect("Failed to create tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join(".cmake-fmt-ignore"), "!keep.cmake\n").expect("write");
+    std::fs::write(root.join("xignore"), "keep.cmake\n").expect("write");
+
+    let unformatted = "set(FOO   bar)\n";
+    std::fs::write(root.join("keep.cmake"), unformatted).expect("write");
+
+    // The nearer file re-includes it, so it is formatted despite --ignore-file
+    let (_, stdout) = run_with_stdin_in(
+        Some(root),
+        &[
+            "-",
+            "--assume-filename",
+            root.join("keep.cmake").to_str().unwrap(),
+            "--ignore-file",
+            "xignore",
+        ],
+        unformatted,
+    );
+    assert_eq!(
+        stdout, "set(FOO bar)\n",
+        "--ignore-file outranked the .cmake-fmt-ignore chain"
+    );
+
+    let walk = Command::new(cmake_fmt_bin())
+        .args(["-r", "--check", ".", "--ignore-file", "xignore"])
+        .current_dir(root)
+        .output()
+        .expect("Failed to run walk");
+    let report =
+        String::from_utf8_lossy(&walk.stdout).to_string() + &String::from_utf8_lossy(&walk.stderr);
+    assert!(
+        report.contains("keep.cmake"),
+        "the walk disagrees about precedence:\n{}",
+        report
+    );
 }
 
 #[test]
