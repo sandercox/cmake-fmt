@@ -1,4 +1,7 @@
-use cmake_fmt::formatter::{FormatConfig, SortSources, SourceGrouping, format_text};
+use cmake_fmt::formatter::{
+    CommandGrammarConfig, FormatConfig, SortSources, SourceGrouping, format_text,
+};
+use std::collections::HashMap;
 
 #[test]
 fn test_sort_sources_disabled_by_default() {
@@ -623,7 +626,34 @@ fn test_stray_positional_run_after_a_later_keyword_holds() {
     // Only a leading mode keyword that consumed the list variable opens an
     // unordered run. A run after some later single-value keyword is a stray
     // positional argument, not the command's argument list.
+    //
+    // `list(APPEND SRCS a.cpp SORT z.cpp b.cpp)` also holds, but for a
+    // different reason — `SORT` is not a keyword in that mode and has no
+    // extension, so the value check rejects the whole run — and deleting this
+    // guard left it green. Reaching the guard needs a command whose grammar
+    // declares the later keyword, so the run is genuinely a positional overflow
+    // of a sortable command.
     assert_unchanged("list(APPEND SRCS a.cpp SORT z.cpp b.cpp)\n");
+
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_set".to_string(),
+        CommandGrammarConfig {
+            one_value_keywords: vec!["UNUSED".to_string()],
+            sortable_positional: true,
+            ..Default::default()
+        },
+    );
+    let config = FormatConfig {
+        command_grammars,
+        ..reordering_config()
+    };
+
+    assert_eq!(
+        format_text("my_set(VAR z.cpp a.cpp UNUSED x q.cpp b.cpp)\n", &config),
+        "my_set(VAR a.cpp z.cpp UNUSED x q.cpp b.cpp)\n",
+        "the leading run should sort and the overflow run should hold"
+    );
 }
 
 #[test]
@@ -667,4 +697,166 @@ fn test_version_lists_hold() {
     // Python_ADDITIONAL_VERSIONS is a documented first-found-wins hint.
     assert_unchanged("set(PYTHON_VERSIONS 3.9 3.12 3.11)\n");
     assert_unchanged("set(SUPPORTED 1.10 1.9)\n");
+}
+
+/// Assert the command is left exactly as written by `source_grouping` alone.
+///
+/// `source_grouping` pairs by base name and hoists the header to its pair's
+/// index, so it reorders whether or not `sort_sources` is on. Every
+/// `assert_unchanged` case above uses distinct base names, which is precisely
+/// what grouping needs to do nothing — so none of them notices if the guard on
+/// the grouping pass disappears.
+fn assert_grouping_leaves_alone(input: &str) {
+    let config = FormatConfig {
+        sort_sources: SortSources::None,
+        source_grouping: SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
+    assert_eq!(
+        format_text(input, &config),
+        input,
+        "source_grouping reordered a list it does not own"
+    );
+    // And with both passes on, for good measure
+    assert_unchanged(input);
+}
+
+#[test]
+fn test_grouping_does_not_pair_across_an_unowned_list() {
+    // Each of these holds a colliding base name, so the grouping pass has
+    // something to do — and doing it swaps a source with its destination, a
+    // link order, or a compiler flag with its argument.
+    assert_grouping_leaves_alone("file(RENAME z.cpp z.h)\n");
+    assert_grouping_leaves_alone("configure_file(cfg.cpp cfg.h)\n");
+    assert_grouping_leaves_alone("target_link_libraries(app q.cpp q.h)\n");
+    assert_grouping_leaves_alone("add_custom_command(OUTPUT w.cpp w.h COMMAND touch w.cpp)\n");
+    assert_grouping_leaves_alone(
+        "target_compile_options(app PRIVATE -include p.cpp -include p.h)\n",
+    );
+}
+
+#[test]
+fn test_grouping_respects_the_barriers_sorting_respects() {
+    // A variable reference holds its index and nothing moves across it — the
+    // README promises this, and `sort_source_args` implements it. The grouping
+    // pass did not: it hoisted `b.h` past two expansions whose contents nobody
+    // can read.
+    let config = FormatConfig {
+        sort_sources: SortSources::None,
+        source_grouping: SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
+    let input = "set(SRCS b.cpp ${GENERATED} ${OTHER} b.h)\n";
+    assert_eq!(
+        format_text(input, &config),
+        input,
+        "grouping crossed a barrier"
+    );
+    assert_unchanged(input);
+
+    // Within one run it still groups
+    assert_eq!(
+        format_text("set(SRCS b.cpp b.h ${GENERATED})\n", &config),
+        "set(SRCS b.h b.cpp ${GENERATED})\n"
+    );
+}
+
+#[test]
+fn test_grouping_pins_the_target_name() {
+    // Index 0 of an add_library is the target, not part of the list, so a
+    // header must not pair with it and hoist it out of first place.
+    let config = FormatConfig {
+        sort_sources: SortSources::None,
+        source_grouping: SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
+    let input = "add_library(foo.cpp bar.cpp foo.h)\n";
+    assert_eq!(format_text(input, &config), input, "the target name moved");
+}
+
+#[test]
+fn test_a_target_name_is_not_read_as_a_list_variable() {
+    // The search-path/flag blocklist is about the *variable* that holds the
+    // list. Applying it to an add_library target name silently switched sorting
+    // off for ordinary targets whose names happen to end in `_LIBS`, `_DIRS` or
+    // `_OPTIONS`, or to contain `FLAGS`.
+    let config = reordering_config();
+    for name in [
+        "my_libs",
+        "plugin_dirs",
+        "render_options",
+        "cxx_flags_helper",
+    ] {
+        let input = format!("add_library({} z.cpp a.cpp)\n", name);
+        assert_eq!(
+            format_text(&input, &config),
+            format!("add_library({} a.cpp z.cpp)\n", name),
+            "sorting was disabled by the target name {}",
+            name
+        );
+    }
+}
+
+#[test]
+fn test_the_search_path_blocklist_holds_file_like_values() {
+    // Every earlier case for this blocklist was over-determined: the values were
+    // extension-less or flag-shaped, so the value check rejected them anyway and
+    // deleting the whole blocklist left the suite green. These values are
+    // file-like, so only the variable's name can hold them.
+    let config = reordering_config();
+    for input in [
+        "list(APPEND CMAKE_MODULE_PATH cmake/z.cmake cmake/a.cmake)\n",
+        "list(APPEND CMAKE_PREFIX_PATH z.cmake a.cmake)\n",
+        "set(MY_INCLUDE_DIRS z.cmake a.cmake)\n",
+        "set(BUILD_DIRS z.cmake a.cmake)\n",
+        "list(APPEND GTK_CFLAGS z.cmake a.cmake)\n",
+        "set(MY_PATTERNS z.txt a.txt)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &config),
+            input,
+            "a search-path or flag list was sorted"
+        );
+    }
+
+    // The same values under an ordinary name do sort, so the inputs above are
+    // held by the name and nothing else
+    assert_eq!(
+        format_text("list(APPEND MY_SOURCES z.cmake a.cmake)\n", &config),
+        "list(APPEND MY_SOURCES a.cmake z.cmake)\n"
+    );
+}
+
+#[test]
+fn test_a_config_grammar_keeps_the_conventional_file_list_default() {
+    // A config entry replaces the grammar auto-detected from
+    // `cmake_parse_arguments` wholesale. Without a default here, a user who
+    // declared one to fix wrapping silently lost the sorting they already had,
+    // with no diagnostic — and the README's "keywords named SOURCES, SRCS or
+    // FILES on your own commands" was true only for auto-detection.
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_runner".to_string(),
+        CommandGrammarConfig {
+            one_value_keywords: vec!["NAME".to_string()],
+            multi_value_keywords: vec!["SOURCES".to_string(), "DEPENDS".to_string()],
+            ..Default::default()
+        },
+    );
+    let config = FormatConfig {
+        command_grammars,
+        ..reordering_config()
+    };
+
+    assert_eq!(
+        format_text("my_runner(NAME hello SOURCES z.cpp a.cpp)\n", &config),
+        "my_runner(NAME hello SOURCES a.cpp z.cpp)\n",
+        "a conventionally named file list should still sort"
+    );
+    // And only the conventional names: DEPENDS is order-significant
+    assert_eq!(
+        format_text("my_runner(NAME hello DEPENDS z.cpp a.cpp)\n", &config),
+        "my_runner(NAME hello DEPENDS z.cpp a.cpp)\n",
+        "a keyword nobody marked sortable was reordered"
+    );
 }

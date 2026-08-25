@@ -310,11 +310,13 @@ const ALLOWED_REORDERING: &[(&str, Option<&str>, &[&str], bool)] = &[
 /// Keyword names that auto-detected wrapper commands may reorder.
 const CONVENTIONAL_FILE_LISTS: &[&str] = &["SOURCES", "SRCS", "FILES"];
 
-/// `sub_keywords` and `collection_keywords` are deliberately not modelled: they
-/// exist only on `install`'s TARGETS and DIRECTORY modes, neither of which has a
-/// table entry, so every run there must be byte-identical anyway. Splitting more
-/// finely than the parser is strictly stricter, and both sides go through this
-/// same function, so the decomposition stays canonical.
+/// `sub_keywords` and `collection_keywords` are deliberately not modelled. They
+/// are set on `install`'s TARGETS and DIRECTORY modes and on `file`'s COPY and
+/// INSTALL modes; none of those has a table entry, so every run there must be
+/// byte-identical anyway. Splitting more finely than the parser is strictly
+/// stricter, and both sides go through this same function, so the decomposition
+/// stays canonical. A future table entry for one of those commands would need
+/// this revisited.
 ///
 /// Split an argument list into `(governing keyword, values)` runs using the
 /// command's real grammar, so the split does not have to guess which tokens are
@@ -401,9 +403,10 @@ fn test_corpus_reordering_confined_to_allowlist() {
     // tests/corpus/llvm/HandleLLVMOptions.cmake.
     //
     // Every keyword keeps its identity and position, and only the runs the
-    // allowlist names may be permuted — so re-marking `set`'s CACHE keyword,
-    // `install`'s DIRECTORY mode, or `list`'s POP_BACK mode as sortable fails
-    // this test.
+    // allowlist names may be permuted — so re-marking `set`'s CACHE keyword or
+    // `install`'s DIRECTORY mode as sortable fails this test. A mode the corpus
+    // never uses cannot fail it: nothing here calls `list(POP_BACK ...)`, which
+    // is what `test_unlisted_list_modes_hold` is for.
     let plain = FormatConfig::default();
     let reordering = FormatConfig {
         sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,

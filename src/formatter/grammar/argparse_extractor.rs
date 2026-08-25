@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 /// meaning, so an auto-detected `COMMAND` looks like any other multi-value
 /// list. A project can mark any other keyword explicitly through
 /// `command_grammars` in `.cmake-fmt`.
-fn is_conventional_file_list(keyword: &str) -> bool {
+pub(super) fn is_conventional_file_list(keyword: &str) -> bool {
     matches!(keyword, "SOURCES" | "SRCS" | "FILES")
 }
 

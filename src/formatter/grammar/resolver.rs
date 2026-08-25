@@ -128,6 +128,21 @@ pub fn config_grammars_to_map(
             for kw in &cfg.bin_pack_keywords {
                 keywords.insert(kw.clone(), KeywordType::BinPack);
             }
+            // A config entry replaces the grammar auto-detected from
+            // `cmake_parse_arguments` wholesale, so without this a user who
+            // declared one for wrapping reasons silently lost the sorting the
+            // auto-detected grammar gave them — with no diagnostic. The
+            // conventional file-list names are a default here for the same
+            // reason they are one there.
+            let mut sortable_keywords: HashSet<String> =
+                cfg.sortable_keywords.iter().cloned().collect();
+            sortable_keywords.extend(
+                keywords
+                    .keys()
+                    .filter(|kw| super::argparse_extractor::is_conventional_file_list(kw))
+                    .cloned(),
+            );
+
             (
                 name.to_lowercase(),
                 CommandGrammar {
@@ -135,7 +150,7 @@ pub fn config_grammars_to_map(
                     force_args_on_new_line: false,
                     sub_keywords: HashSet::new(),
                     collection_keywords: HashSet::new(),
-                    sortable_keywords: cfg.sortable_keywords.iter().cloned().collect(),
+                    sortable_keywords,
                     sortable_positional: cfg.sortable_positional,
                 },
             )

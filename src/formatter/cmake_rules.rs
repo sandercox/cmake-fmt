@@ -235,22 +235,58 @@ pub fn group_source_pairs(
 /// Groups files within segments (between blank lines) independently,
 /// then adjusts blank line positions and comment positions for the shorter grouped segments.
 #[allow(clippy::type_complexity)]
-fn group_source_pairs_preserving_blanks(
+/// Group only the runs the sorting pass is allowed to permute: from `sort_from`
+/// onward, and never across a barrier.
+///
+/// `source_grouping` reorders on its own — it hoists a later header to its
+/// pair's index whether or not `sort_sources` is on — so without this it moved a
+/// file across a `${...}` that `sort_source_args` refuses to cross, and past the
+/// target name of an `add_library`. `set(SRCS b.cpp ${GENERATED} ${OTHER} b.h)`
+/// became `set(SRCS b.h b.cpp ${GENERATED} ${OTHER})`, which is a reorder of a
+/// list whose contents nobody can read.
+fn group_sortable_runs(
     args: &[String],
-    blank_lines: &[usize],
-    comments: &[(usize, String)],
-    post_comment_blanks: &[usize],
-    comment_blank_indices: &[usize],
+    sort_from: usize,
     grouping: super::config::SourceGrouping,
-) -> (
+) -> (Vec<String>, Vec<usize>) {
+    // A section with no sortable range pins everything, so `min` here is what
+    // makes `sort_from = usize::MAX` mean "group nothing"
+    let pinned = sort_from.min(args.len());
+    let mut out: Vec<String> = args[..pinned].to_vec();
+    let mut old_to_new: Vec<usize> = (0..pinned).collect();
+
+    for run in split_at_barriers(args, pinned..args.len()) {
+        let base = out.len();
+        let (grouped, local) = group_source_pairs(&args[run.clone()], grouping);
+        out.extend(grouped);
+        old_to_new.extend(local.into_iter().map(|new| base + new));
+    }
+
+    (out, old_to_new)
+}
+
+/// A section after grouping: the arguments, the blank-line positions, the
+/// comments with their new positions, the post-comment blanks, and the indices
+/// of comments that carry a blank line.
+type GroupedSection = (
     Vec<String>,
     Vec<usize>,
     Vec<(usize, String)>,
     Vec<usize>,
     Vec<usize>,
-) {
+);
+
+fn group_source_pairs_preserving_blanks(
+    args: &[String],
+    sort_from: usize,
+    blank_lines: &[usize],
+    comments: &[(usize, String)],
+    post_comment_blanks: &[usize],
+    comment_blank_indices: &[usize],
+    grouping: super::config::SourceGrouping,
+) -> GroupedSection {
     if blank_lines.is_empty() {
-        let (grouped_args, old_to_new) = group_source_pairs(args, grouping);
+        let (grouped_args, old_to_new) = group_sortable_runs(args, sort_from, grouping);
         // Remap comment positions using the index mapping
         let new_comments = comments
             .iter()
@@ -303,7 +339,8 @@ fn group_source_pairs_preserving_blanks(
                 new_post_comment_blanks.push(new_bl_pos);
             }
         }
-        let (grouped, segment_old_to_new) = group_source_pairs(segment, grouping);
+        let (grouped, segment_old_to_new) =
+            group_sortable_runs(segment, sort_from.saturating_sub(segment_start), grouping);
 
         // Map segment-local indices to global indices
         for (local_idx, &local_new) in segment_old_to_new.iter().enumerate() {
@@ -655,7 +692,12 @@ pub fn parse_keyword_sections_with_grammar(
         sections.push(current_section);
     }
 
-    unmark_unsortable_positional_runs(&mut sections);
+    // `add_library`/`add_executable` name a target in their first positional,
+    // not the variable that governs the list
+    let first_positional_governs = owning_command_name(arg_list)
+        .map(|name| !matches!(name.as_str(), "add_library" | "add_executable"))
+        .unwrap_or(true);
+    unmark_unsortable_positional_runs(&mut sections, first_positional_governs);
 
     sections
 }
@@ -717,8 +759,8 @@ fn is_search_path_variable(name: &str) -> bool {
 /// project and compiler flags in the next — so its values have to look like
 /// source files before anything moves. This sits behind the grammar allowlist
 /// and only ever narrows it, so it cannot reopen the `CACHE`, `FILES_MATCHING`
-/// or `file(RENAME)` cases, which are keyword sections and unrecognized
-/// commands respectively.
+/// or `file(RENAME)` cases: the first two are keyword sections, and `file` is a
+/// recognised multi-mode command whose `RENAME` mode opts nothing in.
 fn is_sortable_positional_value(arg: &str) -> bool {
     // Unquote first: a quoted flag is still a flag, and `"-I/usr/inc/a.h"`
     // would otherwise pass the prefix test and then look like a header
@@ -752,6 +794,23 @@ fn is_sortable_positional_value(arg: &str) -> bool {
     !LINKABLE_EXTS.contains(&extension.to_ascii_lowercase().as_str())
 }
 
+/// The command this argument list belongs to, when the tree above it says so.
+///
+/// Whether the leading positional is a variable or a target name is a property
+/// of the command, and the section parser is otherwise given only the grammar,
+/// which does not carry it.
+fn owning_command_name(arg_list: &ArgumentList) -> Option<String> {
+    let invocation = arg_list.syntax().parent()?;
+    if invocation.kind() != SyntaxKind::COMMAND_INVOCATION {
+        return None;
+    }
+    invocation
+        .children_with_tokens()
+        .filter_map(|child| child.into_token())
+        .find(|token| token.kind() == SyntaxKind::COMMAND_NAME)
+        .map(|token| token.text().to_lowercase())
+}
+
 /// Clear `sort_from` on positional runs that must not be reordered after all.
 ///
 /// A positional run is opted in by the command's grammar, which cannot know what
@@ -761,7 +820,15 @@ fn is_sortable_positional_value(arg: &str) -> bool {
 ///   the run's own first argument (`set(VAR …)`) or the value of the preceding
 ///   single-value mode keyword (`list(APPEND VAR …)`);
 /// - any of its values does not look like a source file.
-fn unmark_unsortable_positional_runs(sections: &mut [KeywordSection]) {
+///
+/// `first_positional_governs` says whether the leading run's own first argument
+/// is that variable. It is not for `add_library`/`add_executable`, where it
+/// names a target: reading a target name as a variable name stopped
+/// `add_library(my_libs z.cpp a.cpp)` sorting, because the name ends in `_LIBS`.
+fn unmark_unsortable_positional_runs(
+    sections: &mut [KeywordSection],
+    first_positional_governs: bool,
+) {
     for idx in 0..sections.len() {
         let Some(sort_from) = sections[idx].sort_from else {
             continue;
@@ -775,7 +842,7 @@ fn unmark_unsortable_positional_runs(sections: &mut [KeywordSection]) {
         // A later run is opened by a mode keyword that already consumed the
         // list variable, so there the name provably governs the list.
         let (governing, governs_the_list) = if idx == 0 {
-            (sections[idx].args.first(), false)
+            (sections[idx].args.first(), first_positional_governs)
         } else {
             let previous = &sections[idx - 1];
             let name = previous
@@ -790,7 +857,7 @@ fn unmark_unsortable_positional_runs(sections: &mut [KeywordSection]) {
         // the whole token is a reference. `${PREFIX}_SOURCES` has a readable
         // suffix, and a dynamic *target* name says nothing about its sources.
         let blocked_by_name = governing.is_some_and(|name| {
-            (governs_the_list && is_whole_variable_reference(name)) || is_search_path_variable(name)
+            governs_the_list && (is_whole_variable_reference(name) || is_search_path_variable(name))
         });
 
         let blocked_by_value = sections[idx]
@@ -1728,11 +1795,11 @@ pub fn format_keyword_aware_args(
                             effective_post_comment_blanks,
                             effective_comment_blank_indices,
                         ) = if config.source_grouping != super::config::SourceGrouping::None
-                            && section.sort_from.is_some()
                             && section.trailing_comments.is_empty()
                         {
                             group_source_pairs_preserving_blanks(
                                 &section.args,
+                                section.sort_from.unwrap_or(usize::MAX),
                                 &section.blank_lines,
                                 &section.comments,
                                 &section.post_comment_blanks,
@@ -1885,11 +1952,11 @@ pub fn format_keyword_aware_args(
                 effective_post_comment_blanks,
                 effective_comment_blank_indices,
             ) = if config.source_grouping != super::config::SourceGrouping::None
-                && section.sort_from.is_some()
                 && section.trailing_comments.is_empty()
             {
                 group_source_pairs_preserving_blanks(
                     &section.args,
+                    section.sort_from.unwrap_or(usize::MAX),
                     &section.blank_lines,
                     &section.comments,
                     &section.post_comment_blanks,
@@ -2165,11 +2232,11 @@ fn format_keyword_aware_args_inline_single(
                     _effective_post_comment_blanks,
                     effective_comment_blank_indices,
                 ) = if config.source_grouping != super::config::SourceGrouping::None
-                    && section.sort_from.is_some()
                     && section.trailing_comments.is_empty()
                 {
                     group_source_pairs_preserving_blanks(
                         &section.args,
+                        section.sort_from.unwrap_or(usize::MAX),
                         &section.blank_lines,
                         &section.comments,
                         &section.post_comment_blanks,
@@ -2288,11 +2355,11 @@ fn format_keyword_aware_args_inline_single(
                 effective_post_comment_blanks,
                 effective_comment_blank_indices,
             ) = if config.source_grouping != super::config::SourceGrouping::None
-                && section.sort_from.is_some()
                 && section.trailing_comments.is_empty()
             {
                 group_source_pairs_preserving_blanks(
                     &section.args,
+                    section.sort_from.unwrap_or(usize::MAX),
                     &section.blank_lines,
                     &section.comments,
                     &section.post_comment_blanks,
@@ -2493,11 +2560,11 @@ fn format_simple_args(
             effective_post_comment_blanks,
             effective_comment_blank_indices,
         ) = if config.source_grouping != super::config::SourceGrouping::None
-            && section.sort_from.is_some()
             && section.trailing_comments.is_empty()
         {
             group_source_pairs_preserving_blanks(
                 &section.args,
+                section.sort_from.unwrap_or(usize::MAX),
                 &section.blank_lines,
                 &section.comments,
                 &section.post_comment_blanks,
