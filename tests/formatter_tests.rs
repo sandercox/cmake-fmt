@@ -2296,6 +2296,53 @@ fn test_forced_closer_paren_spacing_is_symmetric() {
 }
 
 #[test]
+fn test_paren_spacing_follows_the_arguments_actually_written() {
+    // The same width-model bug in its two remaining shapes. `elseif` carries a
+    // condition of its own, so `closing_style` never reconstructs it from the
+    // opener — but the opener's arguments were consulted anyway, and an
+    // argument-less `elseif` came out as `elseif( )`. Under `remove` a closer's
+    // arguments are dropped, yet its own argument list still asked for a space,
+    // so `endif(EXISTS x)` became `endif( )` and only reached `endif()` on a
+    // second pass.
+    let forced = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        space_between_command_parens: true,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(A)\n\tmessage(x)\nelseif()\n\tmessage(y)\nendif()\n",
+        &forced,
+    );
+    assert!(
+        result.contains("elseif()\n"),
+        "an argument-less elseif should stay empty:\n{}",
+        result
+    );
+    assert!(
+        result.contains("endif( A )"),
+        "the closer should still echo its opener:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &forced), "not idempotent");
+
+    let removed = FormatConfig {
+        closing_style: ClosingStyle::Remove,
+        space_between_command_parens: true,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(EXISTS foo)\n\tmessage(x)\nendif(EXISTS foo)\n",
+        &removed,
+    );
+    assert!(
+        result.contains("endif()\n"),
+        "a removed closer should have no paren space:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &removed), "not idempotent");
+}
+
+#[test]
 fn test_joined_condition_closes_on_the_same_line() {
     // A hand-wrapped condition that fits gets joined onto one line; a lone `)`
     // underneath it reads as a bug, and nothing else in the formatter puts a

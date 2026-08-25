@@ -840,15 +840,14 @@ fn format_command(
         } else {
             ""
         };
-    // A forced closer is reconstructed from its opener, so it has arguments even
-    // though its own argument list is empty. Without this the width model
-    // assumed a paren space the renderer never emitted, and `endif(X)` became
-    // `endif( X)` on a second pass.
-    let reconstructs_opener_args = closer_context.is_some_and(|closer| {
-        matches!(ctx.config.closing_style, ClosingStyle::Force) && !closer.opener_args.is_empty()
-    });
-    let has_args = reconstructs_opener_args
-        || cmd.argument_list().is_some_and(|al| {
+    // Whether a paren space is emitted has to be decided from what `args_doc`
+    // above actually produced, not from the command's own argument list: a
+    // closer's arguments are dropped under `remove` and replaced by its
+    // opener's under `force`. Reading the argument list regardless gave
+    // `endif( )` for a `remove`d `endif(EXISTS x)` and `endif( X)` on a second
+    // pass over a forced `endif(X)`, neither of which is idempotent.
+    let writes_own_args = || {
+        cmd.argument_list().is_some_and(|al| {
             al.syntax().children_with_tokens().any(|c| {
                 matches!(
                     c.kind(),
@@ -861,7 +860,20 @@ fn format_command(
                         | SyntaxKind::GENERATOR_EXPR
                 )
             })
-        });
+        })
+    };
+    let has_args = match closer_context {
+        // `elseif` carries a condition of its own, so closing_style never
+        // touches its arguments — the branch above formats them as written.
+        Some(closer) if !(closer.is_mid_block && name_lower == "elseif") => {
+            match ctx.config.closing_style {
+                ClosingStyle::Preserve => writes_own_args(),
+                ClosingStyle::Remove => false,
+                ClosingStyle::Force => !closer.opener_args.is_empty(),
+            }
+        }
+        _ => writes_own_args(),
+    };
     let space_after = if ctx.config.space_between_command_parens && has_args {
         " "
     } else {
@@ -944,7 +956,12 @@ fn is_condition_command(name_lower: &str) -> bool {
     )
 }
 
-/// Operators that join the top-level clauses of a condition.
+/// Operators that join the clauses of a condition.
+///
+/// Recognised wherever they appear in the argument list — there is no
+/// paren-depth tracking here. Nothing needs it: a parenthesised sub-expression
+/// reaches this layout as a single argument, so an `AND` inside `(B OR C)` is
+/// part of that argument's text and is never tested.
 ///
 /// Case-sensitive, because CMake itself is: `if(A and B)` is not a lowercase
 /// spelling of the operator, it is an error ("Unknown arguments specified").
