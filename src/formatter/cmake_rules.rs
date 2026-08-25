@@ -1345,6 +1345,23 @@ pub fn format_keyword_aware_args(
                     }
                     docs.push(RcDoc::text(keyword.clone()));
 
+                    // A flag with no values still carries its comments — the
+                    // whole comment machinery below lives inside the
+                    // `!flag_args.is_empty()` arm, so `find_package(Foo REQUIRED
+                    // # note\n COMPONENTS ...)` lost `# note` outright. Trailing
+                    // comments attach to the flag itself; own-line ones sit
+                    // between it and the next keyword.
+                    if flag_args.is_empty() {
+                        for (_, tc_text) in &section.trailing_comments {
+                            docs.push(RcDoc::text(format!(" {}", tc_text)));
+                        }
+                        for (_, comment) in &flag_comments {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.clone()));
+                            docs.push(RcDoc::text(comment.clone()));
+                        }
+                    }
+
                     // Output any trailing non-keyword arguments in this section
                     if !flag_args.is_empty() {
                         // Use per-line when values were explicitly on new lines,
@@ -1537,8 +1554,15 @@ pub fn format_keyword_aware_args(
                             || !section.trailing_comments.is_empty()
                             || !section.blank_lines.is_empty();
 
-                        if pairs.len() == 1 {
-                            // Single pair: keep inline with keyword (e.g., PROPERTIES KEY VALUE)
+                        if pairs.len() == 1
+                            && section.comments.is_empty()
+                            && section.trailing_comments.is_empty()
+                        {
+                            // Single pair: keep inline with keyword (e.g., PROPERTIES KEY VALUE).
+                            // Guarded on comments like every other shortcut that
+                            // emits the keyword and its values and nothing else —
+                            // and this one is tested *before* `use_per_line`, so
+                            // the comments that set that flag never reached it.
                             docs.push(RcDoc::space());
                             docs.push(RcDoc::text(pairs[0][0].clone()));
                             if pairs[0].len() > 1 {
@@ -1576,19 +1600,22 @@ pub fn format_keyword_aware_args(
                                 }
                                 // key
                                 docs.push(RcDoc::text(chunk[0].clone()));
-                                for (tc_index, tc_text) in &section.trailing_comments {
-                                    if *tc_index == key_index {
-                                        docs.push(RcDoc::text(format!(" {}", tc_text)));
-                                    }
-                                }
                                 // value (if present — odd number of args means last key has no value)
                                 if chunk.len() > 1 {
                                     docs.push(RcDoc::space());
                                     docs.push(RcDoc::text(chunk[1].clone()));
-                                    for (tc_index, tc_text) in &section.trailing_comments {
-                                        if *tc_index == key_index + 1 {
-                                            docs.push(RcDoc::text(format!(" {}", tc_text)));
-                                        }
+                                }
+                                // Both trailing comments come after the value. A comment runs to
+                                // the end of its line, so emitting the key's before the value put
+                                // the value *inside* the comment — `CXX_STANDARD # note 17` — and
+                                // the next pass swallowed the following key too, losing a token per
+                                // run. The inline_single_keyword twin has always emitted them in
+                                // this order.
+                                for (tc_index, tc_text) in &section.trailing_comments {
+                                    if *tc_index == key_index
+                                        || (chunk.len() > 1 && *tc_index == key_index + 1)
+                                    {
+                                        docs.push(RcDoc::text(format!(" {}", tc_text)));
                                     }
                                 }
                             }
@@ -2235,8 +2262,12 @@ fn format_keyword_aware_args_inline_single(
                     || !section.trailing_comments.is_empty()
                     || !section.blank_lines.is_empty();
 
-                if pairs.len() == 1 {
-                    // Single pair: keep inline with keyword
+                if pairs.len() == 1
+                    && section.comments.is_empty()
+                    && section.trailing_comments.is_empty()
+                {
+                    // Single pair: keep inline with keyword. Same guard as the
+                    // general path's twin, for the same reason.
                     docs.push(RcDoc::space());
                     docs.push(RcDoc::text(pairs[0][0].clone()));
                     if pairs[0].len() > 1 {
@@ -2244,10 +2275,23 @@ fn format_keyword_aware_args_inline_single(
                         docs.push(RcDoc::text(pairs[0][1].clone()));
                     }
                 } else if use_per_line || signals.force_multiline {
+                    let mut pair_comments = section.comments.iter().peekable();
                     for (pair_idx, chunk) in pairs.iter().enumerate() {
                         if section.blank_lines.contains(&(pair_idx * 2)) && signals.force_multiline
                         {
                             docs.push(RcDoc::hardline());
+                        }
+                        // Own-line comments written before this pair. This loop
+                        // was missing entirely, so the twin emitted only trailing
+                        // comments and deleted every own-line one.
+                        while let Some((position, comment)) = pair_comments.peek() {
+                            if *position > pair_idx * 2 {
+                                break;
+                            }
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.to_string()));
+                            docs.push(RcDoc::text((*comment).clone()));
+                            pair_comments.next();
                         }
                         if signals.force_multiline {
                             docs.push(RcDoc::hardline());
@@ -2270,6 +2314,12 @@ fn format_keyword_aware_args_inline_single(
                                 docs.push(RcDoc::text(format!(" {}", tc_text)));
                             }
                         }
+                    }
+                    // Anything written after the last pair
+                    for (_, comment) in pair_comments {
+                        docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(keyword_indent.to_string()));
+                        docs.push(RcDoc::text(comment.clone()));
                     }
                 } else {
                     for chunk in pairs {

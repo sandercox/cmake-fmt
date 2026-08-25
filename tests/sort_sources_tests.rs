@@ -1102,3 +1102,40 @@ fn test_an_empty_sortable_keywords_list_means_none() {
         "my_wrap(SOURCES a.cpp z.cpp)\n"
     );
 }
+
+#[test]
+fn test_a_quoted_governing_variable_is_read_as_one() {
+    // `is_whole_variable_reference` is the sibling predicate that decides whether
+    // the name holding a list can be read at all. It did not unquote, so a
+    // quoted dynamic name looked readable and its list was sorted.
+    let config = reordering_config();
+    for input in [
+        "set(\"${PFX}\" b.cpp a.cpp)\n",
+        "list(APPEND \"${VAR}\" b.cpp a.cpp)\n",
+        "set(\"$ENV{X}\" b.cpp a.cpp)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &config),
+            input,
+            "a list held in an unreadable name was sorted"
+        );
+    }
+}
+
+#[test]
+fn test_grouping_leaves_a_section_with_a_trailing_comment_alone() {
+    // Grouping moves a file to its pair's index but cannot move the comment
+    // attached to it, so a section carrying a trailing comment is left alone
+    // entirely. Without that, the comment ends up describing a different file.
+    let config = FormatConfig {
+        sort_sources: SortSources::None,
+        source_grouping: SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
+    let input = "set(SRCS\n\tb.cpp # note\n\tb.h\n\ta.cpp\n\ta.h\n)\n";
+    assert_eq!(
+        format_text(input, &config),
+        input,
+        "a section carrying a trailing comment should be left alone entirely"
+    );
+}

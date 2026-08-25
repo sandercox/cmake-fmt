@@ -3506,3 +3506,126 @@ fn test_a_keyword_shortcut_still_applies_without_comments() {
         "list(APPEND V a.cpp b.cpp)\n"
     );
 }
+
+#[test]
+fn test_a_property_value_never_lands_inside_a_comment() {
+    // A comment runs to the end of its line, so emitting a key's trailing
+    // comment before the key's value put the value *inside* the comment. The
+    // token count looked right on the first pass, and each pass after it
+    // swallowed one more token: `CXX_STANDARD # note 17`, then `... 17 AUTOMOC`,
+    // then the comment, `17` and `AUTOMOC` were simply gone.
+    let config = FormatConfig::default();
+    let input = concat!(
+        "set_target_properties(mytarget PROPERTIES\n",
+        "\tCXX_STANDARD # vendor SDK needs this\n",
+        "\t17\n",
+        "\tAUTOMOC\n",
+        "\tON\n",
+        ")\n"
+    );
+
+    let mut current = format_text(input, &config);
+    assert!(
+        current.contains("CXX_STANDARD 17 # vendor SDK needs this"),
+        "the value must come before the comment:\n{}",
+        current
+    );
+    assert_eq!(current, format_text(&current, &config), "not idempotent");
+
+    // Nothing may erode over repeated passes
+    for _ in 0..4 {
+        current = format_text(&current, &config);
+        for token in [
+            "CXX_STANDARD",
+            "17",
+            "AUTOMOC",
+            "ON",
+            "vendor SDK needs this",
+        ] {
+            assert!(current.contains(token), "{} lost:\n{}", token, current);
+        }
+    }
+
+    // Odd arity: a key with no value keeps its comment too
+    let result = format_text(
+        "set_target_properties(t PROPERTIES\n\tCXX_STANDARD # note\n\t17\n\tAUTOMOC\n)\n",
+        &config,
+    );
+    assert!(result.contains("CXX_STANDARD 17 # note"), "{}", result);
+    assert!(result.contains("AUTOMOC"), "AUTOMOC lost:\n{}", result);
+}
+
+#[test]
+fn test_a_single_property_pair_keeps_its_comments() {
+    // The single-pair shortcut is tested *before* the flag that comments set, so
+    // the comments that were supposed to force the per-line layout never reached
+    // it and were dropped. Both the general path and the inline twin.
+    for style in [false, true] {
+        let config = FormatConfig {
+            inline_single_keyword: style,
+            ..Default::default()
+        };
+        for (input, comment) in [
+            (
+                "set_target_properties(t PROPERTIES\n\t# keep the standard\n\tCXX_STANDARD\n\t17\n)\n",
+                "# keep the standard",
+            ),
+            (
+                "set_target_properties(t PROPERTIES\n\tCXX_STANDARD\n\t17 # note\n)\n",
+                "# note",
+            ),
+        ] {
+            let result = format_text(input, &config);
+            assert!(
+                result.contains(comment),
+                "{} lost with inline_single_keyword={}:\n{}",
+                comment,
+                style,
+                result
+            );
+            assert_eq!(result, format_text(&result, &config), "not idempotent");
+        }
+    }
+}
+
+#[test]
+fn test_the_inline_twin_emits_own_line_property_comments() {
+    // The inline_single_keyword path emitted only trailing comments, so every
+    // own-line comment inside a PROPERTIES run was deleted.
+    let config = FormatConfig {
+        inline_single_keyword: true,
+        ..Default::default()
+    };
+    let result = format_text(
+        "set_target_properties(t PROPERTIES\n\t# note\n\tCXX_STANDARD\n\t17\n\tAUTOMOC\n\tON\n)\n",
+        &config,
+    );
+    assert!(
+        result.contains("# note"),
+        "own-line comment lost:\n{}",
+        result
+    );
+    for token in ["CXX_STANDARD", "17", "AUTOMOC", "ON"] {
+        assert!(result.contains(token), "{} lost:\n{}", token, result);
+    }
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_flag_with_no_values_keeps_its_comments() {
+    // The Flag arm's whole comment machinery sat inside `!args.is_empty()`, so a
+    // flag followed by another keyword lost its comment — and
+    // `find_package(Foo REQUIRED # note ...)` is everyday CMake.
+    let config = FormatConfig::default();
+    let result = format_text(
+        "find_package(Foo\n\tREQUIRED # only on windows\n\tCOMPONENTS b a\n)\n",
+        &config,
+    );
+    assert!(
+        result.contains("# only on windows"),
+        "the flag's comment was lost:\n{}",
+        result
+    );
+    assert!(result.contains("REQUIRED"), "REQUIRED lost:\n{}", result);
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
