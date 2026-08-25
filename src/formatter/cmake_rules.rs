@@ -231,10 +231,39 @@ pub fn group_source_pairs(
     (result, old_to_new)
 }
 
-/// Apply source grouping while preserving blank line boundaries.
-/// Groups files within segments (between blank lines) independently,
-/// then adjusts blank line positions and comment positions for the shorter grouped segments.
-#[allow(clippy::type_complexity)]
+/// A section's arguments as they should be emitted, grouped when
+/// `source_grouping` is on and the section's own allowlist entry permits it.
+///
+/// Every place that renders a section's arguments goes through this. Five copies
+/// of the decision meant the `Flag` arm — which carries the positional run after
+/// a flag, as in `add_library(l STATIC a.cpp a.h)` — never grouped at all, so
+/// the two reordering passes disagreed about a list the allowlist owns; and
+/// three of the five copies had no test.
+fn grouped_section(
+    section: &KeywordSection,
+    grouping: super::config::SourceGrouping,
+) -> GroupedSection {
+    if grouping != super::config::SourceGrouping::None && section.trailing_comments.is_empty() {
+        group_source_pairs_preserving_blanks(
+            &section.args,
+            section.sort_from,
+            &section.blank_lines,
+            &section.comments,
+            &section.post_comment_blanks,
+            &section.comment_blank_indices,
+            grouping,
+        )
+    } else {
+        (
+            section.args.clone(),
+            section.blank_lines.clone(),
+            section.comments.clone(),
+            section.post_comment_blanks.clone(),
+            section.comment_blank_indices.clone(),
+        )
+    }
+}
+
 /// Group only the runs the sorting pass is allowed to permute: from `sort_from`
 /// onward, and never across a barrier.
 ///
@@ -276,15 +305,20 @@ type GroupedSection = (
     Vec<usize>,
 );
 
+/// Group within each blank-line segment independently, adjusting the blank-line
+/// and comment positions to the shorter grouped segments.
 fn group_source_pairs_preserving_blanks(
     args: &[String],
-    sort_from: usize,
+    sort_from: Option<usize>,
     blank_lines: &[usize],
     comments: &[(usize, String)],
     post_comment_blanks: &[usize],
     comment_blank_indices: &[usize],
     grouping: super::config::SourceGrouping,
 ) -> GroupedSection {
+    // A section with no sortable run groups nothing, so `None` pins everything
+    let sort_from = sort_from.unwrap_or(usize::MAX);
+
     if blank_lines.is_empty() {
         let (grouped_args, old_to_new) = group_sortable_runs(args, sort_from, grouping);
         // Remap comment positions using the index mapping
@@ -1250,7 +1284,20 @@ pub fn format_keyword_aware_args(
             match section.keyword_type {
                 // Flag keywords: group consecutive flags together
                 Some(KeywordType::Flag) => {
-                    // Flags typically have no values, but section.args may contain
+                    // Grouping applies here too. A `Flag` section carries the
+                    // positional run that follows the flag —
+                    // `add_library(l STATIC a.cpp a.h)` — and `sort_sources`
+                    // already reorders that run, so skipping `source_grouping`
+                    // made the two passes disagree about a list the allowlist
+                    // owns.
+                    let (
+                        flag_args,
+                        flag_blank_lines,
+                        flag_comments,
+                        _flag_post_comment_blanks,
+                        flag_comment_blank_indices,
+                    ) = grouped_section(section, config.source_grouping);
+                    // Flags typically have no values, but flag_args may contain
                     // non-keyword arguments that follow before the next keyword
                     // Add separator before the flag keyword
                     if is_first_arg {
@@ -1278,7 +1325,7 @@ pub fn format_keyword_aware_args(
                                 sections.get(i.saturating_sub(1)),
                                 Some(prev) if prev.keyword.is_none()
                             );
-                        let flag_has_trailing_args = !section.args.is_empty();
+                        let flag_has_trailing_args = !flag_args.is_empty();
                         if (prev_is_pre_keyword && flag_has_trailing_args)
                             || ((prev_is_flag || prev_is_pre_keyword)
                                 && config.collapse_empty_flags)
@@ -1297,27 +1344,26 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(keyword.clone()));
 
                     // Output any trailing non-keyword arguments in this section
-                    if !section.args.is_empty() {
+                    if !flag_args.is_empty() {
                         // Use per-line when values were explicitly on new lines,
                         // or when there are comments/blank lines that can't go inline
                         let use_per_line = section.values_on_new_line
-                            || !section.comments.is_empty()
+                            || !flag_comments.is_empty()
                             || !section.trailing_comments.is_empty()
-                            || !section.blank_lines.is_empty();
+                            || !flag_blank_lines.is_empty();
 
                         if use_per_line {
-                            let mut comment_iter = section.comments.iter().peekable();
+                            let mut comment_iter = flag_comments.iter().peekable();
                             let mut comment_index = 0usize;
-                            for (arg_idx, arg) in section.args.iter().enumerate() {
+                            for (arg_idx, arg) in flag_args.iter().enumerate() {
                                 // Blank line before comments to preserve ordering
-                                if section.blank_lines.contains(&arg_idx) && signals.force_multiline
-                                {
+                                if flag_blank_lines.contains(&arg_idx) && signals.force_multiline {
                                     docs.push(RcDoc::hardline());
                                 }
                                 while let Some((pos, comment)) = comment_iter.peek() {
                                     if *pos == arg_idx {
                                         // Blank line between comment groups at same position
-                                        if section.comment_blank_indices.contains(&comment_index)
+                                        if flag_comment_blank_indices.contains(&comment_index)
                                             && signals.force_multiline
                                         {
                                             docs.push(RcDoc::hardline());
@@ -1359,14 +1405,14 @@ pub fn format_keyword_aware_args(
                             }
                             // Blank line before trailing comments at end of section
                             if comment_iter.peek().is_some()
-                                && section.blank_lines.contains(&section.args.len())
+                                && flag_blank_lines.contains(&flag_args.len())
                                 && signals.force_multiline
                             {
                                 docs.push(RcDoc::hardline());
                             }
                             for (_, comment) in comment_iter {
                                 // Blank line between comment groups at same position
-                                if section.comment_blank_indices.contains(&comment_index)
+                                if flag_comment_blank_indices.contains(&comment_index)
                                     && signals.force_multiline
                                 {
                                     docs.push(RcDoc::hardline());
@@ -1386,7 +1432,7 @@ pub fn format_keyword_aware_args(
                             }
                         } else {
                             // Values on same line as keyword: flat_alt inherits from outer group
-                            for (arg_idx, arg) in section.args.iter().enumerate() {
+                            for (arg_idx, arg) in flag_args.iter().enumerate() {
                                 docs.push(RcDoc::flat_alt(
                                     RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
                                     RcDoc::space(),
@@ -1794,27 +1840,7 @@ pub fn format_keyword_aware_args(
                             effective_comments,
                             effective_post_comment_blanks,
                             effective_comment_blank_indices,
-                        ) = if config.source_grouping != super::config::SourceGrouping::None
-                            && section.trailing_comments.is_empty()
-                        {
-                            group_source_pairs_preserving_blanks(
-                                &section.args,
-                                section.sort_from.unwrap_or(usize::MAX),
-                                &section.blank_lines,
-                                &section.comments,
-                                &section.post_comment_blanks,
-                                &section.comment_blank_indices,
-                                config.source_grouping,
-                            )
-                        } else {
-                            (
-                                section.args.clone(),
-                                section.blank_lines.clone(),
-                                section.comments.clone(),
-                                section.post_comment_blanks.clone(),
-                                section.comment_blank_indices.clone(),
-                            )
-                        };
+                        ) = grouped_section(section, config.source_grouping);
 
                         // Use per-line when values were explicitly on new lines,
                         // or when there are comments/blank lines that can't go inline
@@ -1951,27 +1977,7 @@ pub fn format_keyword_aware_args(
                 effective_comments,
                 effective_post_comment_blanks,
                 effective_comment_blank_indices,
-            ) = if config.source_grouping != super::config::SourceGrouping::None
-                && section.trailing_comments.is_empty()
-            {
-                group_source_pairs_preserving_blanks(
-                    &section.args,
-                    section.sort_from.unwrap_or(usize::MAX),
-                    &section.blank_lines,
-                    &section.comments,
-                    &section.post_comment_blanks,
-                    &section.comment_blank_indices,
-                    config.source_grouping,
-                )
-            } else {
-                (
-                    section.args.clone(),
-                    section.blank_lines.clone(),
-                    section.comments.clone(),
-                    section.post_comment_blanks.clone(),
-                    section.comment_blank_indices.clone(),
-                )
-            };
+            ) = grouped_section(section, config.source_grouping);
 
             let is_list = effective_args.len() > 1 || force_args_on_new_line;
             let mut comment_iter = effective_comments.iter().peekable();
@@ -2231,27 +2237,7 @@ fn format_keyword_aware_args_inline_single(
                     effective_comments,
                     _effective_post_comment_blanks,
                     effective_comment_blank_indices,
-                ) = if config.source_grouping != super::config::SourceGrouping::None
-                    && section.trailing_comments.is_empty()
-                {
-                    group_source_pairs_preserving_blanks(
-                        &section.args,
-                        section.sort_from.unwrap_or(usize::MAX),
-                        &section.blank_lines,
-                        &section.comments,
-                        &section.post_comment_blanks,
-                        &section.comment_blank_indices,
-                        config.source_grouping,
-                    )
-                } else {
-                    (
-                        section.args.clone(),
-                        section.blank_lines.clone(),
-                        section.comments.clone(),
-                        section.post_comment_blanks.clone(),
-                        section.comment_blank_indices.clone(),
-                    )
-                };
+                ) = grouped_section(section, config.source_grouping);
 
                 // Values are indented at keyword_indent level (single indent, not double)
                 let use_per_line = section.values_on_new_line
@@ -2354,27 +2340,7 @@ fn format_keyword_aware_args_inline_single(
                 effective_comments,
                 effective_post_comment_blanks,
                 effective_comment_blank_indices,
-            ) = if config.source_grouping != super::config::SourceGrouping::None
-                && section.trailing_comments.is_empty()
-            {
-                group_source_pairs_preserving_blanks(
-                    &section.args,
-                    section.sort_from.unwrap_or(usize::MAX),
-                    &section.blank_lines,
-                    &section.comments,
-                    &section.post_comment_blanks,
-                    &section.comment_blank_indices,
-                    config.source_grouping,
-                )
-            } else {
-                (
-                    section.args.clone(),
-                    section.blank_lines.clone(),
-                    section.comments.clone(),
-                    section.post_comment_blanks.clone(),
-                    section.comment_blank_indices.clone(),
-                )
-            };
+            ) = grouped_section(section, config.source_grouping);
 
             let is_list = effective_args.len() > 1;
             let mut comment_iter = effective_comments.iter().peekable();
@@ -2559,27 +2525,7 @@ fn format_simple_args(
             effective_comments,
             effective_post_comment_blanks,
             effective_comment_blank_indices,
-        ) = if config.source_grouping != super::config::SourceGrouping::None
-            && section.trailing_comments.is_empty()
-        {
-            group_source_pairs_preserving_blanks(
-                &section.args,
-                section.sort_from.unwrap_or(usize::MAX),
-                &section.blank_lines,
-                &section.comments,
-                &section.post_comment_blanks,
-                &section.comment_blank_indices,
-                config.source_grouping,
-            )
-        } else {
-            (
-                section.args.clone(),
-                section.blank_lines.clone(),
-                section.comments.clone(),
-                section.post_comment_blanks.clone(),
-                section.comment_blank_indices.clone(),
-            )
-        };
+        ) = grouped_section(section, config.source_grouping);
 
         let mut comment_iter = effective_comments.iter().peekable();
         let mut comment_index = 0usize;

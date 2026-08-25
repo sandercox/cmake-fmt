@@ -860,3 +860,143 @@ fn test_a_config_grammar_keeps_the_conventional_file_list_default() {
         "a keyword nobody marked sortable was reordered"
     );
 }
+
+#[test]
+fn test_a_config_grammar_can_say_what_is_not_sortable() {
+    // The conventional file-list names are a default, not an override. The
+    // config docs, the JSON schema and `--help-grammar` all promise that
+    // reordering is opt-in and a keyword left out of `sortable_keywords` is left
+    // alone; applying the default on top of an explicit list broke that promise
+    // with no way to express "not this one".
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_concat".to_string(),
+        CommandGrammarConfig {
+            one_value_keywords: vec!["OUT".to_string()],
+            multi_value_keywords: vec!["FILES".to_string(), "PARTS".to_string()],
+            sortable_keywords: vec!["PARTS".to_string()],
+            ..Default::default()
+        },
+    );
+    let config = FormatConfig {
+        command_grammars,
+        ..reordering_config()
+    };
+
+    assert_eq!(
+        format_text(
+            "my_concat(OUT bundle.js FILES prelude.js main.js PARTS z.txt a.txt)\n",
+            &config
+        ),
+        "my_concat(OUT bundle.js FILES prelude.js main.js PARTS a.txt z.txt)\n",
+        "an explicit sortable_keywords list should be the whole list"
+    );
+
+    // And the default comes from the multi-value keywords: a `FILES` declared as
+    // a flag takes no values, so marking it sortable only reorders whatever
+    // positional arguments follow it
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_flagcmd".to_string(),
+        CommandGrammarConfig {
+            options: vec!["FILES".to_string()],
+            ..Default::default()
+        },
+    );
+    let config = FormatConfig {
+        command_grammars,
+        ..reordering_config()
+    };
+    assert_eq!(
+        format_text("my_flagcmd(FILES z.txt a.txt)\n", &config),
+        "my_flagcmd(FILES z.txt a.txt)\n",
+        "a flag's trailing positionals are not its values"
+    );
+}
+
+#[test]
+fn test_grouping_reaches_a_run_after_a_flag() {
+    // `add_library(l STATIC a.cpp a.h)` keeps its sources in a section led by a
+    // Flag keyword. `sort_sources` reorders that run, so `source_grouping` has
+    // to as well — the two share one allowlist, which is the whole point of it.
+    let grouping_only = FormatConfig {
+        sort_sources: SortSources::None,
+        source_grouping: SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
+    for (input, expected) in [
+        (
+            "add_library(l1 STATIC a.cpp a.h b.cpp)\n",
+            "add_library(l1 STATIC a.h a.cpp b.cpp)\n",
+        ),
+        (
+            "add_executable(e1 WIN32 a.cpp a.h)\n",
+            "add_executable(e1 WIN32 a.h a.cpp)\n",
+        ),
+        // and the form with no flag at all, which always worked
+        ("add_library(l2 a.cpp a.h)\n", "add_library(l2 a.h a.cpp)\n"),
+    ] {
+        assert_eq!(format_text(input, &grouping_only), expected);
+    }
+}
+
+#[test]
+fn test_grouping_holds_a_run_that_is_not_the_commands_list() {
+    // Three of the five places that decided whether to group had no test, and
+    // each one reachable only through a different rendering path. A pre-keyword
+    // positional run in a command whose list is not sortable, and a keyword
+    // section in the single-keyword inline path, are the two the suite missed.
+    let grouping_only = FormatConfig {
+        sort_sources: SortSources::None,
+        source_grouping: SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
+    for input in [
+        // pre-keyword run, keyword after it
+        "add_custom_command(w.cpp w.h OUTPUT out.txt)\n",
+        // single keyword section, inline path
+        "target_link_libraries(app PRIVATE q.cpp q.h)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &grouping_only),
+            input,
+            "grouping reordered a list it does not own"
+        );
+    }
+}
+
+#[test]
+fn test_grouping_keeps_a_comment_with_its_argument_across_a_barrier() {
+    // Grouping runs per sortable run, and each run's index remap has to be
+    // offset by where that run starts. Without the offset a comment attached to
+    // an argument in a later run was remapped to the head of the list.
+    let grouping_only = FormatConfig {
+        sort_sources: SortSources::None,
+        source_grouping: SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
+    let result = format_text(
+        "set(SRCS\n\ta.cpp\n\ta.h\n\t${GEN}\n\t# comment for b\n\tb.cpp\n\tb.h\n)\n",
+        &grouping_only,
+    );
+
+    let comment_line = result
+        .lines()
+        .position(|l| l.contains("# comment for b"))
+        .expect("the comment survived");
+    let b_line = result
+        .lines()
+        .position(|l| l.contains("b.h"))
+        .expect("b.h is present");
+    assert_eq!(
+        comment_line + 1,
+        b_line,
+        "the comment left its argument:\n{}",
+        result
+    );
+    assert!(
+        comment_line > 1,
+        "the comment was hoisted to the head of the list:\n{}",
+        result
+    );
+}

@@ -563,7 +563,7 @@ The `command_grammars` setting is only available in config files (not via `--sty
 
 **Example `.cmake-fmt`:**
 ```yaml
-custom_grammer:
+command_grammars:
   my_custom_command:
     options:
       - VERBOSE
