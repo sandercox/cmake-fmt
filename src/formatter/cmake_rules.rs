@@ -802,6 +802,15 @@ pub fn parse_keyword_sections_with_grammar(
                         values_on_new_line: false,
                     };
                 } else {
+                    // The token arm's rule, for a group opening a keyword's
+                    // values. No test pins it and none can: every consumer of
+                    // the flag emits `flat_alt(hardline + indent, space)` on
+                    // both sides of its `use_per_line` branch, so the two agree
+                    // unless `force_multiline` is set — and the newline that
+                    // sets this flag sets that one too. Neutralizing both
+                    // writes leaves the corpus byte-identical under every
+                    // style. Kept so the two walks stay the same shape, which
+                    // is what makes them auditable against each other.
                     if current_section.args.is_empty()
                         && current_section.keyword.is_some()
                         && saw_newline_since_keyword
@@ -1059,8 +1068,9 @@ fn is_variable_like(s: &str) -> bool {
     // Tested before the quotes are stripped: a leading quote means this is a
     // quoted *value* that merely contains a paren, not a group. Anything else
     // holding a `(` is one — the paren need not lead, because a group glued to
-    // the token before it is rendered as one argument (`NOT(x.cpp)`,
-    // `a.cpp(b)`), and those let their neighbours sort across the group.
+    // the token before it is rendered as a single argument (`NOT(x.cpp)`,
+    // `a.cpp(b)`). Requiring the paren to lead let those two sort like the
+    // ordinary filenames they end in, moving their neighbours across a group.
     if !s.starts_with('"') && s.contains('(') {
         return true;
     }

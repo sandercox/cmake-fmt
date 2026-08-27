@@ -2161,6 +2161,62 @@ fn test_a_directive_anywhere_in_the_file_keeps_the_closer_s_arguments() {
 }
 
 #[test]
+fn test_a_token_glued_to_the_group_before_it_merges_too() {
+    // The mirror of the test below: there a group follows a token, here a token
+    // follows a group. The section walk has to clear its separator flag after
+    // emitting a group, or `(x)y.cpp` arrives as two arguments — and `y.cpp`,
+    // no longer part of the barrier, then sorts away from the group it belongs
+    // to, which changes what the file says.
+    for config in [
+        default_config(),
+        FormatConfig {
+            sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+            ..Default::default()
+        },
+        FormatConfig {
+            sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+            source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+            ..Default::default()
+        },
+    ] {
+        for input in [
+            "set(SRCS (x)y.cpp a.cpp)\n",
+            "set(SRCS z.cpp (x)y.cpp a.cpp)\n",
+            "target_sources(t PRIVATE (x)y.cpp a.cpp)\n",
+        ] {
+            let result = format_text(input, &config);
+            assert!(
+                result.contains("(x)y.cpp"),
+                "the group and the token glued to it came apart:\n{}",
+                result
+            );
+            assert_eq!(result, format_text(&result, &config), "not idempotent");
+        }
+    }
+}
+
+#[test]
+fn test_an_unterminated_group_is_closed_outside_its_comment() {
+    // In `f((A # c)` the trailing `)` is comment text, not an RPAREN — the
+    // parser never saw the group close. The verbatim text a commented group is
+    // emitted as therefore ends *inside* the open comment, so the caller's `)`
+    // would land inside it too rather than becoming a token, and the next run
+    // would append another, and the next: the file grows by a byte per run and
+    // `--check` never goes green. This pins the closing itself; the choice to
+    // ask the last token rather than the last character is a judgement no input
+    // can separate, and `render_nested_group` says why.
+    let config = default_config();
+    let once = format_text("f((A # c)\n", &config);
+    let twice = format_text(&once, &config);
+    assert_eq!(
+        once, twice,
+        "the output keeps growing:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+        once, twice
+    );
+    assert_eq!(twice, format_text(&twice, &config), "not idempotent");
+}
+
+#[test]
 fn test_a_group_glued_to_the_token_before_it_is_still_a_barrier() {
     // Adjacency merging renders `NOT(x.cpp)` as one argument, which does not
     // *start* with a paren — so the barrier test missed it and the arguments

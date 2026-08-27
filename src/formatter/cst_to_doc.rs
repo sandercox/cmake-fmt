@@ -1185,7 +1185,7 @@ pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
 
 /// How a nested group should be rendered when collecting logical arguments.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GroupRendering {
+enum GroupRendering {
     /// What the argument list itself needs: a group carrying a comment is
     /// emitted verbatim, because folding a line comment onto one line would
     /// swallow whatever follows it.
@@ -1284,8 +1284,14 @@ pub(crate) fn render_nested_group(group: &ArgumentList) -> String {
         // by a byte per run and `--check` never goes green. Close it here, on
         // its own line so it stays outside the comment.
         //
-        // Checking the last token rather than the last character matters: in
-        // `f((A # c)` the trailing `)` is comment text, not an RPAREN.
+        // Asked of the last token rather than the last character, because the
+        // question is structural: did the parser close this group? No input
+        // separates the two spellings today — a group's verbatim text ends at
+        // its comment, and a `)` written after one (`f((A # c)`) goes to the
+        // enclosing command's argument list, not into this text — so keeping
+        // the structural form is a judgement, not a fix. What the branch itself
+        // guards is real and tested: 45 of 56 unterminated shapes change if it
+        // is removed.
         let terminated = group
             .syntax()
             .last_token()
