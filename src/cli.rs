@@ -227,9 +227,11 @@ fn print_grammar_help() {
     println!("Reordering:");
     println!("  sort_sources and source_grouping only reorder keywords listed in");
     println!("  'sortable_keywords', plus the keyword-less arguments when");
-    println!("  'sortable_positional: true'. Omitting 'sortable_keywords' falls");
-    println!("  back to keywords named SOURCES, SRCS or FILES; writing it as an");
-    println!("  empty list means nothing in that command is sortable.");
+    println!("  'sortable_positional: true'. In a grammar file, a keyword is");
+    println!("  sortable only if it is listed. In a .cmake-fmt config entry,");
+    println!("  omitting 'sortable_keywords' falls back to keywords named");
+    println!("  SOURCES, SRCS or FILES, and writing it as an empty list means");
+    println!("  nothing in that command is sortable.");
     println!("  Both default to leaving order alone,");
     println!("  since argument order usually carries meaning. BinPack and PairValue");
     println!("  keywords are never reordered, and a positional run additionally");

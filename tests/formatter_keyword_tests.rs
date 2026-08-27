@@ -3616,16 +3616,175 @@ fn test_a_flag_with_no_values_keeps_its_comments() {
     // The Flag arm's whole comment machinery sat inside `!args.is_empty()`, so a
     // flag followed by another keyword lost its comment — and
     // `find_package(Foo REQUIRED # note ...)` is everyday CMake.
+    //
+    // The *follower* is swept rather than chosen. This test first used
+    // `COMPONENTS`, a MultiValue keyword, which turned out to be the one
+    // follower class whose separator is safe — so it passed while the fix it
+    // guarded was destroying the following keyword for every other class. A
+    // comment runs to end of line, so whatever follows it has to start a new
+    // one, and nothing here may go missing.
     let config = FormatConfig::default();
-    let result = format_text(
-        "find_package(Foo\n\tREQUIRED # only on windows\n\tCOMPONENTS b a\n)\n",
-        &config,
-    );
-    assert!(
-        result.contains("# only on windows"),
-        "the flag's comment was lost:\n{}",
-        result
-    );
-    assert!(result.contains("REQUIRED"), "REQUIRED lost:\n{}", result);
-    assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    for follower in [
+        "QUIET",          // Flag: collapses after the previous section
+        "CONFIG",         // Flag
+        "COMPONENTS b a", // MultiValue
+        "NAMES foo",      // MultiValue
+        "PATHS /opt",     // MultiValue
+    ] {
+        let input = format!(
+            "find_package(Foo\n\tREQUIRED # only on windows\n\t{}\n)\n",
+            follower
+        );
+        let result = format_text(&input, &config);
+
+        assert!(
+            result.contains("# only on windows"),
+            "the flag's comment was lost before {}:\n{}",
+            follower,
+            result
+        );
+        for token in ["REQUIRED"]
+            .iter()
+            .chain(follower.split(' ').collect::<Vec<_>>().iter())
+        {
+            assert!(
+                appears_as_code(&result, token),
+                "{} was swallowed by the comment before {}:\n{}",
+                token,
+                follower,
+                result
+            );
+        }
+        assert_eq!(
+            result,
+            format_text(&result, &config),
+            "not idempotent for follower {}",
+            follower
+        );
+    }
+
+    // The shapes that lose a *flag* rather than a comment, which is what the
+    // collapsing separator did: every keyword after the comment vanished, as a
+    // stable fixed point that `--check` then called formatted.
+    for (input, tokens) in [
+        (
+            "find_package(Foo\n\tREQUIRED # a\n\tQUIET # b\n\tCONFIG # c\n\tGLOBAL)\n",
+            &["REQUIRED", "QUIET", "CONFIG", "GLOBAL", "# a", "# b", "# c"][..],
+        ),
+        (
+            "add_library(mylib STATIC # vendor blob\n\tEXCLUDE_FROM_ALL)\n",
+            &["STATIC", "EXCLUDE_FROM_ALL", "# vendor blob"][..],
+        ),
+        (
+            "add_executable(myexe WIN32 # note\n\tMACOSX_BUNDLE a.cpp)\n",
+            &["WIN32", "MACOSX_BUNDLE", "a.cpp", "# note"][..],
+        ),
+    ] {
+        let mut current = format_text(input, &config);
+        for pass in 1..=3 {
+            for token in tokens {
+                let present = if token.starts_with('#') {
+                    current.contains(token)
+                } else {
+                    appears_as_code(&current, token)
+                };
+                assert!(
+                    present,
+                    "{} lost by pass {} of {:?}:\n{}",
+                    token, pass, input, current
+                );
+            }
+            current = format_text(&current, &config);
+        }
+    }
+}
+
+/// Whether `token` appears as a real argument rather than as comment prose.
+///
+/// `contains` cannot tell the two apart, which is exactly how a bug that turned
+/// `QUIET` into part of `# note QUIET` passed a test asserting `contains("QUIET")`.
+/// A comment runs to the end of its line, so everything from the first `#`
+/// onwards is prose.
+fn appears_as_code(text: &str, token: &str) -> bool {
+    text.lines().any(|line| {
+        line.split('#')
+            .next()
+            .unwrap_or("")
+            .split_whitespace()
+            .any(|word| word.trim_matches(|c| c == '(' || c == ')') == token)
+    })
+}
+
+#[test]
+fn test_a_valueless_keyword_keeps_its_comments_in_every_arm() {
+    // Five arms render a keyword section, and each guarded its whole comment
+    // machinery on the section having values — so a comment attached to a
+    // keyword with none had nowhere to go and was deleted. One was fixed at a
+    // time over two rounds; these are all of them.
+    let config = FormatConfig::default();
+    let inline = FormatConfig {
+        inline_single_keyword: true,
+        ..Default::default()
+    };
+
+    let cases: &[(&str, &FormatConfig)] = &[
+        // Flag
+        (
+            "find_package(Foo\n\tREQUIRED # note\n\tCOMPONENTS b\n)\n",
+            &config,
+        ),
+        // PairValue
+        ("set_target_properties(t\n\tPROPERTIES # note\n)\n", &config),
+        // BinPack
+        (
+            "add_custom_command(TARGET t POST_BUILD\n\tCOMMAND # note\n)\n",
+            &config,
+        ),
+        // MultiValue / SingleValue catch-all
+        ("target_sources(t\n\tPRIVATE # note\n)\n", &config),
+        ("install(TARGETS t DESTINATION\n\t# note\n)\n", &config),
+        // the inline_single_keyword twin
+        ("find_package(Foo REQUIRED\n\t# note\n)\n", &inline),
+        ("target_sources(t\n\tPRIVATE # note\n)\n", &inline),
+    ];
+
+    for (input, cfg) in cases {
+        let result = format_text(input, cfg);
+        assert!(
+            result.contains("# note"),
+            "the comment was deleted for {:?}:\n{}",
+            input,
+            result
+        );
+        assert_eq!(
+            result,
+            format_text(&result, cfg),
+            "not idempotent for {:?}",
+            input
+        );
+    }
+}
+
+#[test]
+fn test_a_comment_after_the_last_property_pair_survives() {
+    // The inline twin's "anything written after the last pair" loop had no test:
+    // deleting it left the whole suite green while the comment was dropped.
+    let config = FormatConfig {
+        inline_single_keyword: true,
+        ..Default::default()
+    };
+    for input in [
+        "set_target_properties(t PROPERTIES\n\tK1 V1\n\tK2 V2\n\t# after all\n)\n",
+        "set_target_properties(t PROPERTIES\n\tK1\n\t# mid\n\tV1\n)\n",
+    ] {
+        let result = format_text(input, &config);
+        assert!(
+            result.contains("# after all") || result.contains("# mid"),
+            "the comment was dropped for {:?}:\n{}",
+            input,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
 }

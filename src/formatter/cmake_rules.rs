@@ -264,6 +264,28 @@ fn grouped_section(
     }
 }
 
+/// Emit the comments of a keyword section that has no values.
+///
+/// Every arm that renders a section guards its comment machinery on the section
+/// having arguments, so a comment attached to a keyword with no values had
+/// nowhere to go and was deleted outright — `target_sources(t\n\tPRIVATE # note)`
+/// lost `# note`, and so did the `PairValue`, `BinPack` and inline equivalents.
+///
+/// They are always own-line comments: the section parser only records a trailing
+/// comment for a section that already holds an argument, so a comment written on
+/// the same line as a valueless keyword arrives at position 0 of `comments`.
+fn push_valueless_section_comments(
+    docs: &mut Vec<RcDoc<'static, ()>>,
+    comments: &[(usize, String)],
+    indent: &str,
+) {
+    for (_, comment) in comments {
+        docs.push(RcDoc::hardline());
+        docs.push(RcDoc::text(indent.to_string()));
+        docs.push(RcDoc::text(comment.clone()));
+    }
+}
+
 /// Group only the runs the sorting pass is allowed to permute: from `sort_from`
 /// onward, and never across a barrier.
 ///
@@ -1328,9 +1350,21 @@ pub fn format_keyword_aware_args(
                                 Some(prev) if prev.keyword.is_none()
                             );
                         let flag_has_trailing_args = !flag_args.is_empty();
-                        if (prev_is_pre_keyword && flag_has_trailing_args)
-                            || ((prev_is_flag || prev_is_pre_keyword)
-                                && config.collapse_empty_flags)
+                        // A line comment runs to the end of its line, so nothing
+                        // may follow the previous section on the same line once it
+                        // has emitted one. Collapsing regardless put this keyword
+                        // *inside* that comment — `# note QUIET` — and the keyword
+                        // was gone from the file, permanently and at exit 0.
+                        let previous_ended_in_a_comment = matches!(
+                            sections.get(i.saturating_sub(1)),
+                            Some(prev) if i > 0
+                                && (!prev.comments.is_empty()
+                                    || !prev.trailing_comments.is_empty())
+                        );
+                        if !previous_ended_in_a_comment
+                            && ((prev_is_pre_keyword && flag_has_trailing_args)
+                                || ((prev_is_flag || prev_is_pre_keyword)
+                                    && config.collapse_empty_flags))
                         {
                             docs.push(RcDoc::space());
                         } else if signals.force_multiline {
@@ -1348,13 +1382,17 @@ pub fn format_keyword_aware_args(
                     // A flag with no values still carries its comments — the
                     // whole comment machinery below lives inside the
                     // `!flag_args.is_empty()` arm, so `find_package(Foo REQUIRED
-                    // # note\n COMPONENTS ...)` lost `# note` outright. Trailing
-                    // comments attach to the flag itself; own-line ones sit
-                    // between it and the next keyword.
+                    // # note\n COMPONENTS ...)` lost `# note` outright.
+                    //
+                    // They are all own-line comments here whatever the author
+                    // wrote: the section parser only fills `trailing_comments`
+                    // for a section that already has an argument, so a comment on
+                    // the same line as a valueless flag arrives at position 0 of
+                    // `comments`. Each therefore takes its own line, and the
+                    // separator for the *next* section refuses to collapse after
+                    // one — a line comment runs to end of line, and collapsing
+                    // put the next keyword inside it.
                     if flag_args.is_empty() {
-                        for (_, tc_text) in &section.trailing_comments {
-                            docs.push(RcDoc::text(format!(" {}", tc_text)));
-                        }
                         for (_, comment) in &flag_comments {
                             docs.push(RcDoc::hardline());
                             docs.push(RcDoc::text(keyword_indent.clone()));
@@ -1547,6 +1585,13 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(keyword.clone()));
 
                     // Format values as key-value pairs
+                    if section.args.is_empty() {
+                        push_valueless_section_comments(
+                            &mut docs,
+                            &section.comments,
+                            &value_indent,
+                        );
+                    }
                     if !section.args.is_empty() {
                         let pairs: Vec<_> = section.args.chunks(2).collect();
                         let use_per_line = section.values_on_new_line
@@ -1706,6 +1751,13 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(keyword.clone()));
 
                     // Values: bin-pack using per-value groups
+                    if section.args.is_empty() {
+                        push_valueless_section_comments(
+                            &mut docs,
+                            &section.comments,
+                            &value_indent,
+                        );
+                    }
                     if !section.args.is_empty() {
                         let has_annotations = !section.comments.is_empty()
                             || !section.trailing_comments.is_empty()
@@ -1868,6 +1920,13 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(keyword.clone()));
 
                     // Values under the keyword with explicit indentation
+                    if section.args.is_empty() {
+                        push_valueless_section_comments(
+                            &mut docs,
+                            &section.comments,
+                            &value_indent,
+                        );
+                    }
                     if !section.args.is_empty() {
                         // Check if this is a collection keyword with sub_keyword grouping
                         // (e.g., FILES_MATCHING with PATTERN/REGEX/EXCLUDE sub-items)
@@ -2334,7 +2393,9 @@ fn format_keyword_aware_args_inline_single(
                         }
                     }
                 }
-            } else if !section.args.is_empty() {
+            } else if section.args.is_empty() {
+                push_valueless_section_comments(&mut docs, &section.comments, keyword_indent);
+            } else {
                 // Apply source grouping to keyword section args (e.g., source files after PUBLIC)
                 let (
                     effective_args,
