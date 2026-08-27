@@ -1160,6 +1160,28 @@ fn test_a_symlinked_walk_root_is_still_excluded() {
         report
     );
     assert_eq!(output.status.code(), Some(0), "{}", report);
+
+    // Positive control: an absent substring and exit 0 are also what a run that
+    // walks nothing produces. Turning the walk off entirely left the assertions
+    // above green, so a file that must be reported goes through the same
+    // symlink.
+    let outside = root.join("proj").join("outside");
+    std::fs::create_dir_all(&outside).expect("dirs");
+    std::fs::write(outside.join("o.cmake"), unformatted).expect("write");
+    std::os::unix::fs::symlink(&outside, root.join("link_out")).expect("symlink");
+    let output = Command::new(cmake_fmt_bin())
+        .args(["-r", "--check", "link_out"])
+        .current_dir(root)
+        .output()
+        .expect("Failed to run walk");
+    let report = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(
+        report.contains("Would reformat"),
+        "the control file was not reached, so the walk never ran:\n{}",
+        report
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", report);
 }
 
 #[test]
@@ -1449,6 +1471,33 @@ fn test_a_walk_roots_spelling_does_not_change_the_verdict() {
         );
     }
 
+    // Positive control: every assertion above is the absence of a substring,
+    // which a run that walks nothing satisfies too — turning the walk off left
+    // them green. A file outside the excluded pattern must be reported under
+    // each spelling.
+    std::fs::write(root.join("sub").join("kept.cmake"), unformatted).expect("write");
+    for spelling in ["sub", "link_sub", "sub/../sub", "./sub"] {
+        let output = Command::new(cmake_fmt_bin())
+            .args(["-r", "--check", spelling, "--ignore-file", "ignorefile"])
+            .current_dir(root)
+            .output()
+            .expect("run");
+        let report = String::from_utf8_lossy(&output.stdout).to_string()
+            + &String::from_utf8_lossy(&output.stderr);
+        assert!(
+            report.contains("kept.cmake"),
+            "walk root spelled {:?} reached nothing at all:\n{}",
+            spelling,
+            report
+        );
+        assert!(
+            !report.contains("d.cmake"),
+            "walk root spelled {:?} formatted the excluded file:\n{}",
+            spelling,
+            report
+        );
+    }
+
     // And the stdin path agrees, through either spelling
     for target in ["sub/deep/d.cmake", "link_sub/deep/d.cmake"] {
         let (_, stdout) = run_with_stdin_in(
@@ -1621,6 +1670,361 @@ fn test_reported_paths_use_the_spelling_the_user_gave() {
     }
 }
 
+/// Run a command to completion, or give up on it.
+///
+/// A regression in the one-shot `--ignore-file` handling makes the tool reopen a
+/// source that is already spent and block there for ever, and `cargo test` has
+/// no per-test timeout — so a test that only asserts on the output turns a red
+/// build into a hung one. Both regressions this file exists to catch behave that
+/// way, so every such run gets a deadline and `None` means it blew it.
+///
+/// Output goes to files rather than pipes: a killed child leaves its pipe half
+/// written, and reading one after the fact can block as well.
+#[cfg(unix)]
+fn run_with_deadline(command: &mut Command, seconds: u64) -> Option<String> {
+    let logs = TempDir::new().expect("log tempdir");
+    let out = logs.path().join("stdout");
+    let err = logs.path().join("stderr");
+    let mut child = command
+        .stdout(std::fs::File::create(&out).expect("stdout"))
+        .stderr(std::fs::File::create(&err).expect("stderr"))
+        .spawn()
+        .expect("spawn");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    loop {
+        match child.try_wait().expect("try_wait") {
+            Some(_) => break,
+            None if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(25)),
+        }
+    }
+
+    Some(
+        std::fs::read_to_string(&out).unwrap_or_default()
+            + &std::fs::read_to_string(&err).unwrap_or_default(),
+    )
+}
+
+#[test]
+#[cfg(unix)]
+fn test_a_terminal_ignore_file_is_read_once() {
+    // A character device was probed by the readability check — drained into
+    // `sink()` to measure it — and then reopened by the copy, which found
+    // nothing. `/dev/null` and `/dev/zero` survive being read twice, which is
+    // why every test passed; a terminal does not, so `--ignore-file /dev/stdin`
+    // from an editor or a shell lost every pattern and reformatted the files the
+    // author had excluded, with no diagnostic. The one-shot source is now taken
+    // once and the check runs on the copy.
+    //
+    // `script` gives the child a pty, which is the character device anyone
+    // actually passes here.
+    if !Command::new("sh")
+        .args(["-c", "command -v script >/dev/null"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        return; // no `script` on this platform
+    }
+
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::create_dir(root.join("build")).expect("dirs");
+    let unformatted = "set(A   b)\n";
+    std::fs::write(root.join("kept.cmake"), unformatted).expect("write");
+    std::fs::write(root.join("build").join("b.cmake"), unformatted).expect("write");
+
+    let mut command = Command::new("sh");
+    command
+        .arg("-c")
+        .arg(format!(
+            "printf 'build/\\n' | script -qec '{} --ignore-file /dev/stdin --check -r .' /dev/null",
+            cmake_fmt_bin()
+        ))
+        .current_dir(root);
+    // Before the fix this reopened the spent pty and blocked, so a deadline is
+    // what makes the regression a failure rather than a hung suite.
+    let report = run_with_deadline(&mut command, 30).expect("the run blocked on a spent stream");
+
+    assert!(
+        report.contains("kept.cmake"),
+        "the walk reached nothing at all:\n{}",
+        report
+    );
+    assert!(
+        !report.contains("b.cmake"),
+        "the pattern from the terminal was lost:\n{}",
+        report
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_an_over_bound_one_shot_ignore_file_is_refused() {
+    // A regular file over the bound is refused. A one-shot source is never
+    // probed, so it used to be truncated at the bound instead — silently, and
+    // the cut could land mid-line and turn the last pattern into a different
+    // one. The copy now takes one byte more than the bound so the two cases can
+    // be told apart, and refuses.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join("a.cmake"), "set(A   b)\n").expect("write");
+
+    let fifo = root.join("patterns");
+    let made = Command::new("sh")
+        .arg("-c")
+        .arg(format!("mkfifo {}", fifo.display()))
+        .status()
+        .expect("mkfifo");
+    if !made.success() {
+        return; // no mkfifo on this platform
+    }
+
+    // 1 MiB of comment, then a pattern past the bound
+    let feeder = Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "{{ for i in $(seq 1 20000); do printf '# padpadpadpadpadpadpadpadpadpadpadpadpadpadpadpadpad\\n'; done; printf 'a.cmake\\n'; }} > {} 2>/dev/null",
+            fifo.display()
+        ))
+        .spawn()
+        .expect("spawn writer");
+
+    let fifo_str = fifo.to_str().unwrap().to_string();
+    let mut command = Command::new(cmake_fmt_bin());
+    command
+        .args(["--check", "-r", ".", "--ignore-file", &fifo_str])
+        .current_dir(root);
+    let report = run_with_deadline(&mut command, 60).expect("the run blocked");
+    let mut feeder = feeder;
+    let _ = feeder.kill();
+    let _ = feeder.wait();
+
+    assert!(
+        report.contains("is larger than 1024 KiB"),
+        "an over-bound one-shot source should be refused, not truncated:\n{}",
+        report
+    );
+    assert!(
+        report.contains(&fifo_str),
+        "the refusal should name the argument, not the temporary copy:\n{}",
+        report
+    );
+}
+
+#[test]
+fn test_a_directory_only_pattern_does_not_match_a_file() {
+    // The stdin target is matched as a file, and only that keeps a
+    // directory-only pattern — a trailing `/`, which is how `build/` is written
+    // — from excluding a file of the same name. Matching it as a directory
+    // instead survived every test.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join("ig.txt"), "x.cmake/\n").expect("write");
+    let unformatted = "set(FOO   bar)\n";
+
+    let (_, stdout) = run_with_stdin_in(
+        Some(root),
+        &[
+            "-",
+            "--assume-filename",
+            "x.cmake",
+            "--ignore-file",
+            "ig.txt",
+        ],
+        unformatted,
+    );
+    assert_eq!(
+        stdout, "set(FOO bar)\n",
+        "a directory-only pattern excluded a file"
+    );
+
+    // And the same name as a directory *is* matched, so the pattern works
+    std::fs::create_dir(root.join("x.cmake")).expect("dirs");
+    std::fs::write(root.join("x.cmake").join("a.cmake"), unformatted).expect("write");
+    let output = Command::new(cmake_fmt_bin())
+        .args(["--check", "-r", ".", "--ignore-file", "ig.txt"])
+        .current_dir(root)
+        .output()
+        .expect("run");
+    let report = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !report.contains("a.cmake"),
+        "the directory the pattern names was walked anyway:\n{}",
+        report
+    );
+}
+
+#[test]
+fn test_an_excluded_named_root_says_so() {
+    // The only signal that a run deliberately did nothing. Deleting the line
+    // left every test green, and a silent "0 files" reads as "nothing to do"
+    // rather than "everything you asked about is excluded".
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::create_dir(root.join("build")).expect("dirs");
+    std::fs::write(root.join("build").join("b.cmake"), "set(A   b)\n").expect("write");
+    std::fs::write(root.join("ig.txt"), "build/\n").expect("write");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["--check", "-r", "build", "--ignore-file", "ig.txt"])
+        .current_dir(root)
+        .output()
+        .expect("run");
+    let report = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(
+        report.contains("Skipping build: excluded by an ignore file"),
+        "an excluded root should say so:\n{}",
+        report
+    );
+    assert!(!report.contains("b.cmake"), "{}", report);
+}
+
+#[test]
+fn test_verbose_names_an_ignored_stdin_target() {
+    // The `--verbose` line for an ignored target had no test at all, and it is
+    // the only way to find out why a buffer came back untouched.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join(".cmake-fmt-ignore"), "x.cmake\n").expect("write");
+
+    let mut command = Command::new(cmake_fmt_bin());
+    command
+        .args(["-", "--assume-filename", "x.cmake", "--verbose"])
+        .current_dir(root)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = command.spawn().expect("spawn");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(b"set(FOO   bar)\n")
+        .expect("write");
+    let output = child.wait_with_output().expect("wait");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        stderr.contains("is ignored, skipping"),
+        "verbose said nothing about an ignored target:\n{}",
+        stderr
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "set(FOO   bar)\n",
+        "an ignored target should come back untouched"
+    );
+}
+
+#[test]
+fn test_an_unreadable_ignore_file_reaching_the_walk_is_reported() {
+    // A `--ignore-file` that opens and reads but is not text passes the
+    // readability check and then fails inside the matcher. Discarding that error
+    // is how a broken ignore file used to reach the walk with no diagnostic at
+    // all, so the walk says so loudly. Nothing pinned the line.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join("a.cmake"), "set(A   b)\n").expect("write");
+    std::fs::write(root.join("ig.bin"), b"# fine\n\xff\xfe not text\n").expect("write");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["--check", "-r", ".", "--ignore-file", "ig.bin"])
+        .current_dir(root)
+        .output()
+        .expect("run");
+    let report = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(
+        report.contains("did not contain valid UTF-8"),
+        "a matcher that refused the ignore file said nothing:\n{}",
+        report
+    );
+    // Once, naming the file the user typed. It used to be printed once per
+    // named root plus once more by the walk, with the path repeated inside the
+    // sentence.
+    assert_eq!(
+        report.matches("did not contain valid UTF-8").count(),
+        1,
+        "the same complaint was printed more than once:\n{}",
+        report
+    );
+    assert!(
+        report.contains("Warning: ig.bin: line 2:"),
+        "the complaint should name the file as it was given:\n{}",
+        report
+    );
+
+    // And still once when several roots each read it
+    std::fs::create_dir_all(root.join("x")).expect("dirs");
+    std::fs::create_dir_all(root.join("y")).expect("dirs");
+    std::fs::write(root.join("x").join("c.cmake"), "set(A   b)\n").expect("write");
+    std::fs::write(root.join("y").join("d.cmake"), "set(A   b)\n").expect("write");
+    let output = Command::new(cmake_fmt_bin())
+        .args(["--check", "-r", "x", "y", ".", "--ignore-file", "ig.bin"])
+        .current_dir(root)
+        .output()
+        .expect("run");
+    let report = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        report.matches("did not contain valid UTF-8").count(),
+        1,
+        "one complaint per root:\n{}",
+        report
+    );
+}
+
+#[test]
+fn test_the_ignore_file_bound_is_a_mebibyte() {
+    // Only the message was ever asserted, so the bound itself could be any
+    // number. A file just under it is read and a file just over it is refused.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join("a.cmake"), "set(A   b)\n").expect("write");
+
+    // Each line is 8 bytes, so the pattern lands well inside the bound
+    let line = "#123456\n";
+    let under = line.repeat((1 << 20) / line.len() - 2) + "a.cmake\n";
+    assert!(under.len() < (1 << 20));
+    std::fs::write(root.join("under.txt"), &under).expect("write");
+    let output = Command::new(cmake_fmt_bin())
+        .args(["--check", "-r", ".", "--ignore-file", "under.txt"])
+        .current_dir(root)
+        .output()
+        .expect("run");
+    let report = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !report.contains("a.cmake") && !report.contains("larger than"),
+        "a file just under the bound should be read:\n{}",
+        report
+    );
+
+    let over = line.repeat((1 << 20) / line.len() + 1);
+    assert!(over.len() > (1 << 20));
+    std::fs::write(root.join("over.txt"), &over).expect("write");
+    let output = Command::new(cmake_fmt_bin())
+        .args(["--check", "-r", ".", "--ignore-file", "over.txt"])
+        .current_dir(root)
+        .output()
+        .expect("run");
+    let report = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(
+        report.contains("is larger than 1024 KiB"),
+        "a file just over the bound should be refused:\n{}",
+        report
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", report);
+}
+
 #[test]
 #[cfg(unix)]
 fn test_a_one_shot_ignore_file_is_read_once() {
@@ -1635,6 +2039,11 @@ fn test_a_one_shot_ignore_file_is_read_once() {
     let unformatted = "set(A   b)\n";
     std::fs::write(root.join("a").join("f.cmake"), unformatted).expect("write");
     std::fs::write(root.join("b").join("f.cmake"), unformatted).expect("write");
+    // Positive control: the assertion below is the absence of a substring, which
+    // a run that walks nothing satisfies too. `kept.cmake` is not excluded, so
+    // it must be reported every time.
+    std::fs::write(root.join("a").join("kept.cmake"), unformatted).expect("write");
+    std::fs::write(root.join("b").join("kept.cmake"), unformatted).expect("write");
 
     // A fifo with a writer, which is what process substitution gives the tool
     let fifo = root.join("patterns");
@@ -1653,14 +2062,9 @@ fn test_a_one_shot_ignore_file_is_read_once() {
         vec!["-r", ".", "--check"],
     ] {
         // A writer that closes after one line; each run gets its own
-        // Bounded: if a regression makes the tool read the fifo twice, the
-        // second read must fail rather than block the test for ever
         let feeder = Command::new("sh")
             .arg("-c")
-            .arg(format!(
-                "printf 'f.cmake\\n' > {} & sleep 2; kill %1 2>/dev/null",
-                fifo.display()
-            ))
+            .arg(format!("printf 'f.cmake\\n' > {}", fifo.display()))
             .spawn()
             .expect("spawn writer");
 
@@ -1668,19 +2072,30 @@ fn test_a_one_shot_ignore_file_is_read_once() {
         full.push("--ignore-file");
         let fifo_str = fifo.to_str().unwrap().to_string();
         full.push(&fifo_str);
-        let output = Command::new(cmake_fmt_bin())
-            .args(&full)
-            .current_dir(root)
-            .output()
-            .expect("run");
+        let mut command = Command::new(cmake_fmt_bin());
+        command.args(&full).current_dir(root);
+        // A second read of a fifo whose writer is gone blocks for ever, so the
+        // regression this test exists to catch does not fail it — it hangs it,
+        // and `cargo test` has no per-test timeout. The deadline is what turns
+        // that back into a failure.
+        let report = run_with_deadline(&mut command, 30).unwrap_or_else(|| {
+            panic!(
+                "{:?} blocked: the ignore file was read more than once",
+                args
+            )
+        });
         let mut feeder = feeder;
         let _ = feeder.wait();
 
-        let report = String::from_utf8_lossy(&output.stdout).to_string()
-            + &String::from_utf8_lossy(&output.stderr);
         assert!(
-            !report.contains("Would reformat"),
+            !report.contains("f.cmake"),
             "{:?} formatted a file the ignore file excludes:\n{}",
+            args,
+            report
+        );
+        assert!(
+            report.contains("kept.cmake"),
+            "{:?} reached nothing at all, so the exclusion proves nothing:\n{}",
             args,
             report
         );

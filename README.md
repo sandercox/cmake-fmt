@@ -179,17 +179,24 @@ working directory. A walk tests them against every directory at or below its own
 root, and the stdin path has no root to use — so for a file outside the working
 directory, `cmake-fmt - --assume-filename …` can format something that
 `cmake-fmt -r` rooted next to that file would skip. Running both from the same
-directory removes most of the difference, though not all of it — a matcher never
-decides about its own root, so `--ignore-file ig.txt` containing `proj/`, run
-from inside `proj`, excludes the tree for `cmake-fmt -r ..` and not for a file
-named directly. Note the alternative would be worse: a pattern like
-`build/` or `tmp/` matches by basename, so testing every ancestor would let a
-directory far above your project disable the entire run.
+directory removes most of the difference, though not all of it. From `proj/sub`,
+with `ig.txt` holding `*` and `!*.cmake`, `cmake-fmt -r .. --ignore-file ig.txt`
+skips the whole tree — `*` matches the directory `proj`, and an excluded
+directory is never descended into — while
+`cmake-fmt - --assume-filename x.cmake --ignore-file ig.txt` formats the file,
+because `proj` is above the working directory and so is not consulted at all.
+Note the alternative would be worse: a pattern like `build/` or `tmp/` matches by
+basename, so testing every ancestor would let a directory far above your project
+disable the entire run.
 
 Pointing `--ignore-file` at something that cannot be read is an error rather
 than a warning — a typo there would otherwise format every file you meant to
-exclude and exit 0. `/dev/null` and a `<(...)` pattern list both work; a
-directory, an unreadable file, and anything larger than 1 MiB are refused.
+exclude and exit 0. `/dev/null`, a `<(...)` pattern list and
+`/dev/stdin` — a pipe or a terminal — all work: a source that can only be read
+once is copied first, so every reader sees the same patterns. A directory, an
+unreadable file, and anything larger than 1 MiB are refused, one-shot sources
+included; the bound is never applied by truncating, which would cut a pattern in
+half.
 
 A directory named as the walk root is resolved before it is walked, so its
 verdict is a property of the directory rather than of how you spelled it —

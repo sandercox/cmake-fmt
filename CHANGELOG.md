@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A directory excluded by an ignore file is skipped however you reach it: named on the command line, walked from above, walked from inside, reached through a symlink, or piped through stdin. Previously only a walk from above skipped it
 - `--ignore-file` pointing at something that cannot be read is now an error instead of a warning. A typo there formatted every file you meant to exclude and exited 0. `/dev/null` and a `<(...)` pattern list are still accepted
 - A directory named as the walk root is resolved before it is walked, so `cmake-fmt -r sub`, `-r sub/../sub` and `-r link-to-sub` reach the same verdict as each other and as the stdin path, while reported paths keep the spelling you gave. An `--ignore-file` pattern anchored to its root previously excluded one spelling and not another
-- `--ignore-file` is read once even when it names a one-shot stream, so `<(...)` and `/dev/stdin` work for a directory walk. Previously the first walk root examined consumed the patterns and everything after it was formatted
+- `--ignore-file` is read once even when it names a one-shot stream, so `<(...)` and `/dev/stdin` — a pipe or a terminal — work for a directory walk. Such a source is copied before anything reads it, and the size check then runs on the copy: a stream past the 1 MiB bound is refused rather than truncated, so a pattern can no longer be cut in half. A complaint about the file names it as you typed it, and is printed once however many roots read it
 - An excluded file piped through stdin is copied back byte for byte, so a buffer that is not valid UTF-8 is no longer rejected on a file the ignore rules said to leave alone
 
 ### Added

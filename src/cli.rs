@@ -438,41 +438,30 @@ pub fn run() -> Result<ExitCode> {
         None
     };
 
-    // A broken --ignore-file is a bad argument whatever mode follows, so it is
-    // rejected before any mode gets to return early
-    if let Some(path) = cli.ignore_file.as_deref()
-        && let Err(reason) = check_ignore_file_readable(path)
-    {
-        eprintln!("error: --ignore-file {} {}", path.display(), reason);
-        return Ok(ExitCode::FAILURE);
-    }
-
     // `--ignore-file` is read by the walk-root check, once per root, and again
     // by the walk itself. A one-shot stream — the fifo behind `<(...)`, or
     // `/dev/stdin` — is empty by the second read, so the first root examined ate
     // the patterns and everything after it was formatted. Copy such a source
     // once so every reader sees the same content; a regular file needs nothing.
-    let mut materialized: Option<tempfile::NamedTempFile> = None;
-    let ignore_file: Option<PathBuf> = match cli.ignore_file.as_deref() {
-        Some(path) if !path.is_file() => match copy_ignore_file(path) {
-            Ok(temp) => {
-                let owned = temp.path().to_path_buf();
-                materialized = Some(temp);
-                Some(owned)
-            }
-            Err(err) => {
-                eprintln!(
-                    "error: --ignore-file {} cannot be read: {}",
-                    path.display(),
-                    err
-                );
+    //
+    // A broken `--ignore-file` is a bad argument whatever mode follows, so it is
+    // rejected here — before any mode that walks or formats. The four
+    // informational modes (`--help-style`, `--help-grammar`,
+    // `--export-all-grammar`, and a `--line-ranges` that fails to parse) return
+    // before this and never look at it.
+    //
+    // Bound to the lifetime of `run`, so the copy outlives every reader.
+    let prepared = match cli.ignore_file.as_deref() {
+        Some(path) => match prepare_ignore_file(path) {
+            Ok(prepared) => Some(prepared),
+            Err(reason) => {
+                eprintln!("error: --ignore-file {} {}", path.display(), reason);
                 return Ok(ExitCode::FAILURE);
             }
         },
-        other => other.map(|path| path.to_path_buf()),
+        None => None,
     };
-    // Held so the copy outlives every reader
-    let _materialized = &materialized;
+    let ignore_file: Option<PathBuf> = prepared.as_ref().map(|(_, path)| path.clone());
 
     // Handle interactive mode first (if --interactive flag is set)
     if cli.interactive {
@@ -756,14 +745,17 @@ fn collect_cmake_files(
         // Do NOT skip hidden directories/files — let ignore rules handle exclusions
         builder.hidden(false);
 
-        // Load the user-specified extra ignore file if provided. Discarding this
-        // error is how a broken --ignore-file used to reach the walk with no
-        // diagnostic at all; the up-front readability check should mean it never
-        // fires, so say so loudly if it does.
-        if let Some(extra) = ignore_file
-            && let Some(err) = builder.add_ignore(extra)
-        {
-            eprintln!("Warning: {}: {:#}", extra.display(), err);
+        // Load the user-specified extra ignore file if provided.
+        //
+        // The error is not reported here, and this is the only place in the file
+        // where discarding one is right: every root above went through
+        // `is_dir_ignored`, which builds a matcher from the same file and has
+        // already said what is wrong with it. Reporting it again printed the
+        // same sentence twice per root, with the path repeated inside it — and
+        // for a one-shot source it named the temporary copy rather than anything
+        // the user typed. Silence was the original bug; this is not that.
+        if let Some(extra) = ignore_file {
+            let _ = builder.add_ignore(extra);
         }
 
         let walk = builder.build();
@@ -846,7 +838,7 @@ fn is_ignored(path: &Path, is_dir: bool, ignore_file: Option<&Path>, verbose: bo
     for dir in &dirs {
         let file = dir.join(".cmake-fmt-ignore");
         if file.is_file()
-            && let Some(matcher) = build_ignore_matcher(&file, dir)
+            && let Some(matcher) = build_ignore_matcher(&file, dir, Some(&file))
         {
             matchers.push((dir.clone(), matcher));
         }
@@ -856,7 +848,7 @@ fn is_ignored(path: &Path, is_dir: bool, ignore_file: Option<&Path>, verbose: bo
     // .cmake-fmt-ignore chain, matching WalkBuilder::add_ignore
     let extra = ignore_file.and_then(|file| {
         let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        build_ignore_matcher(file, &root).map(|matcher| (root, matcher))
+        build_ignore_matcher(file, &root, None).map(|matcher| (root, matcher))
     });
 
     // Ancestor directories decide first, and an excluded one is final: git
@@ -945,23 +937,53 @@ fn ignore_decision(
 /// A malformed pattern is a partial failure: the builder still took every valid
 /// line, so the matcher is kept. Dropping the whole file would silently format
 /// everything the user excluded, which is the bug this all exists to prevent.
-fn build_ignore_matcher(file: &Path, root: &Path) -> Option<Gitignore> {
+/// `report_as` names the file in any complaint, and `None` keeps quiet.
+///
+/// A `.cmake-fmt-ignore` is read once per run and complains for itself.
+/// `--ignore-file` is read again for every named root, so it is checked once by
+/// `prepare_ignore_file` and stays quiet here — otherwise `-r x y build .`
+/// printed the same sentence four times.
+///
+/// The name is passed in rather than taken from `file` because they differ: a
+/// one-shot source is read from a temporary copy, and a complaint about a path
+/// nobody typed is not actionable.
+fn build_ignore_matcher(file: &Path, root: &Path, report_as: Option<&Path>) -> Option<Gitignore> {
     let mut builder = GitignoreBuilder::new(root);
 
-    if let Some(err) = builder.add(file) {
-        eprintln!("Warning: {:#}", err);
+    if let Some(err) = builder.add(file)
+        && let Some(name) = report_as
+    {
+        eprintln!("Warning: {}", named_error(&err, file, name));
     }
 
     match builder.build() {
         Ok(matcher) => Some(matcher),
         Err(err) => {
-            eprintln!(
-                "Warning: Failed to build ignore rules from {}: {:#}",
-                file.display(),
-                err
-            );
+            if let Some(name) = report_as {
+                eprintln!(
+                    "Warning: Failed to build ignore rules from {}: {}",
+                    name.display(),
+                    named_error(&err, file, name)
+                );
+            }
             None
         }
+    }
+}
+
+/// A gitignore error with the path it read swapped for the one the user typed.
+///
+/// The message embeds the file name, so a materialised one-shot source made it
+/// read `Warning: /tmp/.tmpXXXX: line 2: …` — a path the user never wrote and
+/// cannot look at.
+fn named_error(err: &ignore::Error, read: &Path, name: &Path) -> String {
+    let text = format!("{:#}", err);
+    let read = read.display().to_string();
+    let name = name.display().to_string();
+    if read == name {
+        text
+    } else {
+        text.replace(&read, &name)
     }
 }
 
@@ -979,42 +1001,40 @@ fn respell(path: &Path, roots: &[(PathBuf, PathBuf)]) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Generous for an ignore file, and small enough to hold comfortably.
+const IGNORE_FILE_LIMIT: u64 = 1 << 20;
+
 /// Copy an ignore file that can only be read once into a temporary file.
 ///
-/// Bounded by the same limit the readability check applies, so a device that
-/// never ends cannot fill the disk either.
+/// One byte over the limit is taken deliberately: the caller can then tell a
+/// stream that merely reached the bound from one that runs past it, and refuse
+/// the second rather than silently dropping its tail. Truncating instead cut a
+/// pattern in half and matched something the author never wrote.
 fn copy_ignore_file(path: &Path) -> std::io::Result<tempfile::NamedTempFile> {
-    use std::io::{Read, Write};
+    use std::io::Read;
 
     let mut temp = tempfile::NamedTempFile::new()?;
-    let mut source = std::fs::File::open(path)?.take(1 << 20);
+    let mut source = std::fs::File::open(path)?.take(IGNORE_FILE_LIMIT + 1);
     std::io::copy(&mut source, temp.as_file_mut())?;
-    temp.as_file_mut().flush()?;
     Ok(temp)
 }
 
-/// Whether `--ignore-file` can actually be read, and why not when it cannot.
+/// Make `--ignore-file` readable by every reader that will want it, or say why
+/// it cannot be one.
 ///
-/// `is_file()` answers a different question: it is true for a file whose mode
-/// forbids reading it, which left the old warn-and-carry-on path intact — one
-/// warning, then every excluded file formatted, exit 0. And it is false for
-/// `/dev/null` and for the fifo behind `<(...)`, which are both ordinary ways to
-/// pass patterns.
+/// A regular file can be read as many times as the walk likes, so it is used
+/// where it lies. Anything else may only yield its bytes once, so it is copied
+/// first and every check then runs on the copy.
 ///
-/// So a regular file — and a character device, which is what `/dev/null` and
-/// `/dev/zero` are — is probed by reading a bounded amount of it. A fifo is not
-/// probed at all: reading one consumes what the matcher will need, and
-/// `<(...)` is a fifo. Blocking on a writerless fifo is then the reader's
-/// problem to have rather than the argument check's.
-///
-/// The bound matters as much as the open: `GitignoreBuilder::add` reads the
-/// whole file, and a line-less one like `/dev/zero` never ends, so the process
-/// aborted trying to hold it. An ignore file larger than the bound is refused
-/// rather than read.
-fn check_ignore_file_readable(path: &Path) -> std::result::Result<(), String> {
-    /// Generous for an ignore file, and small enough to hold comfortably.
-    const LIMIT: u64 = 1 << 20;
-
+/// Checking the source before copying it is what broke: the check drained a
+/// character device to measure it, and the copy then reopened a stream that had
+/// already given everything up. A terminal behind `/dev/stdin` lost every
+/// pattern that way, silently, and the files the author excluded were
+/// reformatted. `/dev/null` and `/dev/zero` survive being read twice, which is
+/// exactly why the tests did not see it.
+fn prepare_ignore_file(
+    path: &Path,
+) -> std::result::Result<(Option<tempfile::NamedTempFile>, PathBuf), String> {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(err) => return Err(format!("cannot be read: {}", err)),
@@ -1022,38 +1042,77 @@ fn check_ignore_file_readable(path: &Path) -> std::result::Result<(), String> {
     if metadata.is_dir() {
         return Err("is a directory".to_string());
     }
-    if !metadata.is_file() && !is_character_device(&metadata) {
-        // A fifo or socket: that it exists is all we can learn without taking
-        // the bytes the matcher needs
-        return Ok(());
+
+    if metadata.is_file() {
+        check_ignore_file_readable(path)?;
+        report_unusable_patterns(path, path);
+        return Ok((None, path.to_path_buf()));
     }
 
+    // A fifo, a character device, a socket: one read is all there is.
+    let temp = match copy_ignore_file(path) {
+        Ok(temp) => temp,
+        Err(err) => return Err(format!("cannot be read: {}", err)),
+    };
+    let copied = match temp.as_file().metadata() {
+        Ok(metadata) => metadata.len(),
+        Err(err) => return Err(format!("cannot be read: {}", err)),
+    };
+    if copied > IGNORE_FILE_LIMIT {
+        return Err(over_the_limit());
+    }
+    let owned = temp.path().to_path_buf();
+    report_unusable_patterns(&owned, path);
+    Ok((Some(temp), owned))
+}
+
+/// Say once what the matcher will refuse to read from `--ignore-file`.
+///
+/// It opens and reads — so the readability check passed — and then turns out not
+/// to be text, or to hold a pattern `gitignore` will not take. Discarding that
+/// silently is how a broken ignore file used to reach the walk with no
+/// diagnostic at all and every excluded file got formatted, exit 0. The matcher
+/// built here is thrown away; the readers build their own, quietly.
+fn report_unusable_patterns(read: &Path, spelled: &Path) {
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let _ = build_ignore_matcher(read, &root, Some(spelled));
+}
+
+fn over_the_limit() -> String {
+    format!(
+        "is larger than {} KiB, which is not an ignore file",
+        IGNORE_FILE_LIMIT / 1024
+    )
+}
+
+/// Whether a regular `--ignore-file` can actually be read, and why not when it
+/// cannot.
+///
+/// `is_file()` answers a different question: it is true for a file whose mode
+/// forbids reading it, which left the old warn-and-carry-on path intact — one
+/// warning, then every excluded file formatted, exit 0.
+///
+/// Only regular files come here, and only they can be probed: reading anything
+/// else consumes what the matcher will need. `prepare_ignore_file` copies those
+/// instead and measures the copy.
+///
+/// The bound matters as much as the open: `GitignoreBuilder::add` reads the
+/// whole file, and a line-less one like `/dev/zero` never ends, so the process
+/// aborted trying to hold it. An ignore file larger than the bound is refused
+/// rather than read.
+fn check_ignore_file_readable(path: &Path) -> std::result::Result<(), String> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
         Err(err) => return Err(format!("cannot be read: {}", err)),
     };
     match std::io::copy(
-        &mut std::io::Read::take(file, LIMIT + 1),
+        &mut std::io::Read::take(file, IGNORE_FILE_LIMIT + 1),
         &mut std::io::sink(),
     ) {
-        Ok(read) if read > LIMIT => Err(format!(
-            "is larger than {} KiB, which is not an ignore file",
-            LIMIT / 1024
-        )),
+        Ok(read) if read > IGNORE_FILE_LIMIT => Err(over_the_limit()),
         Ok(_) => Ok(()),
         Err(err) => Err(format!("cannot be read: {}", err)),
     }
-}
-
-#[cfg(unix)]
-fn is_character_device(metadata: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::FileTypeExt;
-    metadata.file_type().is_char_device()
-}
-
-#[cfg(not(unix))]
-fn is_character_device(_metadata: &std::fs::Metadata) -> bool {
-    false
 }
 
 /// Resolve `path` as far as the filesystem allows, then re-join what is left.
