@@ -190,8 +190,8 @@ basename, so testing every ancestor would let a directory far above your project
 disable the entire run.
 
 Pointing `--ignore-file` at something that cannot be read is an error rather
-than a warning — a typo there would otherwise format every file you meant to
-exclude and exit 0. `/dev/null`, a `<(...)` pattern list and
+than something silently ignored — a typo there would otherwise format every
+file you meant to exclude, with no diagnostic at all. `/dev/null`, a `<(...)` pattern list and
 `/dev/stdin` — a pipe or a terminal — all work: a source that can only be read
 once is copied first, so every reader sees the same patterns. A directory, an
 unreadable file, and anything larger than 1 MiB are refused, one-shot sources

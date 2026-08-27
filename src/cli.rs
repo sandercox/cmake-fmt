@@ -450,6 +450,12 @@ pub fn run() -> Result<ExitCode> {
     // `--export-all-grammar`, and a `--line-ranges` that fails to parse) return
     // before this and never look at it.
     //
+    // The cost of checking here is that a one-shot source is opened even when
+    // the run would not have consulted it — so a writerless fifo blocks a run
+    // over an explicit file list, where it previously would not. Accepting a
+    // path we cannot read is the worse trade: it is the failure that reads as
+    // success.
+    //
     // Bound to the lifetime of `run`, so the copy outlives every reader.
     let prepared = match cli.ignore_file.as_deref() {
         Some(path) => match prepare_ignore_file(path) {
@@ -530,7 +536,9 @@ pub fn run() -> Result<ExitCode> {
             return Ok(ExitCode::FAILURE);
         }
 
-        // Canonicalize assume_filename if provided
+        // Make assume_filename absolute if provided. Not canonicalized here —
+        // `is_path_ignored` resolves it through `resolve_path`, which is what
+        // has to agree with the walk.
         let assume_path = cli.assume_filename.as_ref().map(|p| {
             if p.is_relative() {
                 std::env::current_dir().unwrap_or_default().join(p)
@@ -805,7 +813,8 @@ fn is_cmake_file(path: &Path) -> bool {
 ///
 /// Each `.cmake-fmt-ignore` uses gitignore syntax and is anchored at its own
 /// directory, exactly like the directory walk; `--ignore-file` is anchored at
-/// the working directory instead, matching `WalkBuilder::add_ignore`. Two rules decide the outcome: for any given
+/// the working directory instead, matching `WalkBuilder::add_ignore`. Two rules
+/// decide the outcome: for any given
 /// path the deepest ignore file whose directory contains it wins, and an
 /// excluded ancestor directory is final — git cannot re-include a file whose
 /// parent directory is excluded, and the walk never descends into one to read a
@@ -939,10 +948,19 @@ fn ignore_decision(
 /// everything the user excluded, which is the bug this all exists to prevent.
 /// `report_as` names the file in any complaint, and `None` keeps quiet.
 ///
-/// A `.cmake-fmt-ignore` is read once per run and complains for itself.
-/// `--ignore-file` is read again for every named root, so it is checked once by
-/// `prepare_ignore_file` and stays quiet here — otherwise `-r x y build .`
-/// printed the same sentence four times.
+/// `--ignore-file` is checked once by `prepare_ignore_file` and stays quiet
+/// here, because it is read again for every named root and printing per root
+/// said the same sentence four times for `-r x y build .`.
+///
+/// A `.cmake-fmt-ignore` complains from here, and `already_reported` keeps that
+/// to once per file however many roots read it. One gap remains, deliberately:
+/// this is reached only for an *ancestor* of something being checked, because an
+/// ignore file has no say about its own directory. So a `.cmake-fmt-ignore` at
+/// or below a walk root is validated by the walk's own
+/// `add_custom_ignore_filename` matcher, which keeps no error for us to print,
+/// and a malformed one there loses its patterns silently — which for
+/// `cmake-fmt -r .` is the commonest place it sits. Closing that needs the walk
+/// to hand its errors back, or a traversal of our own to find them.
 ///
 /// The name is passed in rather than taken from `file` because they differ: a
 /// one-shot source is read from a temporary copy, and a complaint about a path
@@ -952,6 +970,7 @@ fn build_ignore_matcher(file: &Path, root: &Path, report_as: Option<&Path>) -> O
 
     if let Some(err) = builder.add(file)
         && let Some(name) = report_as
+        && !already_reported(name)
     {
         eprintln!("Warning: {}", named_error(&err, file, name));
     }
@@ -959,7 +978,9 @@ fn build_ignore_matcher(file: &Path, root: &Path, report_as: Option<&Path>) -> O
     match builder.build() {
         Ok(matcher) => Some(matcher),
         Err(err) => {
-            if let Some(name) = report_as {
+            if let Some(name) = report_as
+                && !already_reported(name)
+            {
                 eprintln!(
                     "Warning: Failed to build ignore rules from {}: {}",
                     name.display(),
@@ -968,6 +989,26 @@ fn build_ignore_matcher(file: &Path, root: &Path, report_as: Option<&Path>) -> O
             }
             None
         }
+    }
+}
+
+/// Whether this ignore file has already been complained about, marking it as
+/// complained about if not.
+///
+/// `is_ignored` re-reads the `.cmake-fmt-ignore` chain once per root it is asked
+/// about, so without this a broken one printed the same sentence per root — the
+/// duplication `--ignore-file` was just cured of, in the other reader.
+fn already_reported(file: &Path) -> bool {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+
+    static REPORTED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    let reported = REPORTED.get_or_init(|| Mutex::new(HashSet::new()));
+    match reported.lock() {
+        Ok(mut seen) => !seen.insert(file.to_path_buf()),
+        // A poisoned lock means another thread panicked mid-report. Saying it
+        // twice beats not saying it.
+        Err(_) => false,
     }
 }
 

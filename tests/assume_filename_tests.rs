@@ -1186,11 +1186,11 @@ fn test_a_symlinked_walk_root_is_still_excluded() {
 
 #[test]
 fn test_an_unreadable_ignore_file_fails_the_run() {
-    // A typo used to warn and then format everything the user meant to exclude,
-    // exiting 0 — the outcome this machinery exists to prevent, and it looked
-    // like a clean run. `is_file()` is not the question to ask, either: it is
-    // true for a file whose mode forbids reading it, which left that same path
-    // intact.
+    // A typo used to be ignored outright — the walk dropped the error — and then
+    // format everything the user meant to exclude, which is the outcome this
+    // machinery exists to prevent and which looked like a clean run. `is_file()`
+    // is not the question to ask, either: it is true for a file whose mode
+    // forbids reading it, which left that same path intact.
     let tempdir = TempDir::new().expect("Failed to create tempdir");
     let root = tempdir.path();
     std::fs::create_dir(root.join("src")).expect("Failed to create src dir");
@@ -1976,8 +1976,154 @@ fn test_an_unreadable_ignore_file_reaching_the_walk_is_reported() {
     assert_eq!(
         report.matches("did not contain valid UTF-8").count(),
         1,
-        "one complaint per root:\n{}",
+        "one complaint however many roots read it:\n{}",
         report
+    );
+}
+
+#[test]
+fn test_a_broken_cmake_fmt_ignore_is_reported_once() {
+    // The only diagnostic for a `.cmake-fmt-ignore` whose patterns the matcher
+    // will not take. Deleting it left the suite green, and it was printed once
+    // per named root — the same duplication `--ignore-file` was cured of.
+    //
+    // It is reached only for an *ancestor* of what is being checked, because an
+    // ignore file has no say about its own directory. So the file in the walk
+    // root itself is validated by the walk, which keeps no error to print; that
+    // gap is documented at `build_ignore_matcher` and asserted here so a change
+    // to it is deliberate.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    for dir in ["sub", "sub/deep", "other"] {
+        std::fs::create_dir_all(root.join(dir)).expect("dirs");
+    }
+    for f in [
+        "y.cmake",
+        "sub/y.cmake",
+        "sub/deep/y.cmake",
+        "other/y.cmake",
+    ] {
+        std::fs::write(root.join(f), "set(A   b)\n").expect("write");
+    }
+    // Line 2 is not UTF-8, so the matcher refuses the file part-way
+    std::fs::write(
+        root.join(".cmake-fmt-ignore"),
+        b"x.cmake\n\xff\xfebad\ny.cmake\n",
+    )
+    .expect("write");
+
+    let complaints = |args: &[&str]| -> usize {
+        let output = Command::new(cmake_fmt_bin())
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("run");
+        let report = String::from_utf8_lossy(&output.stdout).to_string()
+            + &String::from_utf8_lossy(&output.stderr);
+        report.matches("did not contain valid UTF-8").count()
+    };
+
+    // One root above the ignore file's directory: reported, once
+    assert_eq!(complaints(&["--check", "-r", "sub"]), 1);
+    // Three of them: still once
+    assert_eq!(
+        complaints(&["--check", "-r", "sub", "other", "sub/deep"]),
+        1,
+        "the same complaint was printed per root"
+    );
+    // The walk root itself: the walk validates it and keeps no error, so nothing
+    // is printed. Documented, not desirable.
+    assert_eq!(complaints(&["--check", "-r", "."]), 0);
+}
+
+#[test]
+fn test_a_complaint_names_the_ignore_file_as_it_was_given() {
+    // A one-shot source is read from a temporary copy, so the matcher's own
+    // message names a path nobody typed. `named_error` swaps it back, and two
+    // separate mutations of that — returning the raw text, and passing the copy's
+    // path as the name — both survived the whole suite.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join("a.cmake"), "set(A   b)\n").expect("write");
+    std::fs::write(root.join("pat.bin"), b"# ok\n\xff\xfebad\na.cmake\n").expect("write");
+
+    let fifo = root.join("patterns");
+    let made = Command::new("sh")
+        .arg("-c")
+        .arg(format!("mkfifo {}", fifo.display()))
+        .status()
+        .expect("mkfifo");
+    if !made.success() {
+        return; // no mkfifo on this platform
+    }
+    let feeder = Command::new("sh")
+        .arg("-c")
+        .arg(format!("cat pat.bin > {}", fifo.display()))
+        .current_dir(root)
+        .spawn()
+        .expect("spawn writer");
+
+    let fifo_str = fifo.to_str().unwrap().to_string();
+    let mut command = Command::new(cmake_fmt_bin());
+    command
+        .args(["--check", "-r", ".", "--ignore-file", &fifo_str])
+        .current_dir(root);
+    let report = run_with_deadline(&mut command, 30).expect("the run blocked");
+    let mut feeder = feeder;
+    let _ = feeder.wait();
+
+    assert!(
+        report.contains("did not contain valid UTF-8"),
+        "the complaint went missing:\n{}",
+        report
+    );
+    assert!(
+        report.contains(&format!("Warning: {}: line 2", fifo_str)),
+        "the complaint should name the fifo the caller passed:\n{}",
+        report
+    );
+    // The copy is a random `NamedTempFile` name, so naming the fifo — which the
+    // assertion above pins exactly — is what rules the copy out. Asserting the
+    // absence of a `/tmp/` prefix would not: the fifo itself lives in one.
+}
+
+#[test]
+fn test_a_whitelisted_ancestor_is_not_an_excluded_one() {
+    // An excluded ancestor is final — git cannot re-include a file whose parent
+    // directory is excluded — but an ancestor a pattern explicitly *re-includes*
+    // is not excluded, and treating any decision as exclusion skipped it.
+    // Nothing pinned the difference between "matched" and "matched as ignored".
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::create_dir_all(root.join("sub")).expect("dirs");
+    std::fs::write(root.join("sub").join("b.cmake"), "set(A   b)\n").expect("write");
+    std::fs::write(root.join(".cmake-fmt-ignore"), "!sub/\n").expect("write");
+
+    for args in [&["--check", "-r", "."][..], &["--check", "-r", "sub"][..]] {
+        let output = Command::new(cmake_fmt_bin())
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("run");
+        let report = String::from_utf8_lossy(&output.stdout).to_string()
+            + &String::from_utf8_lossy(&output.stderr);
+        assert!(
+            report.contains("b.cmake"),
+            "a re-included directory was skipped for {:?}:\n{}",
+            args,
+            report
+        );
+    }
+
+    // And the stdin path agrees
+    let (_, stdout) = run_with_stdin_in(
+        Some(root),
+        &["-", "--assume-filename", "sub/b.cmake"],
+        "set(A   b)\n",
+    );
+    assert_eq!(
+        stdout, "set(A b)\n",
+        "the stdin path skipped a re-included directory"
     );
 }
 
