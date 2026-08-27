@@ -163,6 +163,20 @@ fn print_style_help() {
         "  {:<25} {:<15} {:<15} {}",
         "sort_sources", "enum", "none", "none, alphabetical"
     );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "collapse_empty_flags",
+        "boolean",
+        "true",
+        "true, false — keep a no-argument flag on the previous line"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "inline_single_keyword",
+        "boolean",
+        "false",
+        "true, false — keep a lone keyword on the opening line"
+    );
     println!();
     println!("CLI usage:  cmake-fmt --style \"indent_width=4,max_line_length=120\" <file>");
     println!();
@@ -227,16 +241,16 @@ fn print_grammar_help() {
     println!("Reordering:");
     println!("  sort_sources and source_grouping only reorder keywords listed in");
     println!("  'sortable_keywords', plus the keyword-less arguments when");
-    println!("  'sortable_positional: true'. In a grammar file, a keyword is");
-    println!("  sortable only if it is listed. In a .cmake-fmt config entry,");
-    println!("  omitting 'sortable_keywords' falls back to keywords named");
-    println!("  SOURCES, SRCS or FILES, and writing it as an empty list means");
-    println!("  nothing in that command is sortable.");
-    println!("  Both default to leaving order alone,");
-    println!("  since argument order usually carries meaning. BinPack and PairValue");
-    println!("  keywords are never reordered, and a positional run additionally");
-    println!("  requires every value to look like a source file, so flag and");
-    println!("  library lists are left alone.");
+    println!("  'sortable_positional: true'. Argument order usually carries");
+    println!("  meaning, so nothing is sortable until something says it is.");
+    println!("  In a grammar file that is the whole rule: a keyword is sortable");
+    println!("  only if it is listed, and there is no fallback. A .cmake-fmt");
+    println!("  config entry has one — omitting 'sortable_keywords' falls back to");
+    println!("  keywords named SOURCES, SRCS or FILES, and writing it as an empty");
+    println!("  list says nothing in that command is sortable.");
+    println!("  BinPack and PairValue keywords are never reordered, and a");
+    println!("  positional run additionally requires every value to look like a");
+    println!("  source file, so flag and library lists are left alone.");
     println!();
     println!("Multi-mode commands:");
     println!("  For commands like install() that have different keyword sets per sub-command,");

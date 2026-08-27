@@ -274,6 +274,32 @@ fn grouped_section(
 /// They are always own-line comments: the section parser only records a trailing
 /// comment for a section that already holds an argument, so a comment written on
 /// the same line as a valueless keyword arrives at position 0 of `comments`.
+/// Whether the section before `index` has already put a comment on its line.
+///
+/// A line comment runs to the end of its line, so nothing may follow that
+/// section on the same line. Every separator that collapses a keyword onto the
+/// previous line has to ask this first: collapsing regardless put the keyword
+/// *inside* the comment — `# note QUIET` — and the keyword was gone from the
+/// file, permanently, at a stable fixed point and exit 0.
+///
+/// Three arms have made that same mistake in three consecutive rounds, each time
+/// one arm over from the last fix, so the question lives in one place and every
+/// separator consults it.
+fn previous_section_ended_in_a_comment(sections: &[KeywordSection], index: usize) -> bool {
+    index
+        .checked_sub(1)
+        .and_then(|previous| sections.get(previous))
+        .is_some_and(|previous| {
+            !previous.comments.is_empty() || !previous.trailing_comments.is_empty()
+        })
+}
+
+/// Emit the comments of a keyword section that has no values.
+///
+/// At `keyword_indent`, not `value_indent`: there are no values for the comment
+/// to sit under, and the comment belongs to the keyword. Three of the five arms
+/// used the deeper level, so `find_package(Foo REQUIRED # n)` put its comment one
+/// tab in and `target_sources(t PRIVATE # n)` put an identical construct two.
 fn push_valueless_section_comments(
     docs: &mut Vec<RcDoc<'static, ()>>,
     comments: &[(usize, String)],
@@ -1350,18 +1376,7 @@ pub fn format_keyword_aware_args(
                                 Some(prev) if prev.keyword.is_none()
                             );
                         let flag_has_trailing_args = !flag_args.is_empty();
-                        // A line comment runs to the end of its line, so nothing
-                        // may follow the previous section on the same line once it
-                        // has emitted one. Collapsing regardless put this keyword
-                        // *inside* that comment — `# note QUIET` — and the keyword
-                        // was gone from the file, permanently and at exit 0.
-                        let previous_ended_in_a_comment = matches!(
-                            sections.get(i.saturating_sub(1)),
-                            Some(prev) if i > 0
-                                && (!prev.comments.is_empty()
-                                    || !prev.trailing_comments.is_empty())
-                        );
-                        if !previous_ended_in_a_comment
+                        if !previous_section_ended_in_a_comment(&sections, i)
                             && ((prev_is_pre_keyword && flag_has_trailing_args)
                                 || ((prev_is_flag || prev_is_pre_keyword)
                                     && config.collapse_empty_flags))
@@ -1543,7 +1558,9 @@ pub fn format_keyword_aware_args(
                                 sections.first(),
                                 Some(first) if first.keyword_type == Some(KeywordType::Flag) && first.args.is_empty()
                             );
-                        if prev_is_first_empty_flag {
+                        if prev_is_first_empty_flag
+                            && !previous_section_ended_in_a_comment(&sections, i)
+                        {
                             docs.push(RcDoc::space());
                         } else {
                             docs.push(RcDoc::flat_alt(
@@ -1589,7 +1606,7 @@ pub fn format_keyword_aware_args(
                         push_valueless_section_comments(
                             &mut docs,
                             &section.comments,
-                            &value_indent,
+                            &keyword_indent,
                         );
                     }
                     if !section.args.is_empty() {
@@ -1755,7 +1772,7 @@ pub fn format_keyword_aware_args(
                         push_valueless_section_comments(
                             &mut docs,
                             &section.comments,
-                            &value_indent,
+                            &keyword_indent,
                         );
                     }
                     if !section.args.is_empty() {
@@ -1924,7 +1941,7 @@ pub fn format_keyword_aware_args(
                         push_valueless_section_comments(
                             &mut docs,
                             &section.comments,
-                            &value_indent,
+                            &keyword_indent,
                         );
                     }
                     if !section.args.is_empty() {
@@ -2271,7 +2288,7 @@ fn format_keyword_aware_args_inline_single(
     let mut docs = Vec::new();
     let mut is_first_arg = true;
 
-    for section in sections.iter() {
+    for (i, section) in sections.iter().enumerate() {
         if let Some(keyword) = &section.keyword {
             // There is exactly one keyword section — emit keyword INLINE with preceding args.
             // Separator: space (flat and broken both use space here)
@@ -2288,6 +2305,12 @@ fn format_keyword_aware_args_inline_single(
                     ));
                 }
                 // force_multiline=true: emit nothing — keyword stays on the opening line after '('
+            } else if previous_section_ended_in_a_comment(sections, i) {
+                // The pre-keyword args ended in a comment, so this keyword cannot
+                // share their line — it would become part of the comment.
+                is_first_arg = false;
+                docs.push(RcDoc::hardline());
+                docs.push(RcDoc::text(keyword_indent.to_string()));
             } else {
                 // Keyword follows pre-keyword args — stays on same line as the last pre-keyword arg.
                 // In flat mode this is already inline; in broken mode we want a space (not a newline).

@@ -184,8 +184,7 @@
           "items": {
             "type": "string"
           },
-          "default": [],
-          "description": "Keywords whose values are an unordered list, so sort_sources and source_grouping may reorder them (e.g., SOURCES). Keywords not listed here are never reordered. Omit this key to fall back to the conventional file-list names (SOURCES, SRCS, FILES); write an empty list to say nothing is sortable."
+          "description": "Keywords whose values are an unordered list, so sort_sources and source_grouping may reorder them (e.g., SOURCES). Keywords not listed here are never reordered. Omit this key to fall back to the conventional file-list names (SOURCES, SRCS, FILES); write an empty list to say nothing is sortable. There is deliberately no schema default: inserting an empty list would turn the fallback off."
         },
         "sortable_positional": {
           "type": "boolean",

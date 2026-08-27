@@ -3705,14 +3705,17 @@ fn test_a_flag_with_no_values_keeps_its_comments() {
 /// `contains` cannot tell the two apart, which is exactly how a bug that turned
 /// `QUIET` into part of `# note QUIET` passed a test asserting `contains("QUIET")`.
 /// A comment runs to the end of its line, so everything from the first `#`
-/// onwards is prose.
+/// onwards is prose. Parentheses are separators too: a first argument is glued
+/// to its command name (`define_property(TEST`), and trimming only the ends of a
+/// word left it unfindable, so the oracle silently passed for the token that
+/// mattered most.
 fn appears_as_code(text: &str, token: &str) -> bool {
     text.lines().any(|line| {
         line.split('#')
             .next()
             .unwrap_or("")
-            .split_whitespace()
-            .any(|word| word.trim_matches(|c| c == '(' || c == ')') == token)
+            .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+            .any(|word| word == token)
     })
 }
 
@@ -3757,6 +3760,23 @@ fn test_a_valueless_keyword_keeps_its_comments_in_every_arm() {
             input,
             result
         );
+        // `contains` alone would pass on a comment that had swallowed the code
+        // around it, which is the mistake this file has caught three times.
+        // Every non-comment token of the input has to still be an argument.
+        for token in input
+            .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+            .filter(|word| !word.is_empty())
+            .take_while(|word| !word.starts_with('#'))
+            .skip(1)
+        {
+            assert!(
+                appears_as_code(&result, token),
+                "{} was swallowed by the comment for {:?}:\n{}",
+                token,
+                input,
+                result
+            );
+        }
         assert_eq!(
             result,
             format_text(&result, cfg),
@@ -3764,6 +3784,196 @@ fn test_a_valueless_keyword_keeps_its_comments_in_every_arm() {
             input
         );
     }
+}
+
+#[test]
+fn test_a_multi_mode_commands_first_flag_keeps_its_comment() {
+    // The `SingleValue` arm collapses a multi-mode command's mode keyword onto
+    // the following keyword — `define_property(TEST PROPERTY foo)` — and its
+    // separator was an unconditional space, the one arm the previous round's
+    // guard was not wired into. So the follower became comment prose:
+    // `# note PROPERTY foo`, with the code gone from the file, stable, at exit 0.
+    //
+    // `file(GENERATE …)` escalated: pass 1 swallowed `OUTPUT out.txt`, pass 2
+    // also swallowed `CONTENT "x"`, so two runs of a pre-commit hook ate the
+    // command body.
+    //
+    // The arm is reached only by a multi-mode command whose first section is a
+    // valueless flag and whose second is a `SingleValue` — a *command shape*,
+    // not a follower type, which is the dimension the sweep above cannot see.
+    let config = FormatConfig::default();
+
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "define_property(TEST # note\n\tPROPERTY foo\n\tBRIEF_DOCS \"b\"\n)\n",
+            &["TEST", "PROPERTY", "foo", "BRIEF_DOCS"],
+        ),
+        (
+            "define_property(GLOBAL # note\n\tPROPERTY foo\n)\n",
+            &["GLOBAL", "PROPERTY", "foo"],
+        ),
+        (
+            "define_property(DIRECTORY # note\n\tPROPERTY foo\n)\n",
+            &["DIRECTORY", "PROPERTY", "foo"],
+        ),
+        (
+            "define_property(SOURCE # note\n\tPROPERTY foo\n)\n",
+            &["SOURCE", "PROPERTY", "foo"],
+        ),
+        (
+            "define_property(CACHED_VARIABLE # note\n\tPROPERTY foo\n)\n",
+            &["CACHED_VARIABLE", "PROPERTY", "foo"],
+        ),
+        (
+            "file(GENERATE # note\n\tOUTPUT out.txt\n\tCONTENT \"x\"\n)\n",
+            &["GENERATE", "OUTPUT", "out.txt", "CONTENT"],
+        ),
+        (
+            "file(CONFIGURE # note\n\tOUTPUT out.txt\n\tCONTENT \"x\"\n)\n",
+            &["CONFIGURE", "OUTPUT", "out.txt", "CONTENT"],
+        ),
+        (
+            "file(ARCHIVE_CREATE # note\n\tOUTPUT a.tar\n\tPATHS p\n)\n",
+            &["ARCHIVE_CREATE", "OUTPUT", "a.tar", "PATHS"],
+        ),
+        (
+            "file(GET_RUNTIME_DEPENDENCIES # note\n\tRESOLVED_DEPENDENCIES_VAR v\n)\n",
+            &["GET_RUNTIME_DEPENDENCIES", "RESOLVED_DEPENDENCIES_VAR", "v"],
+        ),
+        (
+            "string(RANDOM # note\n\tLENGTH 8\n\tv\n)\n",
+            &["RANDOM", "LENGTH", "8", "v"],
+        ),
+        (
+            "string(UUID # note\n\tNAMESPACE ns\n\tNAME n\n\tTYPE MD5\n\tv\n)\n",
+            &["UUID", "NAMESPACE", "ns", "NAME", "TYPE", "v"],
+        ),
+    ];
+
+    // Three passes: the escalating shape looks partly intact after one.
+    for (input, tokens) in cases {
+        let mut current = format_text(input, &config);
+        for pass in 1..=3 {
+            assert!(
+                current.contains("# note"),
+                "the comment was lost by pass {} of {:?}:\n{}",
+                pass,
+                input,
+                current
+            );
+            for token in *tokens {
+                assert!(
+                    appears_as_code(&current, token),
+                    "{} was swallowed by the comment by pass {} of {:?}:\n{}",
+                    token,
+                    pass,
+                    input,
+                    current
+                );
+            }
+            current = format_text(&current, &config);
+        }
+    }
+}
+
+#[test]
+fn test_a_trailing_comment_on_a_section_with_values_holds_the_line_too() {
+    // The guard reads both halves of a section's comments, and only the own-line
+    // half was pinned — cutting `trailing_comments` out of it survived the whole
+    // suite. It is not dead: these are the shapes where the *previous* section
+    // has values and its comment trails them, which is the commonest spelling of
+    // all and the one the collapsing separator ate.
+    let config = FormatConfig::default();
+    for (input, tokens) in [
+        (
+            "add_library(l STATIC a.cpp # note\n\tEXCLUDE_FROM_ALL)\n",
+            &["l", "STATIC", "a.cpp", "EXCLUDE_FROM_ALL"][..],
+        ),
+        (
+            "find_package(Foo # note\n\tREQUIRED)\n",
+            &["Foo", "REQUIRED"][..],
+        ),
+        (
+            "add_executable(e a.cpp # note\n\tWIN32)\n",
+            &["e", "a.cpp", "WIN32"][..],
+        ),
+    ] {
+        let result = format_text(input, &config);
+        assert!(
+            result.contains("# note"),
+            "the trailing comment was lost for {:?}:\n{}",
+            input,
+            result
+        );
+        for token in tokens {
+            assert!(
+                appears_as_code(&result, token),
+                "{} was swallowed by the trailing comment for {:?}:\n{}",
+                token,
+                input,
+                result
+            );
+        }
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+#[test]
+fn test_the_inline_twin_does_not_collapse_onto_a_commented_line() {
+    // The inline twin's "keyword follows pre-keyword args" separator is an
+    // unconditional space as well, so under `inline_single_keyword` the keyword
+    // joined a line the pre-keyword args had already ended with a comment. The
+    // mechanism predates the branch, but new grammar entries for `target_sources`
+    // and `source_group` brought eighteen more shapes into it — and a file can
+    // turn the setting on for itself.
+    let config = FormatConfig {
+        inline_single_keyword: true,
+        ..Default::default()
+    };
+    for (input, tokens) in [
+        (
+            "target_sources(t # c\n\tTYPE sv1\n)\n",
+            &["t", "TYPE", "sv1"][..],
+        ),
+        (
+            "target_sources(t # c\n\tPRIVATE a.cpp\n)\n",
+            &["t", "PRIVATE", "a.cpp"][..],
+        ),
+        (
+            "source_group(g # c\n\tFILES a.cpp\n)\n",
+            &["g", "FILES", "a.cpp"][..],
+        ),
+        (
+            "# cmake-fmt: inline_single_keyword=true\ntarget_sources(t # c\n\tTYPE sv1\n)\n",
+            &["t", "TYPE", "sv1"][..],
+        ),
+    ] {
+        let result = format_text(input, &config);
+        assert!(
+            result.contains("# c"),
+            "the comment was lost for {:?}:\n{}",
+            input,
+            result
+        );
+        for token in tokens {
+            assert!(
+                appears_as_code(&result, token),
+                "{} was swallowed by the comment for {:?}:\n{}",
+                token,
+                input,
+                result
+            );
+        }
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+
+    // And without a comment the keyword still shares the line — that collapse is
+    // the whole point of the setting.
+    assert!(
+        format_text("target_sources(t\n\tPRIVATE a.cpp b.cpp\n)\n", &config)
+            .starts_with("target_sources(t PRIVATE"),
+        "the inline collapse stopped happening"
+    );
 }
 
 #[test]
