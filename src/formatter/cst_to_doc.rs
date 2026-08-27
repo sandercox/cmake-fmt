@@ -24,14 +24,21 @@ pub(crate) struct ArgumentFormatSignals {
     pub(crate) force_multiline: bool,
 }
 
-/// Scope frame for tracking block opener arguments
+/// Scope frame for tracking block opener arguments.
+///
+/// Holds the opener's argument list rather than its rendering. Rendering it here
+/// meant deciding, at the opener, whether `closing_style` would need it — but a
+/// `# cmake-fmt: closing_style=force` directive anywhere *after* the opener
+/// turns it on later, and the closer then found an empty list and emitted
+/// nothing, deleting the arguments the author wrote. Keeping the node is also
+/// cheaper: nothing is rendered unless a closer actually asks.
 struct ScopeFrame {
-    opener_args: Vec<String>,
+    opener_args: Option<ArgumentList>,
 }
 
 /// Context for formatting block closers and mid-block commands
 struct CloserContext {
-    opener_args: Vec<String>,
+    opener_args: Option<ArgumentList>,
     is_mid_block: bool,
 }
 
@@ -484,35 +491,9 @@ fn format_file(
                             // Handle block openers (indent and push scope after emitting)
                             if is_block_opener(&cmd_name) {
                                 current_indent += 1;
-                                // Extract opener arguments for scope tracking
-                                // `arguments()` yields tokens only, so a
-                                // parenthesized group was dropped here and a
-                                // forced closer came out as `endif(AND B)` for
-                                // an `if((A) AND B)` — a mismatch CMake itself
-                                // warns about. A group is one logical argument,
-                                // and always the normalized rendering of one:
-                                // the verbatim form carries the group's comments
-                                // and newlines, which a closer must not repeat.
-                                //
-                                // Only `force` reads these, and rendering a group
-                                // is not free, so nothing else pays for them.
-                                //
-                                // `config`, not `ctx.config`: a
-                                // `# cmake-fmt: closing_style=force` directive
-                                // mutates the effective config, which is what
-                                // the closer reads. Gating on the file-level one
-                                // made the opener collect nothing while the
-                                // closer took the `force` arm and emitted
-                                // nothing — deleting the arguments the author
-                                // wrote, with exit 0.
-                                let opener_args: Vec<String> =
-                                    if matches!(config.closing_style, ClosingStyle::Force) {
-                                        cmd.argument_list()
-                                            .map(|al| collect_condition_args(&al))
-                                            .unwrap_or_default()
-                                    } else {
-                                        Vec::new()
-                                    };
+                                // The opener's argument list, rendered only if
+                                // a closer asks for it — see `ScopeFrame`.
+                                let opener_args = cmd.argument_list();
                                 scope_stack.push(ScopeFrame { opener_args });
                             }
 
@@ -744,11 +725,20 @@ fn format_command(
                     RcDoc::nil()
                 }
                 ClosingStyle::Force => {
-                    // Force mode: emit opener's arguments
-                    if closer_ctx.opener_args.is_empty() {
+                    // Force mode: emit the opener's arguments, rendered here
+                    // because only here is the effective `closing_style` known.
+                    // A group is always normalized — its verbatim text carries
+                    // the group's own comments and newlines, which a closer must
+                    // not repeat.
+                    let rendered = closer_ctx
+                        .opener_args
+                        .as_ref()
+                        .map(collect_condition_args)
+                        .unwrap_or_default();
+                    if rendered.is_empty() {
                         RcDoc::nil()
                     } else {
-                        RcDoc::text(closer_ctx.opener_args.join(" "))
+                        RcDoc::text(rendered.join(" "))
                     }
                 }
             }

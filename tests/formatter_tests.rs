@@ -2096,6 +2096,71 @@ fn test_a_forced_closer_normalizes_the_openers_group() {
 }
 
 #[test]
+fn test_a_directive_anywhere_in_the_file_keeps_the_closer_s_arguments() {
+    // The opener used to render its arguments only when the *file-level* config
+    // already said `force`, but the closer reads the setting in effect where the
+    // closer sits. A directive placed after the opener turned `force` on too
+    // late: the closer took the `force` arm and found nothing to emit, so
+    // `endif(A AND B)` came back as `endif()` — the author's condition deleted,
+    // at a stable fixed point and exit 0. Every position below is a position a
+    // directive can legally occupy relative to the block it affects.
+    let plain = default_config();
+    let directive = "# cmake-fmt: closing_style=force";
+    for (where_, input) in [
+        (
+            "before the opener",
+            format!("{directive}\nif(A AND B)\n\tmessage(hi)\nendif(A AND B)\n"),
+        ),
+        (
+            "inside the block",
+            format!("if(A AND B)\n\t{directive}\n\tmessage(hi)\nendif(A AND B)\n"),
+        ),
+        (
+            "trailing the opener",
+            format!("if(A AND B) {directive}\n\tmessage(hi)\nendif(A AND B)\n"),
+        ),
+        (
+            "just before the closer",
+            format!("if(A AND B)\n\tmessage(hi)\n{directive}\nendif(A AND B)\n"),
+        ),
+        (
+            "inside a nested block",
+            format!(
+                "if(A AND B)\n\tif(C)\n\t\t{directive}\n\t\tmessage(hi)\n\tendif(C)\nendif(A AND B)\n"
+            ),
+        ),
+        (
+            "before an else",
+            format!(
+                "if(A AND B)\n\t{directive}\n\tmessage(hi)\nelse(A AND B)\n\tmessage(bye)\nendif(A AND B)\n"
+            ),
+        ),
+        (
+            "in a foreach",
+            format!("foreach(x a b)\n\t{directive}\n\tmessage(${{x}})\nendforeach(x)\n"),
+        ),
+    ] {
+        let result = format_text(&input, &plain);
+        // `force` makes a closer repeat what its opener holds, so the foreach
+        // closer carries the loop variable *and* the list.
+        let closer = if where_ == "in a foreach" {
+            "endforeach(x a b)"
+        } else {
+            "endif(A AND B)"
+        };
+        assert!(
+            result.contains(closer),
+            "a directive {where_} lost `{closer}`:\n{result}"
+        );
+        assert_eq!(
+            result,
+            format_text(&result, &plain),
+            "a directive {where_} is not idempotent:\n{result}"
+        );
+    }
+}
+
+#[test]
 fn test_a_group_glued_to_the_token_before_it_is_still_a_barrier() {
     // Adjacency merging renders `NOT(x.cpp)` as one argument, which does not
     // *start* with a paren — so the barrier test missed it and the arguments
