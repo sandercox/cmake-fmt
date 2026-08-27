@@ -2139,14 +2139,26 @@ fn test_a_directive_anywhere_in_the_file_keeps_the_closer_s_arguments() {
             "in a foreach",
             format!("foreach(x a b)\n\t{directive}\n\tmessage(${{x}})\nendforeach(x)\n"),
         ),
+        // At or after the closer the directive is too late to reach it, so the
+        // file-level `closing_style` decides — which is `remove`, and the
+        // closer's arguments go. Swept so that stays a deliberate answer.
+        (
+            "trailing the closer",
+            format!("if(A AND B)\n\tmessage(hi)\nendif(A AND B) {directive}\n"),
+        ),
+        (
+            "after the closer",
+            format!("if(A AND B)\n\tmessage(hi)\nendif(A AND B)\n{directive}\n"),
+        ),
     ] {
         let result = format_text(&input, &plain);
         // `force` makes a closer repeat what its opener holds, so the foreach
-        // closer carries the loop variable *and* the list.
-        let closer = if where_ == "in a foreach" {
-            "endforeach(x a b)"
-        } else {
-            "endif(A AND B)"
+        // closer carries the loop variable *and* the list. A directive at or
+        // after the closer never reaches it, so the default `remove` applies.
+        let closer = match where_ {
+            "in a foreach" => "endforeach(x a b)",
+            "trailing the closer" | "after the closer" => "endif()",
+            _ => "endif(A AND B)",
         };
         assert!(
             result.contains(closer),
@@ -2202,18 +2214,131 @@ fn test_an_unterminated_group_is_closed_outside_its_comment() {
     // emitted as therefore ends *inside* the open comment, so the caller's `)`
     // would land inside it too rather than becoming a token, and the next run
     // would append another, and the next: the file grows by a byte per run and
-    // `--check` never goes green. This pins the closing itself; the choice to
-    // ask the last token rather than the last character is a judgement no input
-    // can separate, and `render_nested_group` says why.
+    // `--check` never goes green. Asking the last token rather than the last
+    // character is what tells the two apart — see `render_nested_group`.
     let config = default_config();
-    let once = format_text("f((A # c)\n", &config);
-    let twice = format_text(&once, &config);
-    assert_eq!(
-        once, twice,
-        "the output keeps growing:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
-        once, twice
-    );
-    assert_eq!(twice, format_text(&twice, &config), "not idempotent");
+    // Both spellings of the closing test agree once there is a trailing
+    // newline — the group's last token is then the NEWLINE — so the input
+    // *without* one is the case that discriminates, and the one this test
+    // originally missed.
+    for input in ["f((A # c)", "f((A # c)\n", "f((A # c", "if(A AND (B # c)"] {
+        let once = format_text(input, &config);
+        let twice = format_text(&once, &config);
+        assert_eq!(
+            once, twice,
+            "the output keeps growing for {:?}:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+            input, once, twice
+        );
+        let thrice = format_text(&twice, &config);
+        assert_eq!(twice, thrice, "not idempotent for {:?}", input);
+        assert!(
+            thrice.len() <= once.len(),
+            "the output grew across passes for {:?}: {} -> {}",
+            input,
+            once.len(),
+            thrice.len()
+        );
+    }
+}
+
+#[test]
+fn test_every_walk_clears_its_separator_after_a_group() {
+    // Three walks collect a group as one logical argument, and each has to clear
+    // its separator flag afterwards or the token glued to the group comes away
+    // from it. Only the `cmake_rules` copy was pinned; these are the other two,
+    // both observable at default settings.
+    let config = default_config();
+    for (input, expected) in [
+        // `format_argument_list` — a newline in the list, so it breaks
+        ("f(x\n(q)y.cpp)\n", "f(\n\tx\n\t(q)y.cpp\n)\n"),
+        // `collect_args_with` — no newline, so it stays flat
+        ("f((q)y.cpp z.cpp)\n", "f((q)y.cpp z.cpp)\n"),
+        ("f(a (q)y.cpp b)\n", "f(a (q)y.cpp b)\n"),
+    ] {
+        let result = format_text(input, &config);
+        assert_eq!(
+            result, expected,
+            "the token glued to the group came away for {:?}",
+            input
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+#[test]
+fn test_a_paren_inside_a_value_is_not_a_group() {
+    // The barrier test only sees the rendered string, and it looked for any `(`
+    // outside a *leading* quote. That caught one spelling of "the paren is just
+    // a character" and missed the rest: `[[foo(1).cpp]]` is a single filename,
+    // and calling it a group pinned the whole list — while the identical name in
+    // quotes sorted. Two opposite wrong answers from one predicate.
+    let sorting = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        ..Default::default()
+    };
+    // A paren inside a quoted or bracket argument is a character, so these sort
+    for (input, expected) in [
+        (
+            "set(SRCS z.cpp \"foo(1).cpp\" a.cpp)\n",
+            "set(SRCS \"foo(1).cpp\" a.cpp z.cpp)\n",
+        ),
+        (
+            "set(SRCS z.cpp [[foo(1).cpp]] a.cpp)\n",
+            "set(SRCS [[foo(1).cpp]] a.cpp z.cpp)\n",
+        ),
+        (
+            "install(FILES z.cpp [[foo(1).cpp]] a.cpp DESTINATION d)\n",
+            "install(FILES [[foo(1).cpp]] a.cpp z.cpp DESTINATION d)\n",
+        ),
+        // The `[=[ ]=]` spelling through a keyword section. A positional run
+        // additionally requires every value to look like a source file, and the
+        // filename heuristic does not see through this wrapper — unrelated to
+        // the barrier question, and it only ever declines to sort.
+        (
+            "install(FILES z.cpp [=[foo(1).cpp]=] a.cpp DESTINATION d)\n",
+            "install(FILES [=[foo(1).cpp]=] a.cpp z.cpp DESTINATION d)\n",
+        ),
+    ] {
+        assert_eq!(
+            format_text(input, &sorting),
+            expected,
+            "a paren inside a value was read as a group"
+        );
+    }
+    // And a real group is still a barrier, in every spelling that reaches here
+    for input in [
+        "set(SRCS z.cpp NOT(x.cpp) a.cpp)\n",
+        "set(SRCS z.cpp a.cpp(b) c.cpp)\n",
+        "set(SRCS (x)y.cpp a.cpp)\n",
+        // a quoted value glued to a group: the quote no longer hides it
+        "set(SRCS z.cpp \"a\"(b) c.cpp)\n",
+        // and a bracket argument glued to one
+        "set(SRCS z.cpp [[a]](b) c.cpp)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &sorting),
+            input,
+            "arguments moved across a group"
+        );
+    }
+
+    // An unterminated bracket argument has swallowed the rest of the file, so
+    // nothing after it can be read reliably. A barrier is the fail-safe answer —
+    // it only declines to reorder — and sorting past it moved `z.cpp` *into* the
+    // value. The tool also appends a `)` per run for an unterminated bracket
+    // argument — `set(SRCS a [[b` does the same on main, with no group involved —
+    // so this shape has no fixed point either way. What must hold is that
+    // nothing moved.
+    let mut result = format_text("set(SRCS z.cpp [[a(b) c.cpp)\n", &sorting);
+    for pass in 1..=3 {
+        assert!(
+            result.starts_with("set(SRCS z.cpp [[a(b) c.cpp)"),
+            "an argument sorted into an unterminated bracket argument by pass {}:\n{}",
+            pass,
+            result
+        );
+        result = format_text(&result, &sorting);
+    }
 }
 
 #[test]

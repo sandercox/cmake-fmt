@@ -372,6 +372,15 @@ fn test_unterminated_nested_group_roundtrips() {
             .map(|n| n.text().to_string())
             .collect();
         assert!(!nested.is_empty(), "no nested group node for {:?}", input);
+        // The comment above promises a recorded failure, and nothing asserted it
+        // — removing the `errors.push` from `parse_nested_argument_list` left the
+        // whole suite green. Nothing in `src/` reads parse errors today, so this
+        // is the library API's contract rather than the formatter's.
+        assert!(
+            cst.has_errors(),
+            "an unterminated group should record a parse error for {:?}",
+            input
+        );
         for text in &nested {
             assert!(
                 text.starts_with('('),

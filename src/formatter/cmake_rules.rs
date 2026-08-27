@@ -1064,14 +1064,66 @@ fn split_at_barriers(args: &[String], seg: std::ops::Range<usize>) -> Vec<std::o
 /// A leading quote is stripped first: `"${GENERATED}"` is as common as the bare
 /// spelling, and it would otherwise sort ahead of everything because `"` (0x22)
 /// precedes every letter.
+/// True when `s` holds a `(` that is not inside a quoted or bracket argument.
+///
+/// The paren need not lead: adjacency merging renders a group glued to its
+/// neighbour as a single argument (`NOT(x.cpp)`, `a.cpp(b)`, `(x)y.cpp`), and
+/// requiring it to lead let those sort like the ordinary filenames they end in,
+/// moving their neighbours across a group.
+///
+/// But a paren *inside* a value is only a character. Testing for a leading quote
+/// caught one spelling of that and missed the rest: `[[foo(1).cpp]]` is a single
+/// filename, and calling it a group pinned the whole list while the identical
+/// name in quotes sorted — two opposite wrong answers from one predicate.
+///
+/// This reads the spelling because the barrier test only ever sees the rendered
+/// string. The structural answer — which of a section's args came from an
+/// `ArgumentList` node — is known where the sections are built and would be
+/// better than any amount of scanning; it is not threaded down to here.
+fn holds_a_group(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => return true,
+            b'"' => {
+                // A quoted argument, honouring `\"`
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+                i += 1;
+            }
+            b'[' => {
+                // `[`, any number of `=`, then `[` opens a bracket argument that
+                // runs to the matching `]=*]`. A lone `[` is just a character.
+                let mut open = i + 1;
+                while open < bytes.len() && bytes[open] == b'=' {
+                    open += 1;
+                }
+                if open < bytes.len() && bytes[open] == b'[' {
+                    let close = format!("]{}]", "=".repeat(open - i - 1));
+                    match s[open + 1..].find(&close) {
+                        Some(offset) => i = open + 1 + offset + close.len(),
+                        // Unterminated, so nothing here can be read reliably.
+                        // A barrier is the fail-safe answer: it only ever
+                        // declines to reorder, and letting arguments sort past a
+                        // value that has swallowed the rest of the file moves
+                        // them into it.
+                        None => return true,
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    false
+}
+
 fn is_variable_like(s: &str) -> bool {
-    // Tested before the quotes are stripped: a leading quote means this is a
-    // quoted *value* that merely contains a paren, not a group. Anything else
-    // holding a `(` is one — the paren need not lead, because a group glued to
-    // the token before it is rendered as a single argument (`NOT(x.cpp)`,
-    // `a.cpp(b)`). Requiring the paren to lead let those two sort like the
-    // ordinary filenames they end in, moving their neighbours across a group.
-    if !s.starts_with('"') && s.contains('(') {
+    if holds_a_group(s) {
         return true;
     }
 

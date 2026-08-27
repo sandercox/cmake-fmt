@@ -930,18 +930,19 @@ fn format_argument_list(
     // Collected only for the auto-layout path below. The force-multiline path
     // rebuilds from tokens, and collecting here as well would render every
     // nested `( ... )` group twice.
+    //
+    // Known hole: with more than 200 arguments the auto-layout guard further
+    // down falls through to that walk anyway, and this vector — groups already
+    // rendered — is discarded, so each group is rendered twice after all.
+    // Deciding earlier would mean counting logical arguments without merging
+    // adjacent ones, i.e. a second copy of the merge rule, which is the
+    // duplication that caused issue #5. A 200+ argument command containing a
+    // group is rare and the cost is 2x, not quadratic, so it stays.
     let args = if signals.force_multiline {
         Vec::new()
     } else {
         collect_logical_args(arg_list)
     };
-    // Known hole: with more than 200 arguments the guard below falls through to
-    // the walk, and this vector — groups already rendered — is discarded, so
-    // each group is rendered twice after all. Deciding earlier would mean
-    // counting logical arguments without merging adjacent ones, i.e. a second
-    // copy of the merge rule, which is the duplication that caused issue #5.
-    // A 200+ argument command containing a group is rare and the cost is 2x, not
-    // quadratic, so it stays as a known cost.
 
     // If no multiline signals, use auto-layout (flat_alt + group)
     // ARGL-03: For builtin commands, first arg stays on same line when broken
@@ -1184,7 +1185,7 @@ pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
 }
 
 /// How a nested group should be rendered when collecting logical arguments.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum GroupRendering {
     /// What the argument list itself needs: a group carrying a comment is
     /// emitted verbatim, because folding a line comment onto one line would
@@ -1198,7 +1199,7 @@ enum GroupRendering {
 }
 
 /// The same arguments a closer would be rebuilt from, with groups normalized.
-pub(crate) fn collect_condition_args(arg_list: &ArgumentList) -> Vec<String> {
+fn collect_condition_args(arg_list: &ArgumentList) -> Vec<String> {
     collect_args_with(arg_list, GroupRendering::Normalized)
 }
 
@@ -1284,14 +1285,16 @@ pub(crate) fn render_nested_group(group: &ArgumentList) -> String {
         // by a byte per run and `--check` never goes green. Close it here, on
         // its own line so it stays outside the comment.
         //
-        // Asked of the last token rather than the last character, because the
-        // question is structural: did the parser close this group? No input
-        // separates the two spellings today — a group's verbatim text ends at
-        // its comment, and a `)` written after one (`f((A # c)`) goes to the
-        // enclosing command's argument list, not into this text — so keeping
-        // the structural form is a judgement, not a fix. What the branch itself
-        // guards is real and tested: 45 of 56 unterminated shapes change if it
-        // is removed.
+        // Asked of the last token rather than the last character, and the
+        // difference is the whole fix. In `f((A # c)` with no trailing newline
+        // the group's verbatim text *does* end in `)` — comment text, not an
+        // RPAREN — so testing the character calls the group closed, no `)` is
+        // appended, and the caller's lands inside the comment. The next run
+        // appends another, and the next: one byte per run, for ever.
+        //
+        // A trailing newline hides it, because the group's last token is then
+        // the NEWLINE and both spellings agree. That is why the earlier claim
+        // that nothing separates them was wrong — every shape tried had one.
         let terminated = group
             .syntax()
             .last_token()
