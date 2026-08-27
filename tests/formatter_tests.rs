@@ -2926,3 +2926,178 @@ fn test_a_broken_condition_does_not_reserve_room_for_the_trailing_comment() {
     );
     assert_eq!(result, format_text(&result, &config), "not idempotent");
 }
+
+#[test]
+fn test_a_single_clause_condition_does_reserve_room_for_the_trailing_comment() {
+    // The companion to the test above, and the case it cannot see: with no
+    // AND/OR there is no earlier clause to have broken, so the reserve is still
+    // live at the final word — and it has to be. Declining to reserve would
+    // leave the condition flat, which keeps the `)` attached and puts the whole
+    // 81-column line back. Reserving is the mechanism that moves the `)` and its
+    // comment onto a line of their own, and nothing then overflows.
+    let config = default_config();
+    let result = format_text(
+        &format!("if(NOT AAAA BBBB) # {}\nendif()\n", "c".repeat(61)),
+        &config,
+    );
+    assert!(
+        result.starts_with("if(NOT AAAA\n"),
+        "the final word should be pushed down to free the `)`:\n{}",
+        result
+    );
+    for line in result.lines() {
+        assert!(
+            line.chars().count() <= 80,
+            "line overflows at {} columns:\n{}",
+            line.chars().count(),
+            result
+        );
+    }
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_forced_closer_counts_its_own_trailing_comment() {
+    // A forced closer is rebuilt from its opener, so it has no argument list to
+    // reach a trailing comment through — but the comment still lands on the
+    // closer's line, and the same comment on the same closer *is* counted under
+    // `closing_style = preserve`. Passing 0 let the closer run 15 columns past
+    // the limit while the identical opener wrapped.
+    let mut config = default_config();
+    config.closing_style = ClosingStyle::Force;
+    let condition = format!("{} AND {}", "A".repeat(30), "B".repeat(30));
+    let result = format_text(
+        &format!(
+            "if({condition})\n\tmessage(x)\nendif({condition}) # {}\n",
+            "c".repeat(20)
+        ),
+        &config,
+    );
+    for line in result.lines() {
+        assert!(
+            line.chars().count() <= 80,
+            "the forced closer overflows at {} columns:\n{}",
+            line.chars().count(),
+            result
+        );
+    }
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_multi_line_bracket_comment_after_a_condition_settles() {
+    // The width model and `pretty` have to answer "does this line fit?" with the
+    // same number. `pretty` widths an `RcDoc::text` over the whole string,
+    // newlines included, and the emitter hands it a multi-line bracket comment
+    // as one text node — so measuring only the comment's first line here, true
+    // as that is of the *line*, made the model declare a fit that `pretty` then
+    // refused. The two layouts alternated for ever: pass 2 came back broken,
+    // pass 3 re-joined it, and `--check` rejected the tool's own output after
+    // every write, at 100% default settings with no line over 80 columns in
+    // either state.
+    let config = default_config();
+    let input = format!("if(AAAA BBBB) #[[a\n{}]]\nendif()\n", "b".repeat(62));
+    let once = format_text(&input, &config);
+    let twice = format_text(&once, &config);
+    assert_eq!(
+        once, twice,
+        "the condition layout and the renderer disagree, so this never settles:\n         --- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+        once, twice
+    );
+    assert_eq!(twice, format_text(&twice, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_comment_written_verbatim_is_measured_verbatim() {
+    // The emitter writes anything starting `#[` as it stands — a bracket
+    // comment, or the line comment the lexer makes of a non-bracket `#[`. The
+    // width model normalized it anyway, so under the default `hash_space` it
+    // measured `# [[X]]` for a `#[[X]]` that is written unchanged: one column
+    // too wide, and a line sitting exactly on the limit was broken into three
+    // for ever. Stably, so `--check` never said a word about it.
+    let config = default_config();
+    for comment in ["#[[X]]", "#[X]", "#[=[X]=]"] {
+        // Padded so the line lands on exactly 80 columns, whatever the
+        // comment's spelling costs.
+        let fixed = "if(AAAA AND ) ".len() + comment.len();
+        let input = format!("if(AAAA AND {}) {}\n", "B".repeat(80 - fixed), comment);
+        assert_eq!(
+            input.trim_end().chars().count(),
+            80,
+            "the fixture is meant to sit exactly on the limit: {}",
+            input
+        );
+        assert_eq!(
+            format_text(&input, &config),
+            input,
+            "a line at exactly the limit was wrapped"
+        );
+    }
+}
+
+#[test]
+fn test_a_user_grammar_never_reaches_a_closer_s_condition() {
+    // There are two copies of the "no builtin grammar, and not a control-flow
+    // command" guard: one on the normal path and one on the closer path. Only
+    // the first was pinned. Without the second, a user grammar named after a
+    // closer gets to treat the closer's condition as its own argument list —
+    // and a `SOURCES`-style keyword then *reorders* it.
+    let mut config = default_config();
+    config.closing_style = cmake_fmt::formatter::ClosingStyle::Preserve;
+    config.sort_sources = cmake_fmt::formatter::SortSources::Alphabetical;
+    config.command_grammars.insert(
+        "endif".to_string(),
+        cmake_fmt::formatter::config::CommandGrammarConfig {
+            multi_value_keywords: vec!["SOURCES".to_string()],
+            sortable_keywords: Some(vec!["SOURCES".to_string()]),
+            ..Default::default()
+        },
+    );
+    let input = "if(SOURCES z.cpp a.cpp b.cpp)
+	message(x)
+endif(SOURCES z.cpp a.cpp b.cpp)
+";
+    let result = format_text(input, &config);
+    assert!(
+        result.contains("endif(SOURCES z.cpp a.cpp b.cpp)"),
+        "a user grammar reordered a closer's condition:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_an_unlimited_line_length_never_wraps_a_condition() {
+    // `max_line_length = 0` means unlimited. Without the `limit > 0` half of
+    // `must_wrap`, every condition is "too wide" and the clause layout takes
+    // over unasked.
+    let mut config = default_config();
+    config.max_line_length = 0;
+    let input = format!(
+        "if(AAAA AND {} AND CCCC)\n\tmessage(x)\nendif()\n",
+        "B".repeat(200)
+    );
+    let result = format_text(&input, &config);
+    assert!(
+        result.lines().next().unwrap().ends_with("AND CCCC)"),
+        "an unlimited line was wrapped anyway:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_preserved_closer_with_no_arguments_gets_no_paren_space() {
+    // Under `closing_style = preserve` a closer that wrote nothing has nothing
+    // to space out. Treating it as if it had arguments emitted `endif( )`.
+    let mut config = default_config();
+    config.closing_style = cmake_fmt::formatter::ClosingStyle::Preserve;
+    config.space_between_command_parens = true;
+    let result = format_text("if( A AND B )\n\tmessage( x )\nendif()\n", &config);
+    assert!(
+        result.contains("endif()") && !result.contains("endif( )"),
+        "an empty preserved closer was spaced:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}

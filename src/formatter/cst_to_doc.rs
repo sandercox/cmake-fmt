@@ -460,15 +460,12 @@ fn format_file(
                             if let Some(trailing_comment) =
                                 comments::extract_trailing_comment(&child_node)
                             {
-                                // Normalize line comments (not bracket comments)
-                                let text = if !trailing_comment.starts_with("#[") {
-                                    cmake_rules::normalize_comment_whitespace(
-                                        &trailing_comment,
-                                        config.comment_style,
-                                    )
-                                } else {
-                                    trailing_comment
-                                };
+                                // Shared with `trailing_width_after`, so the
+                                // width model measures this exact string
+                                let text = cmake_rules::render_trailing_comment(
+                                    &trailing_comment,
+                                    config.comment_style,
+                                );
                                 cmd_doc = cmd_doc.append(RcDoc::space()).append(RcDoc::text(text));
                             }
 
@@ -747,15 +744,19 @@ fn format_command(
                             has_comments: false,
                         };
                         let laid_out = if is_condition_command(&name_lower) {
-                            // A reconstructed closer has no argument list to
-                            // read a trailing comment from, and the closer's own
-                            // trailing comment is the caller's to place
+                            // The caller places the closer's trailing comment,
+                            // but it still lands on this line, so it counts
+                            // towards the width — the same comment on the same
+                            // closer is counted under `closing_style = preserve`,
+                            // which reads its arguments through
+                            // `format_argument_list`.
+                            let trailing = trailing_width_after_command(cmd.syntax(), ctx.config);
                             format_condition_args(
                                 &signals,
                                 ctx,
                                 &name_lower,
                                 &closer_ctx.opener_args,
-                                0,
+                                trailing,
                             )
                         } else {
                             None
@@ -994,13 +995,17 @@ fn trailing_width_after(arg_list: &ArgumentList, config: &FormatConfig) -> usize
     let Some(invocation) = arg_list.syntax().parent() else {
         return 0;
     };
+    trailing_width_after_command(&invocation, config)
+}
 
+/// The same, for a command whose arguments are being reconstructed rather than
+/// read — a forced closer has no argument list of its own to reach up from.
+fn trailing_width_after_command(invocation: &SyntaxNode, config: &FormatConfig) -> usize {
     // What the renderer emits, not what the source says. It writes exactly one
-    // space, keeps only the first comment on the line, normalizes the whitespace
-    // after the `#` according to `comment_style`, and drops trailing whitespace
-    // — so measuring the raw tokens measured a line that is never written, and
-    // a condition that fits was wrapped for ever while one that does not was
-    // left to overflow.
+    // space, keeps only the first comment on the line, and normalizes the
+    // whitespace after the `#` according to `comment_style` — so measuring the
+    // raw tokens measured a line that is never written, and a condition that
+    // fits was wrapped for ever while one that does not was left to overflow.
     let mut next = invocation.next_sibling_or_token();
     while let Some(sibling) = next {
         match sibling.kind() {
@@ -1010,16 +1015,27 @@ fn trailing_width_after(arg_list: &ArgumentList, config: &FormatConfig) -> usize
                     return 0;
                 };
                 let rendered =
-                    cmake_rules::normalize_comment_whitespace(token.text(), config.comment_style);
-                // A bracket comment can span lines; only its first one shares
-                // this line
-                let first_line = rendered.split('\n').next().unwrap_or(&rendered);
-                // Not trimmed: trailing whitespace is stripped after the
-                // renderer has already decided where to break, so `pretty`
-                // measures it and this has to as well. Trimming it here made the
-                // model declare a fit the renderer then refused, and the generic
-                // one-argument-per-line layout is what got written.
-                return 1 + display_width(first_line);
+                    cmake_rules::render_trailing_comment(token.text(), config.comment_style);
+                // Measured whole, exactly as `pretty` measures it. Two things
+                // here are wrong about the *line* and right about the model, and
+                // they have to stay that way while the emitter pushes a comment
+                // as a single `text` node:
+                //
+                // - A multi-line bracket comment: only its first line really
+                //   shares this line, but `pretty` widths the whole string,
+                //   newlines included. Truncating to the first line made the
+                //   model declare a fit that `pretty` refused, and the two
+                //   layouts alternated — a permanent 2-cycle at default
+                //   settings, `--check` failing after every write.
+                // - Trailing whitespace: stripped only after the renderer has
+                //   chosen its breaks, so `pretty` sees it and so must this.
+                //
+                // The cost is a comment whose tail pushes its condition over
+                // the limit and wraps it needlessly. Fixing that means emitting
+                // the tail as its own lines, which is the emitter's decision to
+                // make, not the model's — until then they agree, and agreement
+                // is what keeps the output stable.
+                return 1 + display_width(&rendered);
             }
             // A newline, or anything that starts a new construct, ends the line
             _ => break,
@@ -1163,7 +1179,9 @@ fn format_condition_args(
             // Once the condition has broken, the `)` and whatever follows it go
             // on their own line, so reserving room for the trailing text pushed
             // the last word down for nothing.
-            let still_one_line = lines.is_empty() && first_line.is_none();
+            // Clause 0 sets `first_line` before anything can reach `lines`, so
+            // this is the whole test for "nothing has been emitted yet".
+            let still_one_line = first_line.is_none();
             let reserved = if is_final {
                 if still_one_line {
                     closing_width

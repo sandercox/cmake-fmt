@@ -27,6 +27,22 @@ fn is_source_file(name: &str) -> bool {
         .is_some_and(|ext| SOURCE_EXTS.contains(&ext))
 }
 
+/// Render a comment the way the emitter writes it after a command.
+///
+/// Anything starting `#[` — a bracket comment, or a line comment the lexer
+/// produced from a non-bracket `#[` — is written verbatim; everything else has
+/// the whitespace after its `#` normalized. The width model has to call this
+/// too: normalizing unconditionally made it measure `# [[X]]` for a `#[[X]]`
+/// that is written as-is, one column wider than the truth, and a line at
+/// exactly the limit was wrapped for ever.
+pub fn render_trailing_comment(comment: &str, style: super::config::CommentStyle) -> String {
+    if comment.starts_with("#[") {
+        comment.to_string()
+    } else {
+        normalize_comment_whitespace(comment, style)
+    }
+}
+
 /// Normalize whitespace in line comments according to the specified style.
 /// Only affects line comments (not bracket comments).
 /// Multi-hash comments (##, ###, etc.) are always preserved as-is.
