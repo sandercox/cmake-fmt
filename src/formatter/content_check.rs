@@ -209,8 +209,12 @@ pub(crate) struct StyleOverrides {
 
 impl StyleOverrides {
     /// Read every style directive in the file, whether or not the formatter
-    /// reached it — a directive applies from where it appears, and widening for
-    /// one that turns out to be unreachable costs only strictness.
+    /// reached it — a directive applies from where it appears, and there is no
+    /// way to know from here which ones the formatter will reach. The cost is
+    /// looseness, not strictness: a `sort_sources=alphabetical` directive
+    /// inside a `# cmake-fmt: off` region opens that exemption for the whole
+    /// file. Deliberate, and the direction to err in — the alternative refuses
+    /// files the formatter wrote correctly.
     ///
     /// Each directive is applied to a copy of the config through the same
     /// `apply_override` the formatter uses, and the *result* is inspected. Doing
@@ -795,31 +799,90 @@ pub(crate) fn check(
     // It also accepts the CRLF pass, which runs after formatting as a blanket
     // replacement and so rewrites newlines inside a bracket argument or bracket
     // comment as well as between lines.
-    let input = input.replace('\r', "");
-    let output = output.replace('\r', "");
+    let input = strip_carriage_returns(input);
+    let output = strip_carriage_returns(output);
 
-    // The input is what carries the directives; the output should carry the same
-    // ones, but reading them from the input is what makes a dropped directive a
-    // difference rather than a silent widening.
     // Nothing to compare when nothing changed, and `--check` over an
     // already-formatted tree is the common case
     if input == output {
         return None;
     }
 
-    let input_cst = parse_text(&input);
-    let overrides = StyleOverrides::read(&input_cst, config);
+    compare(&input, &output, config, grammars)
+}
+
+/// The same, for a caller that has already parsed what the formatter parsed.
+///
+/// `input` must be `\r`-stripped and `input_cst` must be its parse — the
+/// formatter's own `parse_input` and `cst`. Get that wrong and the two sides are
+/// read from different texts. It saves the third parse of a file that changed,
+/// which is where this check costs anything at all.
+pub(crate) fn check_parsed(
+    input_cst: &CSTRoot,
+    input: &str,
+    output: &str,
+    config: &FormatConfig,
+    grammars: &UserGrammars,
+) -> Option<Difference> {
+    debug_assert!(
+        !input.contains('\r'),
+        "check_parsed takes the text the caller parsed, which is \\r-stripped"
+    );
+    let output = strip_carriage_returns(output);
+    if input == output {
+        return None;
+    }
+    compare_parsed(input_cst, input, &output, config, grammars)
+}
+
+/// `\r`-stripped, and borrowed when there was nothing to strip — this runs over
+/// every formatted file, and two whole-file copies to find no `\r` was the
+/// measured cost of the guard on an already-formatted tree.
+fn strip_carriage_returns(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains('\r') {
+        std::borrow::Cow::Owned(text.replace('\r', ""))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
+/// The comparison itself, on text the caller has already canonicalized.
+///
+/// Split out from `check` so a test can reach it with `input == output`: the
+/// short-circuit above is an optimization, and with the comparison behind it the
+/// reflexivity property — comparing a text against itself never fires — was
+/// asserted of a `return None` rather than of the code it is meant to hold for.
+fn compare(
+    input: &str,
+    output: &str,
+    config: &FormatConfig,
+    grammars: &UserGrammars,
+) -> Option<Difference> {
+    compare_parsed(&parse_text(input), input, output, config, grammars)
+}
+
+fn compare_parsed(
+    input_cst: &CSTRoot,
+    input: &str,
+    output: &str,
+    config: &FormatConfig,
+    grammars: &UserGrammars,
+) -> Option<Difference> {
+    // The input is what carries the directives; the output should carry the same
+    // ones, but reading them from the input is what makes a dropped directive a
+    // difference rather than a silent widening.
+    let overrides = StyleOverrides::read(input_cst, config);
 
     Content::from_cst(
-        &input_cst,
+        input_cst,
         &Rules::new(config, &overrides, grammars, Side::Input),
     )
     .diff(
         &Content::from_cst(
-            &parse_text(&output),
+            &parse_text(output),
             &Rules::new(config, &overrides, grammars, Side::Output),
         ),
-        &input,
+        input,
     )
 }
 
@@ -944,6 +1007,68 @@ mod tests {
             "if(A)\nendblock(A)\nendif(A)\n",
             &config
         ));
+        // The opener half of the same desync: `block` is not a block opener for
+        // the formatter, so it pushes no frame — and a closer after it must be
+        // offered the enclosing opener's arguments, not the `block`'s. Adding
+        // `block` to this side's list is exactly the drift the test is for, and
+        // only an opener can show it.
+        assert!(accepts(
+            "block(PROPAGATE x)\nendif()\n",
+            "block(PROPAGATE x)\nendif()\n",
+            &config
+        ));
+        assert!(!accepts(
+            "block(PROPAGATE x)\nendif()\n",
+            "block(PROPAGATE x)\nendif(PROPAGATE x)\n",
+            &config
+        ));
+        assert!(accepts(
+            "if(A)\nblock(PROPAGATE x)\nendif()\n",
+            "if(A)\nblock(PROPAGATE x)\nendif(A)\n",
+            &config
+        ));
+    }
+
+    #[test]
+    fn test_reordering_never_crosses_a_barrier() {
+        // Sorting is allowed inside a run of ordinary arguments and nowhere
+        // else: an argument whose value is unknown at format time holds its
+        // index, and the arguments on either side of it are separate runs.
+        // Comparing the whole section as one sorted run accepts a file whose
+        // arguments crossed one, which changes what it says.
+        let config = FormatConfig {
+            sort_sources: SortSources::Alphabetical,
+            ..Default::default()
+        };
+        // Sorting within a run is fine
+        assert!(accepts(
+            "set(SRCS b.cpp a.cpp ${V} d.cpp c.cpp)\n",
+            "set(SRCS a.cpp b.cpp ${V} c.cpp d.cpp)\n",
+            &config
+        ));
+        // Crossing the barrier is not
+        assert!(!accepts(
+            "set(SRCS a.cpp ${V} b.cpp)\n",
+            "set(SRCS b.cpp ${V} a.cpp)\n",
+            &config
+        ));
+        // Nor is moving the barrier itself
+        assert!(!accepts(
+            "set(SRCS a.cpp ${V} b.cpp)\n",
+            "set(SRCS ${V} a.cpp b.cpp)\n",
+            &config
+        ));
+        // A generator expression and an environment reference bound runs too
+        assert!(!accepts(
+            "set(SRCS a.cpp $<TARGET_OBJECTS:o> b.cpp)\n",
+            "set(SRCS b.cpp $<TARGET_OBJECTS:o> a.cpp)\n",
+            &config
+        ));
+        assert!(!accepts(
+            "set(SRCS a.cpp $ENV{E} b.cpp)\n",
+            "set(SRCS b.cpp $ENV{E} a.cpp)\n",
+            &config
+        ));
     }
 
     #[test]
@@ -989,6 +1114,20 @@ mod tests {
             "# cmake-fmt: closing_style=remove\nif(A)\nendif()\n",
             &config
         ));
+        // ...and again against a config that does *not* already remove closers.
+        // `FormatConfig::default()` has `closing_style = Remove`, so the
+        // assertion above holds whether the directive is read or not — the same
+        // trap the casing case below sidesteps with `preserving`.
+        let keeping = FormatConfig {
+            closing_style: ClosingStyle::Preserve,
+            ..Default::default()
+        };
+        assert!(accepts(
+            "# cmake-fmt: closing_style=remove\nif(A)\nendif(A)\n",
+            "# cmake-fmt: closing_style=remove\nif(A)\nendif()\n",
+            &keeping
+        ));
+        assert!(!accepts("if(A)\nendif(A)\n", "if(A)\nendif()\n", &keeping));
         // With both casing settings preserving, only the directive can license
         // a re-casing — the default config already folds case, so asserting it
         // there would prove nothing
@@ -1215,17 +1354,81 @@ mod tests {
                         source_grouping,
                         ..Default::default()
                     };
+                    // `compare`, not `check`: `check` returns early when the
+                    // two texts are equal, so asserting this through it
+                    // asserted a `return None` — the property passed for any
+                    // implementation of the comparison it is about.
                     assert!(
-                        accepts(source, source, &config),
+                        compare(source, source, &config, &UserGrammars::new()).is_none(),
                         "comparing {:?} against itself fired under {:?}/{:?}/{:?}",
                         source,
                         closing_style,
                         sort_sources,
                         source_grouping
                     );
+                    // And through `check` as well, so the short-circuit itself
+                    // stays covered.
+                    assert!(accepts(source, source, &config));
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_handing_over_a_parse_gives_the_same_answer_as_parsing_again() {
+        // The formatter passes the CST it already built, which saves the third
+        // parse of a changed file. The two entry points have to agree, and the
+        // handover carries an invariant the compiler cannot check: the text and
+        // the tree must be the same `\r`-stripped text.
+        let cases = [
+            ("set(A b)\n", "set(A b)\n"),
+            ("set(  A   b)\n", "set(A b)\n"),
+            ("set(A b)\n", "set(A c)\n"),
+            ("set(A b)\n", "unset(A b)\n"),
+            ("if(A)\nendif(A)\n", "if(A)\nendif()\n"),
+            ("set(SRCS b.cpp a.cpp)\n", "set(SRCS a.cpp b.cpp)\n"),
+            (
+                "# cmake-fmt: off\nset(  A b)\n",
+                "# cmake-fmt: off\nset(A b)\n",
+            ),
+            ("", "set(A b)\n"),
+            ("set(A b)\n", ""),
+        ];
+        for closing_style in [ClosingStyle::Preserve, ClosingStyle::Remove] {
+            for sort_sources in [SortSources::None, SortSources::Alphabetical] {
+                let config = FormatConfig {
+                    closing_style,
+                    sort_sources,
+                    ..Default::default()
+                };
+                for (input, output) in cases {
+                    let grammars = UserGrammars::new();
+                    let parsed =
+                        check_parsed(&parse_text(input), input, output, &config, &grammars)
+                            .map(|d| d.summary);
+                    let fresh = check(input, output, &config, &grammars).map(|d| d.summary);
+                    assert_eq!(
+                        parsed, fresh,
+                        "the two entry points disagree about {:?} -> {:?}",
+                        input, output
+                    );
+                }
+            }
+        }
+        // A CRLF output against the stripped input the formatter parsed: the
+        // caller's side of the invariant, which is what the main path does.
+        let config = FormatConfig::default();
+        assert!(
+            check_parsed(
+                &parse_text("set(A b)\n"),
+                "set(A b)\n",
+                "set(A b)\r\n",
+                &config,
+                &UserGrammars::new()
+            )
+            .is_none(),
+            "applying CRLF is not a difference"
+        );
     }
 
     #[test]
