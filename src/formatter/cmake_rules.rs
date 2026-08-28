@@ -36,11 +36,20 @@ fn is_source_file(name: &str) -> bool {
 /// that is written as-is, one column wider than the truth, and a line at
 /// exactly the limit was wrapped for ever.
 pub fn render_trailing_comment(comment: &str, style: super::config::CommentStyle) -> String {
-    if comment.starts_with("#[") {
+    let rendered = if comment.starts_with("#[") {
         comment.to_string()
     } else {
         normalize_comment_whitespace(comment, style)
-    }
+    };
+    // Trimmed here, at the one site all three readers share, so that none of
+    // them measures bytes the file will not contain. `post_process_rendered_output`
+    // strips trailing whitespace from every line *after* the renderer has chosen
+    // its breaks, so counting it — which both the width model and `pretty` did —
+    // decided the layout against a line that is never written. One stray space
+    // after a single-clause condition's comment was enough: the layout broke it,
+    // the strip made the result fit, the next pass joined it again, and `--check`
+    // rejected the tool's own output for ever.
+    rendered.trim_end().to_string()
 }
 
 /// Normalize whitespace in line comments according to the specified style.

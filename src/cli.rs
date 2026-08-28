@@ -165,6 +165,27 @@ fn print_style_help() {
     );
     println!(
         "  {:<25} {:<15} {:<15} {}",
+        "space_between_command_parens",
+        "boolean",
+        "false",
+        "true, false — `set( A b )` rather than `set(A b)`"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "control_flow_space_before_paren",
+        "boolean",
+        "false",
+        "true, false — `if (A)` rather than `if(A)`"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "indent_closing_paren",
+        "boolean",
+        "false",
+        "true, false — indent a `)` that sits on its own line"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
         "collapse_empty_flags",
         "boolean",
         "true",

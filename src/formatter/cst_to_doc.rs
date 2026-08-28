@@ -164,6 +164,15 @@ fn format_file(
 
     let mut docs = Vec::new();
     let mut batch_strings = Vec::new();
+    // The width every doc in `docs` was laid out for. `render_batch` is called
+    // once at the end, so it used to render everything at whatever
+    // `max_line_length` the *last* directive in the file had set — while
+    // `format_condition_args` had already decided using the value in force where
+    // its command sat. A `# cmake-fmt: max_line_length=40` after a block made
+    // the two disagree by 40 columns: the layout declined, `pretty` broke, and
+    // the next pass swapped them back. Flushing on change keeps each doc
+    // rendered at the width it was measured against.
+    let mut batch_width = config.max_line_length;
     let mut current_indent: usize = 0;
     let mut blank_line_count = 0;
     let mut scope_stack: Vec<ScopeFrame> = Vec::new();
@@ -220,6 +229,15 @@ fn format_file(
                                     super::suppression::Directive::Style { key, value } => {
                                         if let Err(msg) = config.apply_override(key, value) {
                                             eprintln!("Warning: {}", msg);
+                                        }
+                                        if config.max_line_length != batch_width {
+                                            if !docs.is_empty() {
+                                                batch_strings.push(render_batch(
+                                                    std::mem::take(&mut docs),
+                                                    batch_width,
+                                                ));
+                                            }
+                                            batch_width = config.max_line_length;
                                         }
                                     }
                                     _ => {
@@ -328,15 +346,19 @@ fn format_file(
                             if let Some(trailing_comment) =
                                 comments::extract_trailing_comment(&child_node)
                             {
-                                // Normalize line comments, but not when suppressed
-                                let text = if !is_suppressed && !trailing_comment.starts_with("#[")
-                                {
-                                    cmake_rules::normalize_comment_whitespace(
+                                // The same renderer the other two sites use, so
+                                // a change to it cannot miss this one — four
+                                // rounds of findings were all one duplicated
+                                // normalization drifting from another. A
+                                // suppressed command is emitted verbatim, so it
+                                // keeps its comment as written.
+                                let text = if is_suppressed {
+                                    trailing_comment
+                                } else {
+                                    cmake_rules::render_trailing_comment(
                                         &trailing_comment,
                                         config.comment_style,
                                     )
-                                } else {
-                                    trailing_comment
                                 };
                                 raw_doc = raw_doc.append(RcDoc::space()).append(RcDoc::text(text));
                             }
@@ -474,8 +496,7 @@ fn format_file(
 
                             // Check if we should render a batch to prevent deep nesting
                             if docs.len() >= BATCH_SIZE {
-                                let batch =
-                                    render_batch(std::mem::take(&mut docs), config.max_line_length);
+                                let batch = render_batch(std::mem::take(&mut docs), batch_width);
                                 batch_strings.push(batch);
                             }
 
@@ -543,6 +564,15 @@ fn format_file(
                                         if let Err(msg) = config.apply_override(key, value) {
                                             eprintln!("Warning: {}", msg);
                                         }
+                                        if config.max_line_length != batch_width {
+                                            if !docs.is_empty() {
+                                                batch_strings.push(render_batch(
+                                                    std::mem::take(&mut docs),
+                                                    batch_width,
+                                                ));
+                                            }
+                                            batch_width = config.max_line_length;
+                                        }
                                     }
                                     _ => {
                                         // Only pass suppression directives to the tracker
@@ -601,7 +631,7 @@ fn format_file(
 
     // Render any remaining docs in the final batch
     if !docs.is_empty() {
-        let batch = render_batch(docs, config.max_line_length);
+        let batch = render_batch(docs, batch_width);
         batch_strings.push(batch);
     }
 
@@ -1061,8 +1091,12 @@ fn trailing_width_after_command(invocation: &SyntaxNode, config: &FormatConfig) 
 /// one level deeper, so it still reads as a single clause.
 ///
 /// Applies whenever the condition would occupy more than one line — it either
-/// doesn't fit, or the author already broke it. It may still collapse the result
-/// onto one line, if that is what fits. Returns `None` when the generic layout
+/// doesn't fit, or the author already broke it. A *single-clause* condition may
+/// still collapse back onto one line, if that is what fits; with two or more
+/// clauses it cannot, because every clause after the first takes its own line
+/// unconditionally — which is what
+/// `test_hand_wrapped_short_condition_uses_clause_layout` asserts. Returns
+/// `None` when the generic layout
 /// should stay in charge: a condition that fits on one line and was written that
 /// way, one with fewer than two arguments, or one carrying comments, which have
 /// to keep their own lines. A blank line inside a condition is not preserved.

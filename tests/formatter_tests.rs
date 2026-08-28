@@ -2872,11 +2872,13 @@ fn test_the_trailing_comment_is_measured_as_it_will_be_written() {
         "not idempotent"
     );
 
-    // Each of the renderer's rewrites has to be counted. `#x` gains a space
-    // after the hash, and trailing whitespace is stripped only *after* the
-    // renderer has decided where to break — so it counts toward the line even
-    // though it never reaches the file. Getting either wrong makes the layout
-    // decline and the generic one-argument-per-line shape get written.
+    // Each of the renderer's rewrites has to be counted, and only those. `#x`
+    // gains a space after the hash, so it is one column wider than the source
+    // says. Trailing whitespace goes the other way: it never reaches the file,
+    // so counting it — which this test used to require — decided the layout
+    // against a line that is never written, which is the mistake the paragraph
+    // above describes. It cost the fixed point: the layout broke the condition,
+    // the strip made the result fit, and the next pass joined it again.
     let result = format_text(
         &format!(
             "if(AA AND BBBB) #{}   \n\tmessage(x)\nendif()\n",
@@ -2884,12 +2886,52 @@ fn test_the_trailing_comment_is_measured_as_it_will_be_written() {
         ),
         &config,
     );
+    assert_eq!(
+        result.lines().next().unwrap().chars().count(),
+        78,
+        "78 columns once the three spaces are gone, so it stays flat:\n{}",
+        result
+    );
     assert!(
-        result.contains("\tAND BBBB\n"),
-        "the clause layout gave way to the generic one:\n{}",
+        !result.contains("\tAND BBBB\n"),
+        "a line that fits was wrapped for whitespace the file will not hold:\n{}",
         result
     );
     assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // The shape that lost its fixed point: a single clause, so the layout can
+    // collapse back, and a comment ending in whitespace, so the two forms
+    // disagree about the width. Every spelling of the whitespace, and both the
+    // wrapped and the flat starting point, have to settle.
+    for trailer in [" ", "   ", "\t", " \t "] {
+        for start in [
+            format!(
+                "if(NOT AAAA {}) # c{}\n\tmessage(x)\nendif()\n",
+                "P".repeat(63),
+                trailer
+            ),
+            format!(
+                "if(NOT AAAA\n\t{}\n) # c{}\n\tmessage(x)\nendif()\n",
+                "P".repeat(63),
+                trailer
+            ),
+        ] {
+            let once = format_text(&start, &config);
+            let twice = format_text(&once, &config);
+            assert_eq!(
+                once, twice,
+                "a comment ending in {:?} never settles:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+                trailer, once, twice
+            );
+            assert!(
+                !once
+                    .lines()
+                    .any(|line| line.ends_with(' ') || line.ends_with('\t')),
+                "trailing whitespace reached the file:\n{}",
+                once
+            );
+        }
+    }
 
     // `#x` gains a space, so it is one column wider than the source says
     let tight = format_text(
@@ -3064,6 +3106,69 @@ endif(SOURCES z.cpp a.cpp b.cpp)
         result
     );
     assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_width_directive_applies_from_where_it_appears() {
+    // The docs for a whole file were rendered in one batch, at whatever
+    // `max_line_length` the *last* directive had set — while the clause layout
+    // had already decided using the value in force where its command sat. A
+    // `# cmake-fmt: max_line_length=40` after a block put the two 40 columns
+    // apart: the layout declined, `pretty` broke, and the next pass swapped them
+    // back, so `--check` rejected the tool's own output for ever.
+    //
+    // The batch is flushed when the width changes, which also makes the setting
+    // positional like every other directive rather than retroactive.
+    let plain = default_config();
+    let block = "if(AAAAAAAAAAAAAAAAAAAA AND BBBBBBBBBBBBBBBBBBBB)\n\tmessage(x)\nendif()\n";
+
+    for directive in [
+        "# cmake-fmt: max_line_length=40",
+        "# cmake-fmt: max_line_length=0",
+        "# cmake-fmt: max_line_length=200",
+    ] {
+        // After the block: too late to reach it, and a fixed point either way
+        let after = format!("{block}{directive}\n");
+        let once = format_text(&after, &plain);
+        assert_eq!(
+            once,
+            format_text(&once, &plain),
+            "a width directive after the block never settles:\n{}",
+            once
+        );
+        assert!(
+            once.starts_with("if(AAAAAAAAAAAAAAAAAAAA AND BBBBBBBBBBBBBBBBBBBB)"),
+            "a directive after the block reached back into it:\n{}",
+            once
+        );
+
+        // Before it: applies, and settles
+        let before = format!("{directive}\n{block}");
+        let once = format_text(&before, &plain);
+        assert_eq!(
+            once,
+            format_text(&once, &plain),
+            "a width directive before the block never settles:\n{}",
+            once
+        );
+    }
+
+    // Two blocks either side of one directive: each laid out at its own width
+    let both = format!(
+        "{block}# cmake-fmt: max_line_length=40\nif(CCCCCCCCCCCCCCCCCCCC AND DDDDDDDDDDDDDDDDDDDD)\n\tmessage(y)\nendif()\n"
+    );
+    let once = format_text(&both, &plain);
+    assert!(
+        once.contains("if(AAAAAAAAAAAAAAAAAAAA AND BBBBBBBBBBBBBBBBBBBB)"),
+        "the block before the directive was re-laid out at the new width:\n{}",
+        once
+    );
+    assert!(
+        once.contains("if(CCCCCCCCCCCCCCCCCCCC\n"),
+        "the block after the directive ignored the new width:\n{}",
+        once
+    );
+    assert_eq!(once, format_text(&once, &plain), "not idempotent");
 }
 
 #[test]
