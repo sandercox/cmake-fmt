@@ -3787,6 +3787,162 @@ fn test_a_valueless_keyword_keeps_its_comments_in_every_arm() {
 }
 
 #[test]
+fn test_a_valueless_keywords_comment_sits_at_the_keywords_indent() {
+    // The whole point of moving these to `keyword_indent`: there are no values
+    // for the comment to sit under. Three arms used `value_indent`, so the same
+    // construct came out one tab in from one command and two from another.
+    //
+    // The sibling test asserts the comment survives and no code is swallowed —
+    // which every wrong indent, and even gluing the comment onto the keyword's
+    // own line, satisfies. Exact output is the only thing that sees it.
+    let config = FormatConfig::default();
+    let inline = FormatConfig {
+        inline_single_keyword: true,
+        ..Default::default()
+    };
+    for (input, expected, cfg) in [
+        // MultiValue
+        (
+            "target_sources(t\n\tPRIVATE # note\n)\n",
+            "target_sources(t\n\tPRIVATE\n\t# note\n)\n",
+            &config,
+        ),
+        // PairValue
+        (
+            "set_target_properties(t\n\tPROPERTIES # note\n)\n",
+            "set_target_properties(t\n\tPROPERTIES\n\t# note\n)\n",
+            &config,
+        ),
+        // BinPack
+        (
+            "add_custom_command(TARGET t POST_BUILD\n\tCOMMAND # note\n)\n",
+            "add_custom_command(\n\tTARGET t\n\tPOST_BUILD\n\tCOMMAND\n\t# note\n)\n",
+            &config,
+        ),
+        // Flag
+        (
+            "find_package(Foo REQUIRED\n\t# note\n)\n",
+            "find_package(Foo REQUIRED\n\t# note\n)\n",
+            &config,
+        ),
+        // the inline_single_keyword twin
+        (
+            "target_sources(t\n\tPRIVATE # note\n)\n",
+            "target_sources(t PRIVATE\n\t# note\n)\n",
+            &inline,
+        ),
+    ] {
+        let result = format_text(input, cfg);
+        assert_eq!(
+            result, expected,
+            "the comment of a valueless keyword is not at the keyword's indent"
+        );
+        assert_eq!(result, format_text(&result, cfg), "not idempotent");
+    }
+}
+
+#[test]
+fn test_a_comment_does_not_move_a_mode_keyword_off_its_line() {
+    // The `SingleValue` shortcut keeps a multi-mode command's mode keyword and
+    // its value on the opening line — `list(APPEND V …)`. A comment used to
+    // demote the whole section into the catch-all arm, which puts the keyword on
+    // its own line and its value one level deeper than the elements that follow:
+    //
+    //     list(            <- APPEND left the line
+    //     \tAPPEND
+    //     \t\tV            <- and its value is deeper than a.cpp
+    //     \t\t# note
+    //     \ta.cpp
+    //     )
+    //
+    // 68 of 345 mode/style shapes did that. The comments are emitted after the
+    // value now, so the arm renders one shape with them or without.
+    let config = FormatConfig::default();
+    for (command, mode) in [
+        ("list", "APPEND"),
+        ("list", "PREPEND"),
+        ("list", "REMOVE_ITEM"),
+        ("file", "GLOB"),
+        ("file", "WRITE"),
+        ("install", "SCRIPT"),
+        ("install", "CODE"),
+        ("file", "READ"),
+        // `string(REGEX …)` and `define_property(TEST …)` are not this arm:
+        // their mode keyword is a Flag, so they go through the Flag arm, which
+        // has always honoured `first_keyword_inline`.
+    ] {
+        for body in ["\t# note\n\ta.cpp\n", "\ta.cpp\n\t# note\n"] {
+            let input = format!("{command}({mode} V\n{body})\n");
+            let result = format_text(&input, &config);
+            assert!(
+                result.starts_with(&format!("{command}({mode} V")),
+                "the mode keyword left its line:\n{}",
+                result
+            );
+            assert!(
+                result.contains("# note"),
+                "the comment was dropped:\n{}",
+                result
+            );
+            for token in ["V", "a.cpp"] {
+                assert!(
+                    appears_as_code(&result, token),
+                    "{} was swallowed by the comment:\n{}",
+                    token,
+                    result
+                );
+            }
+            assert_eq!(result, format_text(&result, &config), "not idempotent");
+        }
+    }
+}
+
+#[test]
+fn test_sorting_a_run_past_a_comment_still_reaches_a_fixed_point() {
+    // The parser gives a comment written after a `SingleValue` keyword's one
+    // value to *that* section, while a `list(APPEND V …)` run's elements live in
+    // the following keyword-less section. So sorting the run to put the
+    // commented element first moved the comment into that slot, and the *next*
+    // pass laid the whole command out differently — `--check` rejecting freshly
+    // formatted output. 12 of 345 shapes; the layout no longer depends on
+    // whether the section carries a comment.
+    for config in [
+        FormatConfig {
+            sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+            ..Default::default()
+        },
+        FormatConfig {
+            source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+            ..Default::default()
+        },
+        FormatConfig {
+            sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+            source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+            ..Default::default()
+        },
+    ] {
+        for input in [
+            "list(APPEND V\n\tz.cpp\n\t# note\n\ta.cpp\n)\n",
+            "list(PREPEND V\n\tz.cpp\n\t# note\n\ta.cpp\n)\n",
+            "list(APPEND V\n\tb.cpp\n\t# note\n\tb.h\n)\n",
+        ] {
+            let once = format_text(input, &config);
+            let twice = format_text(&once, &config);
+            assert_eq!(
+                once, twice,
+                "sorting past a comment never settles:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+                once, twice
+            );
+            assert!(
+                once.contains("# note"),
+                "the comment was dropped:\n{}",
+                once
+            );
+        }
+    }
+}
+
+#[test]
 fn test_a_multi_mode_commands_first_flag_keeps_its_comment() {
     // The `SingleValue` arm collapses a multi-mode command's mode keyword onto
     // the following keyword — `define_property(TEST PROPERTY foo)` — and its

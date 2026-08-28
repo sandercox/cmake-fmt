@@ -1139,3 +1139,70 @@ fn test_grouping_leaves_a_section_with_a_trailing_comment_alone() {
         "a section carrying a trailing comment should be left alone entirely"
     );
 }
+
+#[test]
+fn test_sorting_moves_a_trailing_comment_with_its_argument() {
+    // `sort_source_args` rebuilds the trailing-comment indices alongside the
+    // arguments it permutes. Dropping that rebuild left the whole suite green
+    // while every trailing comment in a sorted list was deleted — silent content
+    // loss, which is the family six rounds of review were about. The nearest
+    // existing test sets `sort_sources: None`, so it never enters this function.
+    let config = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        ..Default::default()
+    };
+    for (input, expected) in [
+        (
+            "set(SRCS\n\tb.cpp # bee\n\ta.cpp # ay\n)\n",
+            "set(SRCS\n\ta.cpp # ay\n\tb.cpp # bee\n)\n",
+        ),
+        (
+            "add_library(l STATIC\n\tz.cpp # zed\n\ta.cpp # ay\n)\n",
+            "add_library(l STATIC\n\ta.cpp # ay\n\tz.cpp # zed\n)\n",
+        ),
+        (
+            "target_sources(t PRIVATE\n\tc.cpp # see\n\tb.cpp\n\ta.cpp # ay\n)\n",
+            "target_sources(t\n\tPRIVATE\n\t\ta.cpp # ay\n\t\tb.cpp\n\t\tc.cpp # see\n)\n",
+        ),
+    ] {
+        let result = format_text(input, &config);
+        assert_eq!(
+            result, expected,
+            "a trailing comment did not move with its argument"
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+
+    // A barrier splits the run, and each side sorts independently, so a comment
+    // has to stay with its argument across the split too
+    let result = format_text(
+        "set(SRCS\n\tz.cpp # zed\n\t${V} # var\n\tb.cpp # bee\n\ta.cpp # ay\n)\n",
+        &config,
+    );
+    assert_eq!(
+        result, "set(SRCS\n\tz.cpp # zed\n\t${V} # var\n\ta.cpp # ay\n\tb.cpp # bee\n)\n",
+        "a comment did not stay with its argument across a barrier"
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // The arguments *before* the sortable range — the list variable, a target
+    // name — are rebuilt by a second path with its own comment loop, which none
+    // of the cases above reach.
+    for (input, expected) in [
+        (
+            "set(SRCS # the list\n\tz.cpp # zed\n\ta.cpp # ay\n)\n",
+            "set(SRCS # the list\n\ta.cpp # ay\n\tz.cpp # zed\n)\n",
+        ),
+        (
+            "add_library(l # target\n\tSTATIC\n\tz.cpp # zed\n\ta.cpp # ay\n)\n",
+            "add_library(l # target\n\tSTATIC\n\ta.cpp # ay\n\tz.cpp # zed\n)\n",
+        ),
+    ] {
+        let result = format_text(input, &config);
+        assert_eq!(
+            result, expected,
+            "a pinned argument's trailing comment was lost"
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}

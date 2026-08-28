@@ -422,8 +422,19 @@ command_grammars:
 ```
 
 Use `sortable_positional: true` for a command whose keyword-less arguments are a
-file list. To skip one command, put `# cmake-fmt: no-sort` on the line before it;
-that suppresses both reordering passes.
+file list. It reaches the *leading* run only — the arguments before the first
+keyword — and the first of them is always pinned, because in every command that
+has one it names the list or the target rather than belonging to it. So
+`my_cmd(x.cpp z.cpp a.cpp)` sorts to `x.cpp a.cpp z.cpp`, a two-element list
+never reorders, and a run that follows a keyword is left alone. (Builtins reach
+a run after a flag as well, because their grammars name those flags; a
+`sortable_positional` grammar cannot yet say the same, and it cannot say that
+its first positional is a *target* rather than the list — so a wrapper around
+`add_library` holds where `add_library` itself would sort, which is the safe
+direction to be wrong in.)
+
+To skip one command, put `# cmake-fmt: no-sort` on the line before it; that
+suppresses both reordering passes.
 
 #### `source_grouping`
 

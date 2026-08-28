@@ -149,7 +149,7 @@ fn print_style_help() {
     );
     println!(
         "  {:<25} {:<15} {:<15} {}",
-        "final_newline", "enum", "force", "preserve, remove, force (also accepts true/false)"
+        "final_newline", "enum", "preserve", "preserve, remove, force (also accepts true/false)"
     );
     println!(
         "  {:<25} {:<15} {:<15} {}",
@@ -241,7 +241,9 @@ fn print_grammar_help() {
     println!("Reordering:");
     println!("  sort_sources and source_grouping only reorder keywords listed in");
     println!("  'sortable_keywords', plus the keyword-less arguments when");
-    println!("  'sortable_positional: true'. Argument order usually carries");
+    println!("  'sortable_positional: true' — which reaches the leading run only,");
+    println!("  pins its first argument, and does not reach a run after a keyword.");
+    println!("  Argument order usually carries");
     println!("  meaning, so nothing is sortable until something says it is.");
     println!("  In a grammar file that is the whole rule: a keyword is sortable");
     println!("  only if it is listed, and there is no fallback. A .cmake-fmt");
@@ -253,8 +255,13 @@ fn print_grammar_help() {
     println!("  source file, so flag and library lists are left alone.");
     println!();
     println!("Multi-mode commands:");
+    println!("  NOT YET SUPPORTED ON IMPORT. --export-all-grammar writes these entries,");
+    println!("  and --grammar-file skips every one of them with a warning, so the export");
+    println!("  does not round-trip. The shape is documented because that is what the");
+    println!("  export writes:");
+    println!();
     println!("  For commands like install() that have different keyword sets per sub-command,");
-    println!("  add a 'mode' field to each grammar entry:");
+    println!("  a 'mode' field distinguishes the entries:");
     println!();
     println!("    - command: install");
     println!("      mode: TARGETS");

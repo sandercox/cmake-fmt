@@ -923,6 +923,13 @@ fn unmark_unsortable_positional_runs(
 
         // At index 0 the first argument names the thing being defined — a
         // variable for `set`, but a *target* for add_library/add_executable.
+        //
+        // Which of the two is still decided by builtin command name, inside a
+        // path that is otherwise grammar-driven, so a user wrapper cannot say
+        // "my first positional is a target" and gets the conservative answer:
+        // `my_add_library(my_LIBS z.cpp a.cpp)` holds where `add_library` sorts.
+        // Saying it needs a third grammar field; until there is one, a wrapper
+        // declines to sort where the builtin would, which is the safe direction.
         // A later run is opened by a mode keyword that already consumed the
         // list variable, so there the name provably governs the list.
         let (governing, governs_the_list) = if idx == 0 {
@@ -1522,15 +1529,21 @@ pub fn format_keyword_aware_args(
                 }
 
                 // SingleValue keywords: keep value inline (ignore force_multiline for
-                // idempotency). Guarded on comments for the same reason the
-                // MultiValue shortcut below is: this arm emits the keyword and
-                // the value and nothing else, so a comment written in the
-                // section had nowhere to go and was deleted.
-                Some(KeywordType::SingleValue)
-                    if section.args.len() == 1
-                        && section.comments.is_empty()
-                        && section.trailing_comments.is_empty() =>
-                {
+                // idempotency).
+                //
+                // A comment used to demote the whole section into the catch-all
+                // arm, which puts the keyword on its own line and its value one
+                // level deeper. That cost the fixed point as well as the layout:
+                // the parser gives a comment written after this keyword's one
+                // value to *this* section, while a `list(APPEND V …)` run's
+                // elements live in the following keyword-less section — so
+                // sorting the run to put the commented element first moved the
+                // comment into this slot, and the next pass laid the command out
+                // differently. `--check` then rejected freshly formatted output.
+                //
+                // The comments are emitted after the value instead, so the arm
+                // renders the same shape with them as without.
+                Some(KeywordType::SingleValue) if section.args.len() == 1 => {
                     // Add separator before the keyword
                     if is_first_arg && first_keyword_inline {
                         is_first_arg = false;
@@ -1573,6 +1586,13 @@ pub fn format_keyword_aware_args(
                     // Add the single value inline
                     docs.push(RcDoc::space());
                     docs.push(RcDoc::text(section.args[0].clone()));
+                    // Then anything written about it, on its own line — a
+                    // comment runs to end of line, so it cannot precede the
+                    // value, and it must not be dropped
+                    for (_, comment) in &section.trailing_comments {
+                        docs.push(RcDoc::text(format!(" {}", comment)));
+                    }
+                    push_valueless_section_comments(&mut docs, &section.comments, &keyword_indent);
                 }
 
                 // PairValue keywords: format as key-value pairs
