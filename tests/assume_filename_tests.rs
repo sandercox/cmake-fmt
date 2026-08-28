@@ -2005,12 +2005,14 @@ fn test_a_broken_cmake_fmt_ignore_is_reported_once() {
     ] {
         std::fs::write(root.join(f), "set(A   b)\n").expect("write");
     }
-    // Line 2 is not UTF-8, so the matcher refuses the file part-way
-    std::fs::write(
-        root.join(".cmake-fmt-ignore"),
-        b"x.cmake\n\xff\xfebad\ny.cmake\n",
-    )
-    .expect("write");
+    // Line 2 is a malformed glob, so the matcher refuses the file part-way.
+    //
+    // Not a non-UTF-8 line, which is what this test used before: the `ignore`
+    // crate drops that class before the walk can report it
+    // (`maybe_push_ignore_io`), so it is the one error kind where the walk's own
+    // printer stays silent — and the test picked exactly it, which is why the
+    // duplicate report below went unnoticed.
+    std::fs::write(root.join(".cmake-fmt-ignore"), "x.cmake\n{a\ny.cmake\n").expect("write");
 
     let complaints = |args: &[&str]| -> usize {
         let output = Command::new(cmake_fmt_bin())
@@ -2020,20 +2022,90 @@ fn test_a_broken_cmake_fmt_ignore_is_reported_once() {
             .expect("run");
         let report = String::from_utf8_lossy(&output.stdout).to_string()
             + &String::from_utf8_lossy(&output.stderr);
-        report.matches("did not contain valid UTF-8").count()
+        report.matches("unclosed alternate group").count()
     };
 
-    // One root above the ignore file's directory: reported, once
-    assert_eq!(complaints(&["--check", "-r", "sub"]), 1);
-    // Three of them: still once
-    assert_eq!(
-        complaints(&["--check", "-r", "sub", "other", "sub/deep"]),
-        1,
-        "the same complaint was printed per root"
+    // Once, however the run reaches it. Two printers can produce this sentence —
+    // the matcher `is_ignored` builds for an ancestor, and the walk's own — and
+    // which one fires depends on where the file sits relative to the root, so
+    // `-r sub` said it twice, the second time prefixed with "Error walking
+    // directory" about a directory that had not failed.
+    for args in [
+        &["--check", "-r", "sub"][..],
+        &["--check", "-r", "."][..],
+        &["--check", "-r", "sub", "other", "sub/deep"][..],
+        &["--check", "-r", "sub", "sub/.."][..],
+    ] {
+        assert_eq!(
+            complaints(args),
+            1,
+            "{:?} did not report the broken ignore file exactly once",
+            args
+        );
+    }
+
+    // A non-UTF-8 line is the one class the walk cannot report: the `ignore`
+    // crate discards it before the walk sees it, so a `.cmake-fmt-ignore` in the
+    // walk root loses its patterns silently. That is the gap
+    // `build_ignore_matcher` documents; if this stops being 0, the gap has
+    // closed and the comment should say so.
+    std::fs::write(
+        root.join(".cmake-fmt-ignore"),
+        b"x.cmake\n\xff\xfebad\ny.cmake\n",
+    )
+    .expect("write");
+    let utf8 = |args: &[&str]| -> usize {
+        let output = Command::new(cmake_fmt_bin())
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("run");
+        let report = String::from_utf8_lossy(&output.stdout).to_string()
+            + &String::from_utf8_lossy(&output.stderr);
+        report.matches("did not contain valid UTF-8").count()
+    };
+    assert_eq!(utf8(&["--check", "-r", "sub"]), 1);
+    assert_eq!(utf8(&["--check", "-r", "."]), 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_an_ignore_file_that_names_our_own_stdin_is_refused() {
+    // Reading it drains the buffer that was going to be formatted, so
+    // `cmake-fmt - --ignore-file /dev/stdin` printed an empty document and
+    // exited 0 — which an editor applying the result as a whole-document edit
+    // reads as "the formatted file is empty", and replaces the file with it.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+
+    for alias in ["/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"] {
+        if !std::path::Path::new(alias).exists() {
+            continue;
+        }
+        let (ok, stdout) = run_with_stdin_in(
+            Some(root),
+            &["-", "--assume-filename", "a.cmake", "--ignore-file", alias],
+            "set(  A   b)\n",
+        );
+        assert!(!ok, "{} should be refused", alias);
+        assert_eq!(stdout, "", "{} produced output as well", alias);
+    }
+
+    // An ordinary ignore file in stdin mode is untouched by the check
+    std::fs::write(root.join("ig.txt"), "build/\n").expect("write");
+    let (ok, stdout) = run_with_stdin_in(
+        Some(root),
+        &[
+            "-",
+            "--assume-filename",
+            "a.cmake",
+            "--ignore-file",
+            "ig.txt",
+        ],
+        "set(  A   b)\n",
     );
-    // The walk root itself: the walk validates it and keeps no error, so nothing
-    // is printed. Documented, not desirable.
-    assert_eq!(complaints(&["--check", "-r", "."]), 0);
+    assert!(ok, "an ordinary ignore file was refused");
+    assert_eq!(stdout, "set(A b)\n");
 }
 
 #[test]
@@ -2085,6 +2157,16 @@ fn test_a_complaint_names_the_ignore_file_as_it_was_given() {
     // The copy is a random `NamedTempFile` name, so naming the fifo — which the
     // assertion above pins exactly — is what rules the copy out. Asserting the
     // absence of a `/tmp/` prefix would not: the fifo itself lives in one.
+    //
+    // And exactly one warning: the readers that build their own matcher pass
+    // `None` so they stay quiet, and turning any of them back on adds a second
+    // line naming the copy.
+    assert_eq!(
+        report.matches("Warning:").count(),
+        1,
+        "the complaint was printed more than once:\n{}",
+        report
+    );
 }
 
 #[test]
@@ -2152,6 +2234,22 @@ fn test_the_ignore_file_bound_is_a_mebibyte() {
         "a file just under the bound should be read:\n{}",
         report
     );
+    // Positive control: the absence of a substring is also what a run that
+    // walked nothing produces. A sibling the pattern does not name must be seen.
+    std::fs::write(root.join("kept.cmake"), "set(A   b)\n").expect("write");
+    let output = Command::new(cmake_fmt_bin())
+        .args(["--check", "-r", ".", "--ignore-file", "under.txt"])
+        .current_dir(root)
+        .output()
+        .expect("run");
+    let report = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(
+        report.contains("kept.cmake"),
+        "the walk reached nothing at all:\n{}",
+        report
+    );
+    assert!(!report.contains("a.cmake"), "{}", report);
 
     let over = line.repeat((1 << 20) / line.len() + 1);
     assert!(over.len() > (1 << 20));

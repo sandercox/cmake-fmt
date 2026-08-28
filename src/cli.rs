@@ -451,12 +451,28 @@ pub fn run() -> Result<ExitCode> {
     // before this and never look at it.
     //
     // The cost of checking here is that a one-shot source is opened even when
-    // the run would not have consulted it — so a writerless fifo blocks a run
-    // over an explicit file list, where it previously would not. Accepting a
-    // path we cannot read is the worse trade: it is the failure that reads as
-    // success.
+    // the run would not have consulted it — so a writerless fifo now blocks a
+    // run over an explicit file list (which used to exit 0), over a glob (exit
+    // 1), and in stdin mode (exit 0), none of which it blocked before. Accepting a path we cannot read is the worse trade:
+    // it is the failure that reads as success.
     //
     // Bound to the lifetime of `run`, so the copy outlives every reader.
+    // An `--ignore-file` that names the program's own stdin eats the buffer it
+    // was going to format: the copy drains fd 0, and the formatter then reads
+    // nothing. `cmake-fmt - --ignore-file /dev/stdin` printed an empty document
+    // and exited 0, which an editor applying the result as a whole-document edit
+    // reads as "the formatted file is empty".
+    if let Some(path) = cli.ignore_file.as_deref()
+        && stdin_would_be_read(&cli)
+        && aliases_stdin(path)
+    {
+        eprintln!(
+            "error: --ignore-file {} names this run's own stdin, which the buffer is read from",
+            path.display()
+        );
+        return Ok(ExitCode::FAILURE);
+    }
+
     let prepared = match cli.ignore_file.as_deref() {
         Some(path) => match prepare_ignore_file(path) {
             Ok(prepared) => Some(prepared),
@@ -771,6 +787,22 @@ fn collect_cmake_files(
         for entry in walk {
             match entry {
                 Ok(e) => {
+                    // A `.cmake-fmt-ignore` at or below the walk root is read by
+                    // the walk, not by `is_ignored`, so this is the only place
+                    // its complaint can come from. `add` stops at a bad line, so
+                    // the patterns after one are silently dropped — for
+                    // `cmake-fmt -r .` that is the whole project's ignore file.
+                    //
+                    // Only the glob errors arrive here: the crate discards the
+                    // encoding ones before the walk can see them
+                    // (`maybe_push_ignore_io`), so a non-UTF-8 line still goes
+                    // unreported by this path.
+                    if let Some(err) = e.error() {
+                        let message = format!("{:#}", err);
+                        if !already_reported_error(&message) {
+                            eprintln!("Warning: {}", message);
+                        }
+                    }
                     if e.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
                         let p = e.into_path();
                         if is_cmake_file(&p) {
@@ -781,7 +813,16 @@ fn collect_cmake_files(
                     }
                 }
                 Err(e) => {
-                    eprintln!("Warning: Error walking directory: {:#}", e);
+                    // An ignore file the matcher refused reaches this arm too,
+                    // depending on where it sits relative to the walk root — and
+                    // then it was printed a second time, prefixed with a sentence
+                    // about walking a directory that had not failed. Keyed on the
+                    // message, so whichever printer gets there first wins and the
+                    // prefix only ever lands on a real traversal failure.
+                    let message = format!("{:#}", e);
+                    if !already_reported_error(&message) {
+                        eprintln!("Warning: Error walking directory: {}", message);
+                    }
                 }
             }
         }
@@ -952,15 +993,18 @@ fn ignore_decision(
 /// here, because it is read again for every named root and printing per root
 /// said the same sentence four times for `-r x y build .`.
 ///
-/// A `.cmake-fmt-ignore` complains from here, and `already_reported` keeps that
-/// to once per file however many roots read it. One gap remains, deliberately:
-/// this is reached only for an *ancestor* of something being checked, because an
-/// ignore file has no say about its own directory. So a `.cmake-fmt-ignore` at
-/// or below a walk root is validated by the walk's own
-/// `add_custom_ignore_filename` matcher, which keeps no error for us to print,
-/// and a malformed one there loses its patterns silently — which for
-/// `cmake-fmt -r .` is the commonest place it sits. Closing that needs the walk
-/// to hand its errors back, or a traversal of our own to find them.
+/// A `.cmake-fmt-ignore` complains from here, and `already_reported_error` keeps
+/// that to once however many readers reach it. This site sees only an *ancestor*
+/// of something being checked, because an ignore file has no say about its own
+/// directory; the walk's own matcher sees the rest and hands its complaint back
+/// on the entry, which the walk loop prints under the same dedup.
+///
+/// One class still goes unreported: the `ignore` crate discards an encoding
+/// error before the walk can surface it (`maybe_push_ignore_io`), so a
+/// `.cmake-fmt-ignore` in a walk root with a non-UTF-8 line loses the patterns
+/// after it silently. `GitignoreBuilder::add` stops at that line rather than
+/// skipping it, so what survives depends on line order — a stray byte on line 1
+/// voids the whole file.
 ///
 /// The name is passed in rather than taken from `file` because they differ: a
 /// one-shot source is read from a temporary copy, and a complaint about a path
@@ -970,13 +1014,19 @@ fn build_ignore_matcher(file: &Path, root: &Path, report_as: Option<&Path>) -> O
 
     if let Some(err) = builder.add(file)
         && let Some(name) = report_as
-        && !already_reported(name)
     {
-        eprintln!("Warning: {}", named_error(&err, file, name));
+        let message = named_error(&err, file, name);
+        if !already_reported_error(&message) {
+            eprintln!("Warning: {}", message);
+        }
     }
 
     match builder.build() {
         Ok(matcher) => Some(matcher),
+        // Unreachable in practice: every glob error surfaces from `add` above,
+        // so `GlobSetBuilder::build` has nothing left to reject — 20 malformed
+        // pattern shapes through both readers reach this zero times. Kept
+        // because it is the crate's declared error path, not ours.
         Err(err) => {
             if let Some(name) = report_as
                 && !already_reported(name)
@@ -999,13 +1049,23 @@ fn build_ignore_matcher(file: &Path, root: &Path, report_as: Option<&Path>) -> O
 /// about, so without this a broken one printed the same sentence per root — the
 /// duplication `--ignore-file` was just cured of, in the other reader.
 fn already_reported(file: &Path) -> bool {
+    already_reported_error(&file.to_string_lossy())
+}
+
+/// The same, keyed by the message rather than by the file.
+///
+/// The walk's own matcher and `is_ignored`'s produce the same sentence about the
+/// same ignore file, from two places that do not share a path spelling — so
+/// `-r sub` said it twice, once plain and once prefixed with "Error walking
+/// directory", which had not happened.
+fn already_reported_error(message: &str) -> bool {
     use std::collections::HashSet;
     use std::sync::{Mutex, OnceLock};
 
-    static REPORTED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    static REPORTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     let reported = REPORTED.get_or_init(|| Mutex::new(HashSet::new()));
     match reported.lock() {
-        Ok(mut seen) => !seen.insert(file.to_path_buf()),
+        Ok(mut seen) => !seen.insert(message.to_string()),
         // A poisoned lock means another thread panicked mid-report. Saying it
         // twice beats not saying it.
         Err(_) => false,
@@ -1040,6 +1100,36 @@ fn respell(path: &Path, roots: &[(PathBuf, PathBuf)]) -> PathBuf {
         }
     }
     path.to_path_buf()
+}
+
+/// Whether this run will read its input from stdin.
+///
+/// Decided the same way the stdin path decides it further down, but needed
+/// earlier, before `--ignore-file` is opened.
+fn stdin_would_be_read(cli: &Cli) -> bool {
+    use std::io::IsTerminal;
+    (cli.files.len() == 1 && cli.files[0] == Path::new("-"))
+        || (cli.files.is_empty() && !std::io::stdin().is_terminal())
+}
+
+/// Whether `path` is another name for this process's own stdin.
+///
+/// `/dev/stdin`, `/dev/fd/0` and `/proc/self/fd/0` all are, and so is the very
+/// file a shell redirect points fd 0 at. Compared by device and inode rather
+/// than by spelling, because the spellings are unbounded.
+#[cfg(unix)]
+fn aliases_stdin(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    let (Ok(target), Ok(stdin)) = (std::fs::metadata(path), std::fs::metadata("/dev/stdin")) else {
+        return false;
+    };
+    target.dev() == stdin.dev() && target.ino() == stdin.ino()
+}
+
+#[cfg(not(unix))]
+fn aliases_stdin(_path: &Path) -> bool {
+    false
 }
 
 /// Generous for an ignore file, and small enough to hold comfortably.
