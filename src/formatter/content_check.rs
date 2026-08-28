@@ -47,18 +47,6 @@ use super::grammar::{CommandGrammar, GrammarRegistry};
 /// Grammars discovered from the project and the config, as the formatter saw them.
 type UserGrammars = HashMap<String, CommandGrammar>;
 
-/// Which text a [`Content`] was read from.
-///
-/// Only the input side carries the readings a closer is allowed to have, since
-/// only it can see the opener. Nothing else differs between the sides, so this
-/// is an optimisation — computing the alternatives for the output too would be
-/// harmless and unused.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Side {
-    Input,
-    Output,
-}
-
 /// What a file says, with the things the formatter is allowed to change removed.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Content {
@@ -148,7 +136,6 @@ pub(crate) struct Difference {
 /// a documented feature of the tool. Taking the union can miss a change; keying
 /// off a config the formatter has already discarded invents one.
 struct Rules<'a> {
-    config: &'a FormatConfig,
     grammars: &'a UserGrammars,
     /// Either casing setting can rewrite a command's name, so the name is
     /// compared case-folded unless both preserve it everywhere in the file.
@@ -163,7 +150,6 @@ struct Rules<'a> {
     /// `normalize_comment` only asks whether the style is `Preserve`, so any
     /// other value stands for "the formatter may move it".
     comment_style: CommentStyle,
-    side: Side,
 }
 
 impl<'a> Rules<'a> {
@@ -171,10 +157,8 @@ impl<'a> Rules<'a> {
         config: &'a FormatConfig,
         overrides: &StyleOverrides,
         grammars: &'a UserGrammars,
-        side: Side,
     ) -> Self {
         Self {
-            config,
             grammars,
             fold_case: config.command_case != CommandCase::Preserve
                 || config.user_command_case != UserCommandCase::Preserve
@@ -192,7 +176,6 @@ impl<'a> Rules<'a> {
             } else {
                 CommentStyle::Preserve
             },
-            side,
         }
     }
 }
@@ -509,10 +492,14 @@ fn command_entry(
     // Every reading the output may have, given what any part of the file may
     // have turned on. The input's own arguments are always accepted separately,
     // which is what makes the comparison reflexive.
+    //
+    // Computed for both sides. Only the input's are ever read — `agrees_with`
+    // consults `self`'s — so this used to be gated on a `Side` enum threaded
+    // through `Rules`. That saved one small `Vec` per closer on a path that
+    // re-parses the whole file, and cost an enum, a field, two call-site
+    // arguments and a branch.
     let mut closer_alternatives = Vec::new();
-    if rules.side == Side::Input
-        && let Some(opener) = opener_args
-    {
+    if let Some(opener) = opener_args {
         if rules.force_possible {
             closer_alternatives.push(opener);
         }
@@ -634,10 +621,16 @@ fn reorderable_args(
     rules: &Rules,
 ) -> Option<Vec<String>> {
     let grammar = resolve_grammar(arg_list, name_lower, rules)?;
+    // `rules.comment_style`, like every other read in this module — the
+    // directive-widened value, not the file-level one. It only reaches
+    // `section.comments` / `trailing_comments`, which nothing below touches, so
+    // the two are interchangeable today; taking the un-widened one anyway was
+    // the one place the two sides of the comparison could quietly diverge if
+    // that ever stopped being true.
     let sections = super::cmake_rules::parse_keyword_sections_with_grammar(
         arg_list,
         Some(grammar),
-        rules.config.comment_style,
+        rules.comment_style,
     );
 
     let mut out = Vec::new();
@@ -873,14 +866,10 @@ fn compare_parsed(
     // difference rather than a silent widening.
     let overrides = StyleOverrides::read(input_cst, config);
 
-    Content::from_cst(
-        input_cst,
-        &Rules::new(config, &overrides, grammars, Side::Input),
-    )
-    .diff(
+    Content::from_cst(input_cst, &Rules::new(config, &overrides, grammars)).diff(
         &Content::from_cst(
             &parse_text(output),
-            &Rules::new(config, &overrides, grammars, Side::Output),
+            &Rules::new(config, &overrides, grammars),
         ),
         input,
     )
@@ -1366,11 +1355,56 @@ mod tests {
                         sort_sources,
                         source_grouping
                     );
-                    // And through `check` as well, so the short-circuit itself
-                    // stays covered.
+                    // And end to end through `check`. That does not cover the
+                    // short-circuit — `compare(x, x)` returns `None` on its own,
+                    // so removing it changes nothing observable — but it does
+                    // pin the property at the entry point callers use.
                     assert!(accepts(source, source, &config));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_a_change_inside_an_error_region_is_still_a_difference() {
+        // The parser wraps what it cannot make a command of in an ERROR node,
+        // and that arm collects its tokens so they are compared like anything
+        // else. Deleting it left the whole suite green — including the
+        // corpus-wide sweeps — while the guard went blind to every error
+        // region.
+        //
+        // It is not merely defensive: `${COMMAND_VAR}(argument)`, which
+        // `tests/format_fixtures/variable_ref_edge_cases.cmake` calls out as
+        // valid CMake, reaches it. On that file the comparison rests entirely on
+        // this arm.
+        let config = FormatConfig::default();
+        let grammars = UserGrammars::new();
+        for (input, output) in [
+            ("${COMMAND_VAR}(argument)\n", "${COMMAND_VAR}(different)\n"),
+            ("${COMMAND_VAR}(argument)\n", "${COMMAND_VAR}()\n"),
+            ("set(A b))\n", "set(A b)\n"),
+            ("((\n", "(\n"),
+            ("set)\n", "set\n"),
+        ] {
+            assert!(
+                check(input, output, &config, &grammars).is_some(),
+                "a change inside an error region went unnoticed: {:?} -> {:?}",
+                input,
+                output
+            );
+        }
+        // And the region compares equal to itself, so the arm cannot over-fire
+        for text in [
+            "${COMMAND_VAR}(argument)\n",
+            "set(A b))\n",
+            "((\n",
+            "set)\n",
+        ] {
+            assert!(
+                compare(text, text, &config, &grammars).is_none(),
+                "an error region did not compare equal to itself: {:?}",
+                text
+            );
         }
     }
 

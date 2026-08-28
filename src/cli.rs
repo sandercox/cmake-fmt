@@ -99,6 +99,11 @@ struct FileOutcome {
     /// The file was left alone because formatting would have changed its
     /// contents. Fails the run in every mode.
     content_changed: bool,
+    /// The file named on the command line is not there, or is not a file. Fails
+    /// the run in every mode, like a file that cannot be read: `cmake-fmt
+    /// --check path/that/moved.cmake` reporting success is how an unformatted
+    /// file reaches a release.
+    missing: bool,
 }
 
 impl FileOutcome {
@@ -106,6 +111,15 @@ impl FileOutcome {
         Self {
             needs_formatting,
             content_changed: false,
+            missing: false,
+        }
+    }
+
+    fn missing() -> Self {
+        Self {
+            needs_formatting: false,
+            content_changed: false,
+            missing: true,
         }
     }
 }
@@ -812,16 +826,22 @@ fn process_files(
         let mut stdout_handle = stdout().lock();
         let mut config_cache: HashMap<PathBuf, FormatConfig> = HashMap::new();
         let mut any_content_changed = false;
+        let mut any_error = false;
 
         for file in files {
-            // Validate file exists
+            // A file named on the command line that is not there is a failed
+            // run, for the same reason an unreadable one is: `cmake-fmt --check
+            // path/that/moved.cmake` reporting success is how an unformatted
+            // file reaches a release.
             if !file.exists() {
                 eprintln!("Warning: File not found: {}", file.display());
+                any_error = true;
                 continue;
             }
 
             if !file.is_file() {
                 eprintln!("Warning: Not a file: {}", file.display());
+                any_error = true;
                 continue;
             }
 
@@ -852,7 +872,7 @@ fn process_files(
 
         // A file the formatter refused to touch fails the run in every mode, or
         // the one mode a user runs by hand is the one that says nothing is wrong
-        return Ok(if any_content_changed {
+        return Ok(if any_content_changed || any_error {
             ExitCode::from(1)
         } else {
             ExitCode::SUCCESS
@@ -930,17 +950,18 @@ fn process_files(
     let diff_lock = Arc::new(std::sync::Mutex::new(()));
 
     let process_file_closure = |file: &PathBuf| -> Result<FileOutcome> {
-        // Validate file exists
+        // A file named on the command line that is not there is a failed run,
+        // for the same reason an unreadable one is — see the stdout path.
         if !file.exists() {
             eprintln!("Warning: File not found: {}", file.display());
             completed.fetch_add(1, Ordering::Relaxed);
-            return Ok(FileOutcome::needs_formatting(false));
+            return Ok(FileOutcome::missing());
         }
 
         if !file.is_file() {
             eprintln!("Warning: Not a file: {}", file.display());
             completed.fetch_add(1, Ordering::Relaxed);
-            return Ok(FileOutcome::needs_formatting(false));
+            return Ok(FileOutcome::missing());
         }
 
         // Look up config from pre-populated cache
@@ -992,11 +1013,16 @@ fn process_files(
     let mut any_need_formatting = false;
     let mut any_content_changed = false;
     let mut any_error = false;
+    let mut need_formatting_count = 0usize;
     for result in results {
         match result {
             Ok(outcome) => {
                 any_need_formatting |= outcome.needs_formatting;
                 any_content_changed |= outcome.content_changed;
+                any_error |= outcome.missing;
+                if outcome.needs_formatting {
+                    need_formatting_count += 1;
+                }
             }
             Err(e) => {
                 // A file that could not be read or written is a failed run: a
@@ -1009,9 +1035,12 @@ fn process_files(
     }
 
     // Print summary in check mode (but not in diff mode where diffs speak for themselves)
+    // Counted from the outcomes, not from how many files were looked at: the
+    // old line said "2 file(s) would be reformatted" for one that would and one
+    // that was already formatted, and it counted a file that is missing or was
+    // refused — neither of which is going to be reformatted at all.
     if check_mode && !diff_mode && any_need_formatting {
-        let count = files.len();
-        eprintln!("{} file(s) would be reformatted", count);
+        eprintln!("{} file(s) would be reformatted", need_formatting_count);
     }
 
     // A file left alone because formatting would have changed it fails the run
@@ -1053,6 +1082,7 @@ fn process_file(
         return Ok(FileOutcome {
             needs_formatting: false,
             content_changed: true,
+            missing: false,
         });
     }
 
