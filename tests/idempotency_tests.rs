@@ -472,58 +472,32 @@ target_compile_definitions(mylib
 }
 
 #[test]
-fn test_idempotency_unbalanced_parens_converges() {
-    // Input CMake itself rejects. The formatter supplies one missing closer per
-    // pass, so it takes as many passes as there are unclosed parens — not a
-    // fixed two, as this test first claimed. `--check` on the formatter's own
-    // output can disagree until it settles.
+fn test_idempotency_unbalanced_parens_left_alone() {
+    // Input CMake itself rejects. Formatting it would have to invent the missing
+    // closers, which is a content change, so the content guard leaves the file
+    // exactly as written — a fixed point on the first pass, however many parens
+    // are missing.
     //
-    // The deficit shrinks by one per pass only because the closer lands where
-    // the parser can see it next time. That is not true in general: where the
-    // group's text ends inside an unterminated construct — a bracket comment,
-    // a quote, a bracket argument — the closer is swallowed by it and the next
-    // pass appends another, so the output grows without bound. Those shapes are
-    // covered by the content guard, which refuses to write any of this to disk;
-    // the lexer flag that would fix the cause is a follow-up.
-    //
-    // Pinned rather than fixed: closing them all at once would invent more
-    // syntax into a file that is already invalid.
+    // Before the guard this took one pass per unclosed paren, because each pass
+    // supplied one more closer — and for a group whose text ends inside an
+    // unterminated construct (a bracket comment, a quote, a bracket argument)
+    // the closer was swallowed by it and the output grew without bound instead.
+    // Both are content changes and the guard refuses both.
     let config = FormatConfig::default();
 
-    for (input, expected_passes) in [("cmd((# c\n\n", 2), ("cmd(((# c\n\n", 3)] {
-        let mut current = input.to_string();
-        let mut passes = 0;
-
-        for _ in 0..8 {
-            let next = format_text(&current, &config);
-            passes += 1;
-            if next == current {
-                break;
-            }
-            current = next;
-        }
-
-        // A bound, not an exact count: how many passes recovery takes is not a
-        // promise to anyone, and pinning it exactly turns any change to error
-        // recovery into a test edit.
-        assert!(
-            passes <= expected_passes,
-            "{:?} should reach a fixed point within {} passes, took {}",
-            input,
-            expected_passes,
-            passes
-        );
-        assert!(current.contains("# c"), "comment lost:\n{}", current);
-        assert!(current.contains("cmd("), "command lost:\n{}", current);
+    for input in ["cmd((# c\n\n", "cmd(((# c\n\n", "cmd((((# c\n\n"] {
+        let once = format_text(input, &config);
+        assert_eq!(once, input, "{:?} should be left exactly as written", input);
+        assert_eq!(once, format_text(&once, &config), "not a fixed point");
     }
 }
 
 #[test]
 fn test_idempotency_unterminated_group_with_comment() {
-    // The verbatim text of a comment-bearing group ends inside the open line
-    // comment when the parser never saw the closing paren, so the caller's
-    // paren landed inside the comment and the next pass appended another —
-    // one byte per run, forever, with `--check` never going green.
+    // These grew by a byte or more per pass before the content guard: the
+    // synthesized closer landed inside the unterminated construct, so it never
+    // became a real token and the next pass added another. The guard refuses the
+    // change outright, so the file is left as written.
     let config = FormatConfig::default();
 
     for input in [
@@ -531,12 +505,18 @@ fn test_idempotency_unterminated_group_with_comment() {
         "f((A\n# c",
         "set(V (a # c",
         "target_sources(t PRIVATE (a.cpp # c",
+        // The three shapes a newline does not close, which the group closer
+        // could not handle at all
+        "f((A #[[ c",
+        "f((A \"b )",
+        "f((A [[b )",
     ] {
         let once = format_text(input, &config);
+        assert_eq!(once, input, "{:?} should be left exactly as written", input);
         assert_eq!(
             once,
             format_text(&once, &config),
-            "still growing for {:?}",
+            "still changing: {:?}",
             input
         );
     }

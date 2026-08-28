@@ -13,7 +13,7 @@ use std::io::Write;
 use std::path::Path;
 use tempfile::NamedTempFile;
 
-use crate::formatter::{FormatConfig, format_text_with_diagnostics_and_path};
+use crate::formatter::{FormatConfig, FormatWarning, format_text_with_diagnostics_and_path};
 
 /// Result of interactive formatting session
 #[derive(Debug, Clone)]
@@ -24,6 +24,9 @@ pub struct InteractiveResult {
     pub rejected: usize,
     /// Number of hunks suppressed
     pub suppressed: usize,
+    /// The file was left alone because formatting would have changed what it
+    /// says. Fails the run, like every other mode.
+    pub content_changed: bool,
 }
 
 /// Run interactive formatting for a file
@@ -40,8 +43,26 @@ pub fn run_interactive(file_path: &Path, config: &FormatConfig) -> Result<Intera
         .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
 
     // Format the text
-    let (formatted, _warnings) =
+    let (formatted, warnings) =
         format_text_with_diagnostics_and_path(&original, config, Some(file_path), false);
+
+    // A file the formatter refused to touch also comes back unchanged, so say
+    // which of the two happened rather than reporting it as already formatted
+    if let Some(warning) = warnings
+        .iter()
+        .find(|w| matches!(w, FormatWarning::ContentChanged { .. }))
+    {
+        // Reuse the Display wording rather than re-spelling it, so the two
+        // cannot drift apart
+        let term = Term::stderr();
+        term.write_line(&warning.to_string())?;
+        return Ok(InteractiveResult {
+            accepted: 0,
+            rejected: 0,
+            suppressed: 0,
+            content_changed: true,
+        });
+    }
 
     // Check if already formatted
     if original == formatted {
@@ -51,6 +72,7 @@ pub fn run_interactive(file_path: &Path, config: &FormatConfig) -> Result<Intera
             accepted: 0,
             rejected: 0,
             suppressed: 0,
+            content_changed: false,
         });
     }
 
@@ -144,5 +166,6 @@ pub fn run_interactive(file_path: &Path, config: &FormatConfig) -> Result<Intera
         accepted,
         rejected,
         suppressed,
+        content_changed: false,
     })
 }

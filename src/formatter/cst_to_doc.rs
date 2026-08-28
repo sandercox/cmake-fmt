@@ -13,7 +13,7 @@ use super::comments;
 use super::config::{ClosingStyle, CommandCase, FormatConfig, UserCommandCase};
 use super::grammar::GrammarRegistry;
 use super::suppression::{
-    SuppressionTracker, SuppressionWarning, line_number_at_offset, parse_directive,
+    FormatWarning, SuppressionTracker, line_number_at_offset, parse_directive,
 };
 
 // Import post-processing function from parent module
@@ -82,7 +82,7 @@ pub fn format_cst(
     source: &str,
     user_defs: &HashMap<String, String>,
     user_grammars: &HashMap<String, super::grammar::CommandGrammar>,
-) -> (String, Vec<SuppressionWarning>) {
+) -> (String, Vec<FormatWarning>) {
     let ctx = FormatContext::new(config, user_defs, user_grammars);
     format_file(&cst.root, &ctx, source)
 }
@@ -161,7 +161,7 @@ fn format_file(
     node: &SyntaxNode,
     ctx: &FormatContext,
     source: &str,
-) -> (String, Vec<SuppressionWarning>) {
+) -> (String, Vec<FormatWarning>) {
     // Clone config so we can modify it based on style directives
     let mut config = ctx.config.clone();
 
@@ -1314,7 +1314,7 @@ pub(crate) fn render_nested_group(group: &ArgumentList) -> String {
 
 /// Detect the mode keyword for multi-mode commands
 /// Returns the first unquoted argument, or None if the first arg is a variable reference
-fn detect_mode_keyword(arg_list: &ArgumentList) -> Option<String> {
+pub(super) fn detect_mode_keyword(arg_list: &ArgumentList) -> Option<String> {
     for child in arg_list.syntax().children_with_tokens() {
         if let NodeOrToken::Token(token) = child {
             match token.kind() {
