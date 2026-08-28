@@ -548,6 +548,10 @@ fn format_file(
                 match token.kind() {
                     SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
                         // Only emit standalone comments (not already handled)
+                        // Untrimmed: this is the key `handled_comments` was
+                        // filled with, and trimming it here stopped the lookup
+                        // matching, so the comment was emitted a second time.
+                        // The trim belongs on the text that is written, below.
                         let comment_text = token.text().to_string();
 
                         if !handled_comments.contains(&comment_text) {
@@ -1046,19 +1050,17 @@ fn trailing_width_after_command(invocation: &SyntaxNode, config: &FormatConfig) 
                 };
                 let rendered =
                     cmake_rules::render_trailing_comment(token.text(), config.comment_style);
-                // Measured whole, exactly as `pretty` measures it. Two things
-                // here are wrong about the *line* and right about the model, and
-                // they have to stay that way while the emitter pushes a comment
-                // as a single `text` node:
+                // Measured whole, exactly as `pretty` measures it, because the
+                // emitter pushes a comment as a single `text` node. Only its
+                // first line really shares this line, but `pretty` widths the
+                // whole string, newlines included — so truncating to the first
+                // line made the model declare a fit that `pretty` refused, and
+                // the two layouts alternated for ever at default settings.
                 //
-                // - A multi-line bracket comment: only its first line really
-                //   shares this line, but `pretty` widths the whole string,
-                //   newlines included. Truncating to the first line made the
-                //   model declare a fit that `pretty` refused, and the two
-                //   layouts alternated — a permanent 2-cycle at default
-                //   settings, `--check` failing after every write.
-                // - Trailing whitespace: stripped only after the renderer has
-                //   chosen its breaks, so `pretty` sees it and so must this.
+                // The string is already trimmed per line by
+                // `render_trailing_comment`, which is the other half of the same
+                // rule: measure the bytes the file will hold, and measure them
+                // the way `pretty` will.
                 //
                 // The cost is a comment whose tail pushes its condition over
                 // the limit and wraps it needlessly. Fixing that means emitting
@@ -1542,7 +1544,21 @@ pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
                 | SyntaxKind::ENV_VAR_REF
                 | SyntaxKind::CACHE_VAR_REF
                 | SyntaxKind::GENERATOR_EXPR => {
-                    let text = token.text();
+                    // Per line, not per token: `post_process_rendered_output`
+                    // strips trailing whitespace from every line, so a token
+                    // that spans lines is written narrower than it reads here —
+                    // and these strings are what `format_condition_args`
+                    // measures. `if(AAAA BBBB "q…   \nz")` had no fixed point:
+                    // the layout broke it, the strip made the pieces fit, the
+                    // next pass joined them again.
+                    //
+                    // Only the sites a width decision reads from need this. The
+                    // raw force-multiline walk below and the standalone-comment
+                    // path have already broken by the time they emit, so
+                    // trimming there changes nothing — measured over 216
+                    // shape/style combinations — and the strip cleans up after
+                    // them.
+                    let text = &cmake_rules::trim_line_ends(token.text());
                     if !saw_separator && !args.is_empty() {
                         args.last_mut().unwrap().push_str(text);
                     } else {

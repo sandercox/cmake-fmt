@@ -2899,6 +2899,74 @@ fn test_the_trailing_comment_is_measured_as_it_will_be_written() {
     );
     assert_eq!(result, format_text(&result, &config), "not idempotent");
 
+    // A token that spans lines carries whitespace the strip removes from every
+    // *interior* line too, so trimming the end of the token was not enough. Both
+    // a bracket comment and a quoted argument reach the width models this way,
+    // and 320 of 800 such shapes had no fixed point while the trim was per
+    // token.
+    for trailer in [" ", "   ", "\t", " \t "] {
+        for input in [
+            format!(
+                "if(AAAA BBBB) #[[{}{}\nz]]\nendif()\n",
+                "P".repeat(52),
+                trailer
+            ),
+            format!(
+                "if(AAAA BBBB) #[[{}{}\nq{}\nz]]\nendif()\n",
+                "P".repeat(52),
+                trailer,
+                trailer
+            ),
+            // A multi-line *argument*, which reaches the width model through
+            // `collect_args_with` rather than through the comment path. Three
+            // arguments, because with two the condition fits either way.
+            format!(
+                "if(AAAA BBBB \"q{}{}\nz\")\nendif()\n",
+                "P".repeat(62),
+                trailer
+            ),
+            format!(
+                "if(AAAA BBBB [[{}{}\nz]])\nendif()\n",
+                "P".repeat(62),
+                trailer
+            ),
+            format!("if(AAAA \"q{}{}\nz\")\nendif()\n", "P".repeat(62), trailer),
+            format!("set(A [[{}{}\nz]])\n", "P".repeat(70), trailer),
+            format!(
+                "# c{}\nset(A \"q{}{}\nz\")\n",
+                trailer,
+                "P".repeat(70),
+                trailer
+            ),
+        ] {
+            let once = format_text(&input, &config);
+            let twice = format_text(&once, &config);
+            assert_eq!(
+                once, twice,
+                "a multi-line token with interior trailing {:?} never settles:\n                 --- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+                trailer, once, twice
+            );
+            assert!(
+                !once
+                    .lines()
+                    .any(|line| line.ends_with(' ') || line.ends_with('\t')),
+                "trailing whitespace reached the file:\n{}",
+                once
+            );
+            // And nothing was duplicated: trimming the key `handled_comments` is
+            // built from, rather than the text that is written, emitted the
+            // comment a second time.
+            let content = |t: &str| t.split_whitespace().collect::<String>();
+            assert_eq!(
+                content(&once),
+                content(&input),
+                "content changed for {:?}:\n{}",
+                input,
+                once
+            );
+        }
+    }
+
     // The shape that lost its fixed point: a single clause, so the layout can
     // collapse back, and a comment ending in whitespace, so the two forms
     // disagree about the width. Every spelling of the whitespace, and both the
@@ -3169,6 +3237,79 @@ fn test_a_width_directive_applies_from_where_it_appears() {
         once
     );
     assert_eq!(once, format_text(&once, &plain), "not idempotent");
+}
+
+#[test]
+fn test_a_standalone_width_directive_flushes_too() {
+    // The width flush lives at both directive sites, and only the leading-comment
+    // one was pinned: `test_a_width_directive_applies_from_where_it_appears`
+    // puts its directive immediately before a command, which
+    // `extract_leading_comments` claims. An ERROR node between the two stops
+    // that backward walk, so the comment is standalone and the other site is
+    // the one that runs. Reverting it alone left the whole suite green.
+    let plain = default_config();
+    let condition = format!("{} AND {}", "A".repeat(45), "B".repeat(45));
+    let input =
+        format!("set(A b)\n# cmake-fmt: max_line_length=200\n)\nif({condition})\nendif()\n");
+    let once = format_text(&input, &plain);
+    assert!(
+        once.contains(&format!("if({condition})")),
+        "the standalone directive did not reach the condition:\n{}",
+        once
+    );
+    assert_eq!(
+        once,
+        format_text(&once, &plain),
+        "not idempotent:\n{}",
+        once
+    );
+}
+
+#[test]
+fn test_a_suppressed_command_keeps_its_trailing_comment_as_written() {
+    // `# cmake-fmt: off` emits the region verbatim, so its comment keeps the
+    // whitespace after the `#`; `# cmake-fmt: skip` suppresses only reformatting
+    // of the command, so `comment_style` still applies. Collapsing that branch
+    // either way — always normalize, or never — left the whole suite green.
+    let config = default_config();
+    assert_eq!(
+        format_text("# cmake-fmt: off\nset(A b) #   c\n", &config),
+        "# cmake-fmt: off\nset(A b) #   c\n",
+        "an off region rewrote its comment"
+    );
+    assert_eq!(
+        format_text("# cmake-fmt: skip\nset(A b) #   c\n", &config),
+        "# cmake-fmt: skip\nset(A b) # c\n",
+        "a skipped command did not have comment_style applied"
+    );
+}
+
+#[test]
+fn test_no_output_line_ends_in_whitespace() {
+    // The per-line strip in `post_process_rendered_output` is what the two width
+    // models are now trimmed to agree with, so it is load-bearing — and removing
+    // it left every test green. Every shape that can carry trailing whitespace
+    // into a token goes through here.
+    let config = default_config();
+    for input in [
+        "set(A b) # c   \n",
+        "set(A \"q   \nz\")\n",
+        "set(A [[q   \nz]])\n",
+        "if(A) #[[q   \nz]]\nendif()\n",
+        "#   \nset(A b)\n",
+        "set(A b)   \n",
+        "set(A\tb)\t\n",
+    ] {
+        let result = format_text(input, &config);
+        for line in result.lines() {
+            assert!(
+                !line.ends_with(' ') && !line.ends_with('\t'),
+                "a line ends in whitespace for {:?}:\n{:?}",
+                input,
+                result
+            );
+        }
+    }
 }
 
 #[test]

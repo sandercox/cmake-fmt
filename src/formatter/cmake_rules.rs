@@ -27,6 +27,36 @@ fn is_source_file(name: &str) -> bool {
         .is_some_and(|ext| SOURCE_EXTS.contains(&ext))
 }
 
+/// Every line of `text` with its trailing whitespace removed.
+///
+/// `post_process_rendered_output` strips trailing whitespace from every line of
+/// the finished output, so a token that carries some — a bracket comment or a
+/// quoted argument spanning lines — is written narrower than it was measured.
+/// Both width models then decide against a line the file will not hold, and the
+/// result has no fixed point: the layout breaks, the strip makes the pieces fit,
+/// and the next pass joins them again.
+///
+/// So the bytes are trimmed here, as they enter the doc, and the emitter, the
+/// width model and `pretty` all read one string. `trim_end` is not enough — it
+/// reaches the end of the *token*, while the strip reaches the end of every
+/// *line*, and the whitespace that matters sits before an interior newline.
+pub fn trim_line_ends(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text
+        .split('\n')
+        .any(|line| line.ends_with(' ') || line.ends_with('\t'))
+    {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        out.push_str(line.trim_end());
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// Render a comment the way the emitter writes it after a command.
 ///
 /// Anything starting `#[` — a bracket comment, or a line comment the lexer
@@ -42,14 +72,10 @@ pub fn render_trailing_comment(comment: &str, style: super::config::CommentStyle
         normalize_comment_whitespace(comment, style)
     };
     // Trimmed here, at the one site all three readers share, so that none of
-    // them measures bytes the file will not contain. `post_process_rendered_output`
-    // strips trailing whitespace from every line *after* the renderer has chosen
-    // its breaks, so counting it — which both the width model and `pretty` did —
-    // decided the layout against a line that is never written. One stray space
-    // after a single-clause condition's comment was enough: the layout broke it,
-    // the strip made the result fit, the next pass joined it again, and `--check`
-    // rejected the tool's own output for ever.
-    rendered.trim_end().to_string()
+    // them measures bytes the file will not contain — see `trim_line_ends`,
+    // which is per line rather than per token because the strip that removes
+    // them is.
+    trim_line_ends(&rendered).into_owned()
 }
 
 /// Normalize whitespace in line comments according to the specified style.
