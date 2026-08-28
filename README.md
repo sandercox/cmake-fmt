@@ -391,7 +391,6 @@ Five things are never reordered even inside a list that is:
   and arguments do not move across it — it is one argument holding several, and
   what is inside it cannot be vetted. A paren inside a quoted or bracket
   argument is only a character: `[[foo(1).cpp]]` is a filename and sorts.
-
 - A variable reference or generator expression (`${GENERATED}`, `"${GENERATED}"`,
   `$<TARGET_OBJECTS:x>`) holds its position, and files do not move across it —
   what it expands to is unknown.

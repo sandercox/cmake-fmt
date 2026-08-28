@@ -2267,11 +2267,14 @@ fn test_every_walk_clears_its_separator_after_a_group() {
 
 #[test]
 fn test_a_paren_inside_a_value_is_not_a_group() {
-    // The barrier test only sees the rendered string, and it looked for any `(`
-    // outside a *leading* quote. That caught one spelling of "the paren is just
-    // a character" and missed the rest: `[[foo(1).cpp]]` is a single filename,
-    // and calling it a group pinned the whole list — while the identical name in
-    // quotes sorted. Two opposite wrong answers from one predicate.
+    // Which arguments hold a group is recorded where the sections are built,
+    // because that is the only place that knows: the group arrives as an
+    // `ArgumentList` node. Asking the rendered string needed a scanner over
+    // quoted and bracket spans, and it was wrong in both directions —
+    // `[[foo(1).cpp]]` is one filename and was read as a group, pinning the
+    // whole list, while `a.cpp[[x(1)]]` holds a real group and the scanner
+    // opened a bracket span the lexer does not, hiding it and letting arguments
+    // sort across it.
     let sorting = FormatConfig {
         sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
         ..Default::default()
@@ -2305,7 +2308,41 @@ fn test_a_paren_inside_a_value_is_not_a_group() {
             "a paren inside a value was read as a group"
         );
     }
-    // And a real group is still a barrier, in every spelling that reaches here
+    // A real group is a barrier however it is spelled, including the one the
+    // scanner could not see. Here the arguments on each side may sort among
+    // themselves — what must not happen is one crossing the group.
+    for (input, before, after) in [
+        (
+            "set(SRCS z.cpp y.cpp a.cpp[[x(1)]] b.cpp)\n",
+            vec!["y.cpp", "z.cpp"],
+            vec!["b.cpp"],
+        ),
+        (
+            "set(SRCS a.cpp[[x(1)]] z.cpp y.cpp)\n",
+            vec![],
+            vec!["y.cpp", "z.cpp"],
+        ),
+    ] {
+        let result = format_text(input, &sorting);
+        let inner = result
+            .trim_end()
+            .trim_start_matches("set(SRCS ")
+            .trim_end_matches(')');
+        let words: Vec<&str> = inner.split_whitespace().collect();
+        let at = words
+            .iter()
+            .position(|w| w.contains("[[x(1)]]"))
+            .unwrap_or_else(|| panic!("the group went missing:\n{}", result));
+        assert_eq!(&words[..at], before.as_slice(), "crossed into:\n{}", result);
+        assert_eq!(
+            &words[at + 1..],
+            after.as_slice(),
+            "crossed out of:\n{}",
+            result
+        );
+        assert_eq!(result, format_text(&result, &sorting), "not idempotent");
+    }
+
     for input in [
         "set(SRCS z.cpp NOT(x.cpp) a.cpp)\n",
         "set(SRCS z.cpp a.cpp(b) c.cpp)\n",
@@ -2322,13 +2359,41 @@ fn test_a_paren_inside_a_value_is_not_a_group() {
         );
     }
 
-    // An unterminated bracket argument has swallowed the rest of the file, so
-    // nothing after it can be read reliably. A barrier is the fail-safe answer —
-    // it only declines to reorder — and sorting past it moved `z.cpp` *into* the
-    // value. The tool also appends a `)` per run for an unterminated bracket
-    // argument — `set(SRCS a [[b` does the same on main, with no group involved —
-    // so this shape has no fixed point either way. What must hold is that
-    // nothing moved.
+    // A token that opens a bracket argument and never closes it has swallowed
+    // the rest of the file, so nothing after it can be read — including whether
+    // it is a filename. That is a veto on the whole run, never an exemption:
+    // as an exemption it cancelled the value check and *enabled* sorting a list
+    // that had been left alone.
+    //
+    // The tool also appends a `)` per run for an unterminated bracket argument —
+    // `set(SRCS a [[b` does the same on main, with no group involved — so this
+    // shape has no fixed point either way. What must hold is that nothing moved.
+    // And an unterminated bracket vetoes rather than exempts: these two sorted
+    // where the previous predicate left them alone.
+    for input in [
+        "set(SRCS z.cpp y.cpp -DFOO[[z b.cpp a.cpp)\n",
+        "set(SRCS z.cpp y.cpp -DFOO[=[z b.cpp a.cpp)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &sorting),
+            input,
+            "an unterminated bracket exempted the run from the value check"
+        );
+    }
+    // The veto is the only thing holding these two: every other test in the
+    // chain passes them. Order rather than bytes, because the tool closes the
+    // unterminated command and so cannot return the input unchanged.
+    for input in [
+        "set(SRCS z.cpp y.cpp [[a(b) a.cpp)\n",
+        "set(SRCS z.cpp y.cpp [[a a.cpp)\n",
+    ] {
+        assert!(
+            format_text(input, &sorting).starts_with("set(SRCS z.cpp y.cpp [["),
+            "an unterminated bracket exempted the run from the value check:\n{}",
+            format_text(input, &sorting)
+        );
+    }
+
     let mut result = format_text("set(SRCS z.cpp [[a(b) c.cpp)\n", &sorting);
     for pass in 1..=3 {
         assert!(

@@ -343,12 +343,14 @@ fn test_unterminated_nested_group_roundtrips() {
     // old parser did too, so the roundtrip alone says nothing about this change.
     // What it has to also do is record the failure and still build the group
     // node, so the formatter has something to render instead of dropping it.
-    for input in [
-        "if((A)\n",
-        "if((\n",
-        "if((((((\n",
-        "if(()\n",
-        "if((A))extra\n",
+    // The second number is how many *nested* groups end at EOF, which is the
+    // only thing `parse_nested_argument_list`'s own error records.
+    for (input, expected_nested_errors) in [
+        ("if((A)\n", 0),
+        ("if((\n", 1),
+        ("if((((((\n", 5),
+        ("if(()\n", 0),
+        ("if((A))extra\n", 0),
     ] {
         let cst = parse_text(input);
         assert_eq!(
@@ -376,10 +378,21 @@ fn test_unterminated_nested_group_roundtrips() {
         // — removing the `errors.push` from `parse_nested_argument_list` left the
         // whole suite green. Nothing in `src/` reads parse errors today, so this
         // is the library API's contract rather than the formatter's.
-        assert!(
-            cst.has_errors(),
-            "an unterminated group should record a parse error for {:?}",
-            input
+        // Counted, not `has_errors()`: that is true for all five inputs from the
+        // enclosing command's own missing `)`, so it passes with this push
+        // removed. Three of the five never reach the nested arm at all — the
+        // command-level error fires first — so only the two that do can pin it.
+        let nested_errors = cst
+            .errors
+            .iter()
+            .filter(|e| e.message.contains("nested argument list"))
+            .count();
+        assert_eq!(
+            nested_errors,
+            expected_nested_errors,
+            "wrong number of nested-group errors for {:?}: {:?}",
+            input,
+            cst.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
         );
         for text in &nested {
             assert!(
