@@ -3842,6 +3842,70 @@ fn test_a_valueless_keywords_comment_sits_at_the_keywords_indent() {
 }
 
 #[test]
+fn test_a_single_value_keyword_keeps_a_comment_on_its_value() {
+    // The arm that stopped a comment demoting a `SingleValue` section emits two
+    // kinds after the value: the trailing comment on the value's own line, and
+    // the own-line comments written around it. Both are new, and both were
+    // unpinned — deleting the trailing-comment loop left the whole suite green
+    // while `list(APPEND V # note)` came back without `# note`, at exit 0 and a
+    // stable fixed point.
+    //
+    // Exact output, because order is the other half of it: emitting the comment
+    // *before* the value also passed, and produced `APPEND # note V # note` —
+    // the value swallowed into a comment and the comment duplicated. That is the
+    // mistake the `PairValue` arm already carries a comment about.
+    let config = FormatConfig::default();
+    for (input, expected) in [
+        // a trailing comment on the value
+        (
+            "list(APPEND V # note\n\ta.cpp\n)\n",
+            "list(APPEND V # note\n\ta.cpp\n)\n",
+        ),
+        (
+            "add_custom_command(TARGET t POST_BUILD\n\tCOMMENT c # note\n\tCOMMAND x)\n",
+            "add_custom_command(\n\tTARGET t\n\tPOST_BUILD\n\tCOMMENT c # note\n\tCOMMAND x\n)\n",
+        ),
+        // an own-line comment written before the value: it cannot stay there —
+        // a comment runs to end of line and would swallow the value — so it
+        // moves after, at the keyword's indent
+        (
+            "add_custom_command(TARGET t POST_BUILD\n\tCOMMENT\n\t# note\n\tc\n\tCOMMAND x)\n",
+            "add_custom_command(\n\tTARGET t\n\tPOST_BUILD\n\tCOMMENT c\n\t# note\n\tCOMMAND x\n)\n",
+        ),
+        // and both kinds at once, in that order
+        (
+            "list(APPEND V # trail\n\t# own\n\ta.cpp\n)\n",
+            "list(APPEND V # trail\n\t# own\n\ta.cpp\n)\n",
+        ),
+    ] {
+        let result = format_text(input, &config);
+        assert_eq!(result, expected, "wrong placement for {:?}", input);
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+        // and nothing became comment prose. The tokens are taken from the
+        // input rather than listed, so a shape added later cannot skip the
+        // check by not mentioning them.
+        for line in input.lines() {
+            for token in line
+                .split('#')
+                .next()
+                .unwrap_or("")
+                .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+                .filter(|word| !word.is_empty())
+                .skip(usize::from(line.starts_with(char::is_alphabetic)))
+            {
+                assert!(
+                    appears_as_code(&result, token),
+                    "{} was swallowed by the comment for {:?}:\n{}",
+                    token,
+                    input,
+                    result
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn test_a_comment_does_not_move_a_mode_keyword_off_its_line() {
     // The `SingleValue` shortcut keeps a multi-mode command's mode keyword and
     // its value on the opening line — `list(APPEND V …)`. A comment used to

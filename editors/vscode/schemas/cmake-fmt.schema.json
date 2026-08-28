@@ -189,7 +189,7 @@
         "sortable_positional": {
           "type": "boolean",
           "default": false,
-          "description": "Whether the command's keyword-less arguments are an unordered file list, as in set(VAR a.cpp b.cpp). Reaches the leading run only - the arguments before the first keyword - and its first argument is always pinned, since it names the list or target rather than belonging to it. So a two-element list never reorders, and a run after a keyword is left alone. Values must also look like source files; flag and library shapes are left alone."
+          "description": "Whether the command's keyword-less arguments are an unordered file list, as in set(VAR a.cpp b.cpp). Reaches two runs: the leading one - the arguments before the first keyword - whose first argument is always pinned since it names the list or target rather than belonging to it, so a two-element list never reorders; and the run overflowing a leading single-value keyword, with nothing pinned because that keyword consumed the name, which is what sorts list(APPEND SRCS ...). Do not set this on a command whose tail after such a keyword is order-significant. A run after a leading flag is not reached. Values must also look like source files; flag and library shapes are left alone."
         }
       }
     }

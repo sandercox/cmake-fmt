@@ -1206,3 +1206,82 @@ fn test_sorting_moves_a_trailing_comment_with_its_argument() {
         assert_eq!(result, format_text(&result, &config), "not idempotent");
     }
 }
+
+#[test]
+fn test_sortable_positional_reaches_exactly_two_runs() {
+    // The README, `--help-grammar` and the VS Code schema all describe what this
+    // flag reaches, and all three said "a run that follows a keyword is left
+    // alone" — which is false, in the unsafe direction. The run overflowing a
+    // *leading single-value* keyword is reached, with nothing pinned, because
+    // that keyword already consumed the name. That is what sorts
+    // `list(APPEND SRCS ...)`, and it applies to a user grammar too, so someone
+    // reading the old sentence could have enabled it on a `FROM src dst`
+    // wrapper believing the tail was protected.
+    //
+    // Pinned here so the three descriptions and the code cannot drift apart
+    // again.
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "w_single".to_string(),
+        CommandGrammarConfig {
+            one_value_keywords: vec!["FROM".to_string()],
+            sortable_positional: true,
+            sortable_keywords: Some(Vec::new()),
+            ..Default::default()
+        },
+    );
+    command_grammars.insert(
+        "w_flag".to_string(),
+        CommandGrammarConfig {
+            options: vec!["QUIET".to_string()],
+            sortable_positional: true,
+            sortable_keywords: Some(Vec::new()),
+            ..Default::default()
+        },
+    );
+    let config = FormatConfig {
+        command_grammars,
+        ..reordering_config()
+    };
+
+    // 1. The leading run, first argument pinned
+    assert_eq!(
+        format_text("w_single(x.cpp z.cpp a.cpp)\n", &config),
+        "w_single(x.cpp a.cpp z.cpp)\n",
+        "the leading run should sort with its first argument pinned"
+    );
+    assert_eq!(
+        format_text("w_single(z.cpp a.cpp)\n", &config),
+        "w_single(z.cpp a.cpp)\n",
+        "a two-element leading run has nothing to sort once the first is pinned"
+    );
+
+    // 2. The run overflowing a leading single-value keyword, nothing pinned
+    assert_eq!(
+        format_text("w_single(FROM base.cpp z.cpp m.cpp a.cpp)\n", &config),
+        "w_single(FROM base.cpp a.cpp m.cpp z.cpp)\n",
+        "the overflow run after a leading single-value keyword should sort whole"
+    );
+
+    // ...and only when that keyword leads: after a leading run, the keyword's
+    // own value is its business and the run before it is the leading one
+    assert_eq!(
+        format_text("w_single(x.cpp z.cpp a.cpp FROM base.cpp)\n", &config),
+        "w_single(x.cpp a.cpp z.cpp FROM base.cpp)\n",
+        "a trailing keyword should not change what the leading run does"
+    );
+
+    // 3. Nothing else. A run after a leading flag is not reached.
+    assert_eq!(
+        format_text("w_flag(QUIET z.cpp m.cpp a.cpp)\n", &config),
+        "w_flag(QUIET z.cpp m.cpp a.cpp)\n",
+        "a run after a leading flag is not reached"
+    );
+
+    // And the builtin the overflow rule exists for behaves the same way
+    assert_eq!(
+        format_text("list(APPEND V z.cpp m.cpp a.cpp)\n", &config),
+        "list(APPEND V a.cpp m.cpp z.cpp)\n",
+        "list(APPEND ...) is the same rule"
+    );
+}
