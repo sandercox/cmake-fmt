@@ -22,6 +22,7 @@ use super::post_process_rendered_output;
 /// Signals detected in argument list that affect formatting
 pub(crate) struct ArgumentFormatSignals {
     pub(crate) force_multiline: bool,
+    pub(crate) has_comments: bool,
 }
 
 /// Scope frame for tracking block opener arguments
@@ -163,6 +164,15 @@ fn format_file(
 
     let mut docs = Vec::new();
     let mut batch_strings = Vec::new();
+    // The width every doc in `docs` was laid out for. `render_batch` is called
+    // once at the end, so it used to render everything at whatever
+    // `max_line_length` the *last* directive in the file had set — while
+    // `format_condition_args` had already decided using the value in force where
+    // its command sat. A `# cmake-fmt: max_line_length=40` after a block made
+    // the two disagree by 40 columns: the layout declined, `pretty` broke, and
+    // the next pass swapped them back. Flushing on change keeps each doc
+    // rendered at the width it was measured against.
+    let mut batch_width = config.max_line_length;
     let mut current_indent: usize = 0;
     let mut blank_line_count = 0;
     let mut scope_stack: Vec<ScopeFrame> = Vec::new();
@@ -219,6 +229,15 @@ fn format_file(
                                     super::suppression::Directive::Style { key, value } => {
                                         if let Err(msg) = config.apply_override(key, value) {
                                             eprintln!("Warning: {}", msg);
+                                        }
+                                        if config.max_line_length != batch_width {
+                                            if !docs.is_empty() {
+                                                batch_strings.push(render_batch(
+                                                    std::mem::take(&mut docs),
+                                                    batch_width,
+                                                ));
+                                            }
+                                            batch_width = config.max_line_length;
                                         }
                                     }
                                     _ => {
@@ -327,15 +346,19 @@ fn format_file(
                             if let Some(trailing_comment) =
                                 comments::extract_trailing_comment(&child_node)
                             {
-                                // Normalize line comments, but not when suppressed
-                                let text = if !is_suppressed && !trailing_comment.starts_with("#[")
-                                {
-                                    cmake_rules::normalize_comment_whitespace(
+                                // The same renderer the other two sites use, so
+                                // a change to it cannot miss this one — four
+                                // rounds of findings were all one duplicated
+                                // normalization drifting from another. A
+                                // suppressed command is emitted verbatim, so it
+                                // keeps its comment as written.
+                                let text = if is_suppressed {
+                                    trailing_comment
+                                } else {
+                                    cmake_rules::render_trailing_comment(
                                         &trailing_comment,
                                         config.comment_style,
                                     )
-                                } else {
-                                    trailing_comment
                                 };
                                 raw_doc = raw_doc.append(RcDoc::space()).append(RcDoc::text(text));
                             }
@@ -459,15 +482,12 @@ fn format_file(
                             if let Some(trailing_comment) =
                                 comments::extract_trailing_comment(&child_node)
                             {
-                                // Normalize line comments (not bracket comments)
-                                let text = if !trailing_comment.starts_with("#[") {
-                                    cmake_rules::normalize_comment_whitespace(
-                                        &trailing_comment,
-                                        config.comment_style,
-                                    )
-                                } else {
-                                    trailing_comment
-                                };
+                                // Shared with `trailing_width_after`, so the
+                                // width model measures this exact string
+                                let text = cmake_rules::render_trailing_comment(
+                                    &trailing_comment,
+                                    config.comment_style,
+                                );
                                 cmd_doc = cmd_doc.append(RcDoc::space()).append(RcDoc::text(text));
                             }
 
@@ -476,8 +496,7 @@ fn format_file(
 
                             // Check if we should render a batch to prevent deep nesting
                             if docs.len() >= BATCH_SIZE {
-                                let batch =
-                                    render_batch(std::mem::take(&mut docs), config.max_line_length);
+                                let batch = render_batch(std::mem::take(&mut docs), batch_width);
                                 batch_strings.push(batch);
                             }
 
@@ -485,11 +504,16 @@ fn format_file(
                             if is_block_opener(&cmd_name) {
                                 current_indent += 1;
                                 // Extract opener arguments for scope tracking
+                                // Logical arguments, not raw tokens: adjacent
+                                // tokens like `${DIR}` + `/x.h` are one
+                                // argument. Collecting tokens made a forced
+                                // closer disagree with its opener — a space
+                                // appeared mid-path, and the two got different
+                                // clause layouts. CMake itself warns about the
+                                // mismatch.
                                 let opener_args: Vec<String> = cmd
                                     .argument_list()
-                                    .map(|al| {
-                                        al.arguments().map(|t| t.text().to_string()).collect()
-                                    })
+                                    .map(|al| collect_logical_args(&al))
                                     .unwrap_or_default();
                                 scope_stack.push(ScopeFrame { opener_args });
                             }
@@ -524,6 +548,10 @@ fn format_file(
                 match token.kind() {
                     SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
                         // Only emit standalone comments (not already handled)
+                        // Untrimmed: this is the key `handled_comments` was
+                        // filled with, and trimming it here stopped the lookup
+                        // matching, so the comment was emitted a second time.
+                        // The trim belongs on the text that is written, below.
                         let comment_text = token.text().to_string();
 
                         if !handled_comments.contains(&comment_text) {
@@ -539,6 +567,15 @@ fn format_file(
                                     super::suppression::Directive::Style { key, value } => {
                                         if let Err(msg) = config.apply_override(key, value) {
                                             eprintln!("Warning: {}", msg);
+                                        }
+                                        if config.max_line_length != batch_width {
+                                            if !docs.is_empty() {
+                                                batch_strings.push(render_batch(
+                                                    std::mem::take(&mut docs),
+                                                    batch_width,
+                                                ));
+                                            }
+                                            batch_width = config.max_line_length;
                                         }
                                     }
                                     _ => {
@@ -598,7 +635,7 @@ fn format_file(
 
     // Render any remaining docs in the final batch
     if !docs.is_empty() {
-        let batch = render_batch(docs, config.max_line_length);
+        let batch = render_batch(docs, batch_width);
         batch_strings.push(batch);
     }
 
@@ -652,7 +689,7 @@ fn format_command(
             // elseif carries a condition — always preserve its arguments
             if let Some(arg_list) = cmd.argument_list() {
                 let is_custom = !builtins::is_builtin_command(&name_lower);
-                format_argument_list(&arg_list, ctx, is_custom)
+                format_argument_list(&arg_list, ctx, is_custom, &name_lower)
             } else {
                 RcDoc::nil()
             }
@@ -671,11 +708,12 @@ fn format_command(
                         let grammar =
                             grammar_enum.and_then(|g| g.resolve(first_keyword.as_deref()));
                         // If no builtin grammar, check user grammars
-                        let user_grammar = if grammar.is_none() {
-                            ctx.user_grammars.get(&name_lower)
-                        } else {
-                            None
-                        };
+                        let user_grammar =
+                            if grammar.is_none() && !is_condition_command(&name_lower) {
+                                ctx.user_grammars.get(&name_lower)
+                            } else {
+                                None
+                            };
                         let effective_grammar = grammar.or(user_grammar);
                         // Skip keyword-aware formatting for unrecognized modes in multi-mode commands
                         let is_unrecognized_mode = grammar_enum
@@ -711,7 +749,7 @@ fn format_command(
                             )
                         } else {
                             let is_custom = !builtins::is_builtin_command(&name_lower);
-                            format_argument_list(&arg_list, ctx, is_custom)
+                            format_argument_list(&arg_list, ctx, is_custom, &name_lower)
                         }
                     } else {
                         RcDoc::nil()
@@ -726,7 +764,49 @@ fn format_command(
                     if closer_ctx.opener_args.is_empty() {
                         RcDoc::nil()
                     } else {
-                        RcDoc::text(closer_ctx.opener_args.join(" "))
+                        // A closer echoing a condition is laid out by the same
+                        // rules as its opener, measured at its own width — which
+                        // is not the same as getting the same layout: `endif` is
+                        // three columns wider than `if`, so there is a band of
+                        // widths where the opener fits on one line and the
+                        // closer does not. There is also no argument list to
+                        // read signals from, so the reconstructed condition is
+                        // treated as written on one line: it wraps only if it
+                        // doesn't fit.
+                        let signals = ArgumentFormatSignals {
+                            force_multiline: false,
+                            has_comments: false,
+                        };
+                        let laid_out = if is_condition_command(&name_lower) {
+                            // The caller places the closer's trailing comment,
+                            // but it still lands on this line, so it counts
+                            // towards the width — the same comment on the same
+                            // closer is counted under `closing_style = preserve`,
+                            // which reads its arguments through
+                            // `format_argument_list`.
+                            let trailing = trailing_width_after_command(cmd.syntax(), ctx.config);
+                            format_condition_args(
+                                &signals,
+                                ctx,
+                                &name_lower,
+                                &closer_ctx.opener_args,
+                                trailing,
+                            )
+                        } else {
+                            None
+                        };
+
+                        laid_out.unwrap_or_else(|| {
+                            // Mirror the space the opening paren gets, or
+                            // space_between_command_parens yields `endif( A)`
+                            // — spaced open, unspaced close.
+                            let doc = RcDoc::text(closer_ctx.opener_args.join(" "));
+                            if ctx.config.space_between_command_parens {
+                                doc.append(RcDoc::text(" "))
+                            } else {
+                                doc
+                            }
+                        })
                     }
                 }
             }
@@ -743,7 +823,12 @@ fn format_command(
                 .and_then(|_| detect_mode_keyword(&arg_list));
             let grammar = grammar_enum.and_then(|g| g.resolve(first_keyword.as_deref()));
             // If no builtin grammar, check user grammars (builtins take precedence)
-            let user_grammar = if grammar.is_none() {
+            // A condition is a language construct, not a command a project defines.
+            // A user grammar naming `if` would route it to the keyword-aware
+            // path — restoring the one-argument-per-line layout this exists to
+            // remove, and letting `sortable_keywords` reorder condition
+            // operands, which changes what the condition means.
+            let user_grammar = if grammar.is_none() && !is_condition_command(&name_lower) {
                 ctx.user_grammars.get(&name_lower)
             } else {
                 None
@@ -781,7 +866,7 @@ fn format_command(
                 )
             } else {
                 let is_custom = !builtins::is_builtin_command(&name_lower);
-                format_argument_list(&arg_list, ctx, is_custom)
+                format_argument_list(&arg_list, ctx, is_custom, &name_lower)
             }
         } else {
             RcDoc::nil()
@@ -797,20 +882,40 @@ fn format_command(
         } else {
             ""
         };
-    let has_args = cmd.argument_list().is_some_and(|al| {
-        al.syntax().children_with_tokens().any(|c| {
-            matches!(
-                c.kind(),
-                SyntaxKind::UNQUOTED_ARGUMENT
-                    | SyntaxKind::QUOTED_ARGUMENT
-                    | SyntaxKind::BRACKET_ARGUMENT
-                    | SyntaxKind::VARIABLE_REF
-                    | SyntaxKind::ENV_VAR_REF
-                    | SyntaxKind::CACHE_VAR_REF
-                    | SyntaxKind::GENERATOR_EXPR
-            )
+    // Whether a paren space is emitted has to be decided from what `args_doc`
+    // above actually produced, not from the command's own argument list: a
+    // closer's arguments are dropped under `remove` and replaced by its
+    // opener's under `force`. Reading the argument list regardless gave
+    // `endif( )` for a `remove`d `endif(EXISTS x)` and `endif( X)` on a second
+    // pass over a forced `endif(X)`, neither of which is idempotent.
+    let writes_own_args = || {
+        cmd.argument_list().is_some_and(|al| {
+            al.syntax().children_with_tokens().any(|c| {
+                matches!(
+                    c.kind(),
+                    SyntaxKind::UNQUOTED_ARGUMENT
+                        | SyntaxKind::QUOTED_ARGUMENT
+                        | SyntaxKind::BRACKET_ARGUMENT
+                        | SyntaxKind::VARIABLE_REF
+                        | SyntaxKind::ENV_VAR_REF
+                        | SyntaxKind::CACHE_VAR_REF
+                        | SyntaxKind::GENERATOR_EXPR
+                )
+            })
         })
-    });
+    };
+    let has_args = match closer_context {
+        // `elseif` carries a condition of its own, so closing_style never
+        // touches its arguments — the branch above formats them as written.
+        Some(closer) if !(closer.is_mid_block && name_lower == "elseif") => {
+            match ctx.config.closing_style {
+                ClosingStyle::Preserve => writes_own_args(),
+                ClosingStyle::Remove => false,
+                ClosingStyle::Force => !closer.opener_args.is_empty(),
+            }
+        }
+        _ => writes_own_args(),
+    };
     let space_after = if ctx.config.space_between_command_parens && has_args {
         " "
     } else {
@@ -865,7 +970,335 @@ pub(crate) fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> Arg
 
     let force_multiline = has_comments || has_blank_lines || has_newlines;
 
-    ArgumentFormatSignals { force_multiline }
+    ArgumentFormatSignals {
+        force_multiline,
+        has_comments,
+    }
+}
+
+/// Width of `s` in terminal columns.
+///
+/// Must match how the renderer measures text, or the decision to lay a
+/// condition out and the decision that it fits disagree. `pretty` measures
+/// non-ASCII text with `unicode_width`, so counting `char`s would
+/// under-estimate every wide character and hand the condition back to the
+/// generic one-argument-per-line layout.
+fn display_width(s: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(s)
+}
+
+/// Commands whose argument list is a boolean expression, not a list of values.
+///
+/// `endif`/`endwhile`/`else` are included because they can echo the opener's
+/// condition — under `closing_style = preserve` as written, under `force` as
+/// rebuilt — and a condition should be laid out as a condition wherever it
+/// appears. That is not the same as the two getting the *same* layout: `endif`
+/// is three columns wider than `if`, so there is a band of widths where the
+/// opener fits on one line and the closer does not.
+fn is_condition_command(name_lower: &str) -> bool {
+    matches!(
+        name_lower,
+        "if" | "elseif" | "else" | "while" | "endif" | "endwhile"
+    )
+}
+
+/// Operators that join the clauses of a condition.
+///
+/// Recognised wherever they appear in the argument list — there is no
+/// paren-depth tracking here, and on this branch nothing reaches it that would
+/// need any: a parenthesised sub-expression is dropped before this layout sees
+/// it, which is issue #5 and is fixed on a separate branch. Once that lands a
+/// group arrives as one argument, so an `AND` inside `(B OR C)` is part of that
+/// argument's text and still never tested.
+///
+/// Case-sensitive, because CMake itself is: `if(A and B)` is not a lowercase
+/// spelling of the operator, it is an error ("Unknown arguments specified").
+/// So a bare `and`/`or` can only be a value, and treating it as an operator
+/// would split a clause away from its comparison.
+fn is_condition_operator(arg: &str) -> bool {
+    arg == "AND" || arg == "OR"
+}
+
+/// The width of whatever will follow this command's `)` on the same line.
+///
+/// In practice a trailing comment. It lives outside the command node, as a
+/// sibling token, so the layout has to reach for it — and it has to, because it
+/// decides whether the condition fits on the line and the comment is part of
+/// that line.
+fn trailing_width_after(arg_list: &ArgumentList, config: &FormatConfig) -> usize {
+    let Some(invocation) = arg_list.syntax().parent() else {
+        return 0;
+    };
+    trailing_width_after_command(&invocation, config)
+}
+
+/// The same, for a command whose arguments are being reconstructed rather than
+/// read — a forced closer has no argument list of its own to reach up from.
+fn trailing_width_after_command(invocation: &SyntaxNode, config: &FormatConfig) -> usize {
+    // What the renderer emits, not what the source says. It writes exactly one
+    // space, keeps only the first comment on the line, and normalizes the
+    // whitespace after the `#` according to `comment_style` — so measuring the
+    // raw tokens measured a line that is never written, and a condition that
+    // fits was wrapped for ever while one that does not was left to overflow.
+    let mut next = invocation.next_sibling_or_token();
+    while let Some(sibling) = next {
+        match sibling.kind() {
+            SyntaxKind::WHITESPACE => {}
+            SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
+                let Some(token) = sibling.as_token() else {
+                    return 0;
+                };
+                let rendered =
+                    cmake_rules::render_trailing_comment(token.text(), config.comment_style);
+                // Measured whole, exactly as `pretty` measures it, because the
+                // emitter pushes a comment as a single `text` node. Only its
+                // first line really shares this line, but `pretty` widths the
+                // whole string, newlines included — so truncating to the first
+                // line made the model declare a fit that `pretty` refused, and
+                // the two layouts alternated for ever at default settings.
+                //
+                // The string is already trimmed per line by
+                // `render_trailing_comment`, which is the other half of the same
+                // rule: measure the bytes the file will hold, and measure them
+                // the way `pretty` will.
+                //
+                // The cost is a comment whose tail pushes its condition over
+                // the limit and wraps it needlessly. Fixing that means emitting
+                // the tail as its own lines, which is the emitter's decision to
+                // make, not the model's — until then they agree, and agreement
+                // is what keeps the output stable.
+                return 1 + display_width(&rendered);
+            }
+            // A newline, or anything that starts a new construct, ends the line
+            _ => break,
+        }
+        next = sibling.next_sibling_or_token();
+    }
+    0
+}
+
+/// Lay out an `if`/`elseif`/`while` condition that doesn't fit on one line.
+///
+/// A condition reads as clauses joined by AND/OR, so it breaks before each
+/// operator and keeps a whole clause on one line, rather than putting every
+/// word on a line of its own:
+///
+/// ```text
+/// if(NOT MODE STREQUAL "BATCH"
+///     AND NOT MODE STREQUAL "GROUP"
+/// )
+/// ```
+///
+/// A clause too long for one line is filled across continuation lines indented
+/// one level deeper, so it still reads as a single clause.
+///
+/// Applies whenever the condition would occupy more than one line — it either
+/// doesn't fit, or the author already broke it. A *single-clause* condition may
+/// still collapse back onto one line, if that is what fits; with two or more
+/// clauses it cannot, because every clause after the first takes its own line
+/// unconditionally — which is what
+/// `test_hand_wrapped_short_condition_uses_clause_layout` asserts. Returns
+/// `None` when the generic layout
+/// should stay in charge: a condition that fits on one line and was written that
+/// way, one with fewer than two arguments, or one carrying comments, which have
+/// to keep their own lines. A blank line inside a condition is not preserved.
+///
+/// "Fits" counts what the caller will append after the `)` as well — see
+/// `trailing`.
+fn format_condition_args(
+    signals: &ArgumentFormatSignals,
+    ctx: &FormatContext,
+    name_lower: &str,
+    args: &[String],
+    trailing: usize,
+) -> Option<RcDoc<'static, ()>> {
+    // A one-argument condition has nothing to split into clauses, so the generic
+    // layout is the right one for it. (`args.len() - 1` below only needs one.)
+    if args.len() < 2 {
+        return None;
+    }
+
+    // Comments pin arguments to their own lines; leave those to the generic path
+    if signals.has_comments {
+        return None;
+    }
+
+    let config = ctx.config;
+    let limit = config.max_line_length;
+    let paren_space = usize::from(config.space_between_command_parens);
+    let space_before =
+        usize::from(config.control_flow_space_before_paren && is_block_command(name_lower));
+    let base_indent = display_width(&indent_string(ctx.indent_level, config));
+
+    // Width of everything before the first argument: `<indent>if( `
+    let opening_width = base_indent + display_width(name_lower) + space_before + 1 + paren_space;
+
+    // Take over whenever the condition will be laid out on more than one line:
+    // either it doesn't fit, or the author already broke it and the generic
+    // layout would honour that by putting every word on its own line.
+    let args_width: usize = args.iter().map(|a| display_width(a)).sum::<usize>() + args.len() - 1;
+    // `trailing` is whatever the caller will put after the `)` on the same line
+    // — a trailing comment, in practice. Leaving it out meant a condition that
+    // fits while its *line* does not: this layout declined, the generic path
+    // broke the line because it can see the comment, and on that broken input
+    // this layout took over and joined the condition again. A two-pass cycle
+    // with no fixed point, at default settings, so `--check` rejected the
+    // tool's own output forever.
+    let flat_width = opening_width + args_width + paren_space + 1 + trailing;
+    let must_wrap = limit > 0 && flat_width > limit;
+    if !must_wrap && !signals.force_multiline {
+        return None;
+    }
+
+    // Split into clauses; each AND/OR opens a clause and leads its line
+    let mut clauses: Vec<Vec<&String>> = Vec::new();
+    for arg in args {
+        match clauses.last_mut() {
+            // An operator opens a clause; anything else joins the open one
+            Some(_) if is_condition_operator(arg) => clauses.push(vec![arg]),
+            Some(last) => last.push(arg),
+            None => clauses.push(vec![arg]),
+        }
+    }
+
+    let clause_indent = indent_string(ctx.indent_level + 1, config);
+    // A wrapped clause continues one level deeper than the clause lines, so the
+    // two can be told apart. With only one clause there is nothing to tell it
+    // apart from, and the extra level would just be noise.
+    let cont_indent = if clauses.len() > 1 {
+        indent_string(ctx.indent_level + 2, config)
+    } else {
+        clause_indent.clone()
+    };
+
+    // The first clause trails the command's opening paren; every later line
+    // carries its own indent.
+    let mut first_line: Option<String> = None;
+    let mut lines: Vec<String> = Vec::new();
+
+    // What follows the final word: the paren space, if any, and the `)` itself.
+    // `flat_width` above already counts it when deciding whether the condition
+    // fits, and the fill has to agree — otherwise a condition that overflows
+    // *only* because of the `)` is filled onto one line and then the `)` is
+    // pushed underneath it on its own, which reads as a bug.
+    let closing_width = paren_space + 1 + trailing;
+    let last_clause = clauses.len() - 1;
+
+    for (clause_idx, clause) in clauses.iter().enumerate() {
+        let mut indent = if clause_idx == 0 {
+            String::new()
+        } else {
+            clause_indent.clone()
+        };
+        let mut used = if clause_idx == 0 {
+            opening_width
+        } else {
+            display_width(&clause_indent)
+        };
+        let mut current = String::new();
+
+        for (word_idx, word) in clause.iter().enumerate() {
+            // An argument may itself span lines — a multi-line quoted or bracket
+            // argument. It then consumes the current line only as far as its
+            // first newline, and leaves the column at the width of whatever
+            // follows its last. Measuring it once, by its last line, answered
+            // both questions with the same number: two arguments were joined
+            // onto a line that then overflowed, at the default 80 columns.
+            let head = display_width(word.split('\n').next().unwrap_or(word));
+            let spans_lines = word.contains('\n');
+            let tail = if spans_lines {
+                display_width(word.rsplit('\n').next().unwrap_or(word))
+            } else {
+                head
+            };
+            let is_final = clause_idx == last_clause && word_idx + 1 == clause.len();
+            // The final word reserves room for what follows the `)` only while
+            // the whole condition is still on one line, because there the
+            // reservation is the mechanism that moves the `)` down at all.
+            //
+            // Once the condition has broken, `closing_paren_position` gives the
+            // `)` its own line and the trailing text goes with it, so there is
+            // nothing left to reserve for. Reserving the paren space and the
+            // `)` itself anyway stranded an operator alone on a line whose
+            // operand would have fit beside it -- a `paren_space + 1` band, and
+            // the one-word-per-line shape this layout exists to remove.
+            //
+            // Clause 0 sets `first_line` before anything can reach `lines`, so
+            // this is the whole test for "nothing has been emitted yet"; and
+            // `still_one_line == false` implies the condition broke, since both
+            // sites that assign `first_line` guarantee a later `lines.push`.
+            let still_one_line = first_line.is_none();
+            let reserved = if is_final && still_one_line {
+                closing_width
+            } else {
+                0
+            };
+
+            if !current.is_empty() && limit > 0 && used + 1 + head + reserved > limit {
+                // Fill up to the limit, then continue the clause one level deeper
+                let line = std::mem::take(&mut current);
+                if clause_idx == 0 && first_line.is_none() {
+                    first_line = Some(line);
+                } else {
+                    lines.push(format!("{}{}", indent, line));
+                }
+                indent = cont_indent.clone();
+                used = display_width(&cont_indent);
+            } else if !current.is_empty() {
+                current.push(' ');
+                used += 1;
+            }
+            current.push_str(word);
+
+            // One rule for where the column ends up, so the three places a word
+            // can be placed cannot disagree about it
+            used = if spans_lines { tail } else { used + head };
+        }
+
+        if clause_idx == 0 && first_line.is_none() {
+            first_line = Some(current);
+        } else {
+            lines.push(format!("{}{}", indent, current));
+        }
+    }
+
+    // Render to a single string rather than concat-ing one doc per line: the
+    // fold builds a left-nested Append chain whose depth tracks the line count,
+    // which overflows the stack on Drop for a pathologically long condition.
+    // The force-multiline path below does the same for the same reason.
+    let mut rendered = first_line.expect("clause 0 always yields a line");
+    // Captured before the loop consumes `lines`. `must_wrap` says the condition
+    // did not fit flat, which is not the same question as whether it *was*
+    // broken — and it is the second that decides where the `)` goes. The two do
+    // disagree: `flat_width` counts a multi-line argument's whole text while the
+    // fill counts only the line it occupies, so `if(A "xxx…\nyy")` at a narrow
+    // limit is "too wide" and yet fills onto one line. Asking `must_wrap` there
+    // put a `)` under a joined condition.
+    let broke = !lines.is_empty();
+    for line in lines {
+        rendered.push('\n');
+        rendered.push_str(&line);
+    }
+
+    // If the whole condition collapsed to one line, close it on that line. The
+    // arguments were deliberately joined; a lone `)` underneath them reads as a
+    // bug, and elsewhere a hardline before `)` only follows arguments that are
+    // themselves on separate lines. Returning None here would not do — the
+    // generic path would see force_multiline and explode it again.
+    //
+    // The flat case is emitted directly rather than as a `flat_alt` in a group:
+    // inside a group `pretty` re-decides using the rest of the line, and the
+    // pre-rendered text handed to it holds newlines whenever an argument spans
+    // lines, which its column tracking gets wrong. `if(A "xxx…\nyy")` at a
+    // narrow limit had its `)` stranded that way.
+    let closing = if broke {
+        closing_paren_position(config, ctx.indent_level, true)
+    } else if config.space_between_command_parens {
+        RcDoc::text(" ")
+    } else {
+        RcDoc::nil()
+    };
+    Some(RcDoc::text(rendered).append(closing))
 }
 
 /// Format an argument list with intelligent line breaking
@@ -873,6 +1306,7 @@ fn format_argument_list(
     arg_list: &ArgumentList,
     ctx: &FormatContext,
     is_custom_command: bool,
+    name_lower: &str,
 ) -> RcDoc<'static, ()> {
     let args = collect_logical_args(arg_list);
 
@@ -882,6 +1316,20 @@ fn format_argument_list(
 
     // Detect formatting signals
     let signals = detect_argument_formatting_signals(arg_list);
+
+    // `if`/`elseif`/`while` hold a boolean expression rather than a list, so
+    // they get a layout that keeps each clause readable when it has to wrap.
+    if is_condition_command(name_lower)
+        && let Some(doc) = format_condition_args(
+            &signals,
+            ctx,
+            name_lower,
+            &args,
+            trailing_width_after(arg_list, ctx.config),
+        )
+    {
+        return doc;
+    }
 
     // If no multiline signals, use auto-layout (flat_alt + group)
     // ARGL-03: For builtin commands, first arg stays on same line when broken
@@ -1102,7 +1550,21 @@ pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
                 | SyntaxKind::ENV_VAR_REF
                 | SyntaxKind::CACHE_VAR_REF
                 | SyntaxKind::GENERATOR_EXPR => {
-                    let text = token.text();
+                    // Per line, not per token: `post_process_rendered_output`
+                    // strips trailing whitespace from every line, so a token
+                    // that spans lines is written narrower than it reads here —
+                    // and these strings are what `format_condition_args`
+                    // measures. `if(AAAA BBBB "q…   \nz")` had no fixed point:
+                    // the layout broke it, the strip made the pieces fit, the
+                    // next pass joined them again.
+                    //
+                    // Only the sites a width decision reads from need this. The
+                    // raw force-multiline walk below and the standalone-comment
+                    // path have already broken by the time they emit, so
+                    // trimming there changes nothing — measured over 216
+                    // shape/style combinations — and the strip cleans up after
+                    // them.
+                    let text = &cmake_rules::trim_line_ends(token.text());
                     if !saw_separator && !args.is_empty() {
                         args.last_mut().unwrap().push_str(text);
                     } else {

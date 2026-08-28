@@ -250,6 +250,7 @@ dependencies = [
  "supports-color 3.0.2",
  "tempfile",
  "toml",
+ "unicode-width 0.2.2",
  "walkdir",
 ]
 

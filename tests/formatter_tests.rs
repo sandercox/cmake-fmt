@@ -1820,3 +1820,1577 @@ set(RESAPI_SOURCE_MAC
         "Blank line before trailing comments should be idempotent"
     );
 }
+
+// ============================================================================
+// CONDITION WRAPPING (if / elseif / while)
+// ============================================================================
+
+#[test]
+fn test_long_condition_breaks_at_boolean_operators() {
+    // Regression: https://github.com/sandercox/cmake-fmt/issues/2
+    // A wrapped condition used to put every word on its own line.
+    let input = concat!(
+        "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+        "  AND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\")\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+            "\tAND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\"\n",
+            ")\n",
+            "endif()\n"
+        )
+    );
+}
+
+#[test]
+fn test_long_condition_breaks_before_or() {
+    let input = concat!(
+        "while(SOME_LONG_CONDITION_VARIABLE AND ANOTHER_LONG_CONDITION_VARIABLE ",
+        "OR YET_MORE_STUFF)\n",
+        "endwhile()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "while(SOME_LONG_CONDITION_VARIABLE\n",
+            "\tAND ANOTHER_LONG_CONDITION_VARIABLE\n",
+            "\tOR YET_MORE_STUFF\n",
+            ")\n",
+            "endwhile()\n"
+        )
+    );
+}
+
+#[test]
+fn test_long_elseif_condition_breaks_at_operators() {
+    let input = concat!(
+        "if(FOO)\n",
+        "elseif(SOME_LONG_CONDITION_VARIABLE AND ANOTHER_LONG_CONDITION_VARIABLE ",
+        "OR MORE_STUFF)\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert!(
+        result.contains("elseif(SOME_LONG_CONDITION_VARIABLE\n\tAND ANOTHER_LONG_CONDITION_VARIABLE\n\tOR MORE_STUFF\n)"),
+        "elseif condition was not laid out by clause:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_short_condition_stays_on_one_line() {
+    let input = "if(A AND B)\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn test_over_long_clause_fills_continuation_lines() {
+    // A clause that can't fit on one line is filled across continuation lines
+    // indented one level deeper, so it still reads as one clause.
+    let input = concat!(
+        "if(SUPER_DUPER_EXTREMELY_LONG_SINGLE_CLAUSE_VARIABLE_NAME_THAT_WONT_FIT_AT_ALL_OK ",
+        "STREQUAL \"value\" AND B)\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if(SUPER_DUPER_EXTREMELY_LONG_SINGLE_CLAUSE_VARIABLE_NAME_THAT_WONT_FIT_AT_ALL_OK\n",
+            "\t\tSTREQUAL \"value\"\n",
+            "\tAND B\n",
+            ")\n",
+            "endif()\n"
+        )
+    );
+}
+
+#[test]
+fn test_long_condition_respects_indent_and_paren_style() {
+    let input = concat!(
+        "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" ",
+        "AND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\")\n",
+        "endif()\n"
+    );
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 2,
+        control_flow_space_before_paren: true,
+        space_between_command_parens: true,
+        indent_closing_paren: true,
+        ..Default::default()
+    };
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if ( NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+            "  AND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\"\n",
+            "  )\n",
+            "endif ()\n"
+        )
+    );
+}
+
+#[test]
+fn test_long_condition_nested_indentation() {
+    let input = concat!(
+        "if(OUTER)\n",
+        "\tif(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" ",
+        "AND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\")\n",
+        "\tendif()\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if(OUTER)\n",
+            "\tif(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+            "\t\tAND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\"\n",
+            "\t)\n",
+            "\tendif()\n",
+            "endif()\n"
+        )
+    );
+}
+
+#[test]
+fn test_long_condition_is_idempotent() {
+    let input = concat!(
+        "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" ",
+        "AND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\" OR OVERRIDE_MODE)\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let once = format_text(input, &config);
+    let twice = format_text(&once, &config);
+    assert_eq!(once, twice, "condition layout is not idempotent");
+    // Idempotency alone said nothing here — the generic one-argument-per-line
+    // layout is a fixed point too, so this passed before the clause layout
+    // existed. Assert the layout as well.
+    assert_eq!(
+        once,
+        concat!(
+            "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+            "\tAND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\"\n",
+            "\tOR OVERRIDE_MODE\n",
+            ")\n",
+            "endif()\n"
+        )
+    );
+}
+
+#[test]
+fn test_long_condition_with_comment_keeps_generic_layout() {
+    // A comment inside the condition needs its own line, so the clause layout
+    // steps aside rather than folding the comment into a clause.
+    let input = concat!(
+        "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" # only two modes\n",
+        "\tAND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\")\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert!(
+        result.contains("# only two modes"),
+        "comment was lost:\n{}",
+        result
+    );
+    let twice = format_text(&result, &config);
+    assert_eq!(result, twice, "commented condition is not idempotent");
+}
+
+#[test]
+fn test_foreach_is_not_treated_as_condition() {
+    // foreach carries a list, not a boolean expression: AND is just a value
+    let input = concat!(
+        "foreach(item IN LISTS SOME_LONG_LIST_VARIABLE ANOTHER_LONG_LIST_VARIABLE ",
+        "AND_MORE_HERE)\n",
+        "endforeach()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert!(
+        result.contains("\tLISTS\n"),
+        "foreach should keep the generic layout:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_hand_wrapped_short_condition_uses_clause_layout() {
+    // The condition fits on one line, but the author broke it, so the generic
+    // layout would honour that by putting every word on its own line.
+    let input = concat!(
+        "if(WITH_CUDA AND NOT OPENCV_PLATFORM_IOS\n",
+        "   AND NOT OPENCV_PLATFORM_ANDROID)\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if(WITH_CUDA\n",
+            "\tAND NOT OPENCV_PLATFORM_IOS\n",
+            "\tAND NOT OPENCV_PLATFORM_ANDROID\n",
+            ")\n",
+            "endif()\n"
+        )
+    );
+}
+
+#[test]
+fn test_lowercase_and_or_are_values_not_operators() {
+    // CMake rejects `if(A and B)` outright, so a bare `and`/`or` can only be a
+    // value — breaking there would tear a comparison off its operand.
+    let input = concat!(
+        "if(MY_VAR STREQUAL and OR MY_OTHER_VARIABLE_NAME_IS_LONG STREQUAL Or ",
+        "AND SOMETHING_ELSE)\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert!(
+        result.contains("if(MY_VAR STREQUAL and\n"),
+        "lowercase `and` was treated as an operator:\n{}",
+        result
+    );
+    assert!(
+        result.contains("STREQUAL Or\n"),
+        "`Or` was treated as an operator:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_condition_with_unlimited_line_length() {
+    // max_line_length = 0 means unlimited: clauses still get a line each
+    // because the author broke the condition, but nothing wraps on width.
+    let input = "if(A\n AND B)\nendif()\n";
+    let config = FormatConfig {
+        max_line_length: 0,
+        ..Default::default()
+    };
+    let result = format_text(input, &config);
+
+    assert_eq!(result, "if(A\n\tAND B\n)\nendif()\n");
+}
+
+#[test]
+fn test_single_clause_continuation_indents_one_level() {
+    // With only one clause there are no clause lines to distinguish the
+    // continuation from, so it sits where every other wrapped command puts it.
+    let input = concat!(
+        "if(NOT SOMETHING_EXTREMELY_LONG_THAT_EXCEEDS_EIGHTY_CHARACTERS_BY_ITSELF_YES_INDEED)\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if(NOT\n",
+            "\tSOMETHING_EXTREMELY_LONG_THAT_EXCEEDS_EIGHTY_CHARACTERS_BY_ITSELF_YES_INDEED\n",
+            ")\n",
+            "endif()\n"
+        )
+    );
+}
+
+#[test]
+fn test_preserved_closer_condition_matches_opener() {
+    // endif echoes the opener's condition under closing_style = preserve; the
+    // two must not be laid out differently.
+    let cond = "NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" AND NOT WICKHOPPER_MODE STREQUAL \"GROUP\"";
+    let input = format!("if({})\nendif({})\n", cond, cond);
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Preserve,
+        ..Default::default()
+    };
+    let result = format_text(&input, &config);
+
+    let laid_out = concat!(
+        "(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+        "\tAND NOT WICKHOPPER_MODE STREQUAL \"GROUP\"\n",
+        ")"
+    );
+    assert_eq!(
+        result,
+        format!("if{}\nendif{}\n", laid_out, laid_out),
+        "opener and closer disagree"
+    );
+}
+
+#[test]
+fn test_very_long_condition_does_not_overflow_stack() {
+    // The layout used to build one Doc node per line, whose left-nested Append
+    // chain overflowed the stack on Drop for a condition this size.
+    let clauses: Vec<String> = (0..20_000).map(|i| format!("VAR_{}", i)).collect();
+    let input = format!("if({})\nendif()\n", clauses.join(" AND "));
+    let config = default_config();
+
+    let once = format_text(&input, &config);
+    assert!(once.contains("\tAND VAR_19999\n"), "last clause missing");
+    assert_eq!(once, format_text(&once, &config), "not idempotent");
+}
+
+#[test]
+fn test_condition_width_uses_display_width_not_char_count() {
+    // The layout has to measure width the way the renderer does. `pretty`
+    // measures non-ASCII text with unicode-width, so counting chars
+    // under-estimated every wide character: the layout decided the condition
+    // fit, abstained, and the generic path — measuring correctly — exploded it
+    // one argument per line. That also made the output non-idempotent.
+    //
+    // chars 58, bytes 80, display width 64, against a limit of 60.
+    let input = concat!(
+        "if(NAME STREQUAL \"éééééééééé\" AND OTHER STREQUAL \"你好你好你好\")\n",
+        "endif()\n"
+    );
+    let config = FormatConfig {
+        use_tabs: false,
+        indent_width: 2,
+        max_line_length: 60,
+        ..Default::default()
+    };
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if(NAME STREQUAL \"éééééééééé\"\n",
+            "  AND OTHER STREQUAL \"你好你好你好\"\n",
+            ")\n",
+            "endif()\n"
+        )
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_forced_closer_condition_matches_opener() {
+    // closing_style = force reconstructs the closer from the opener's
+    // arguments, bypassing the argument list entirely. Without the condition
+    // layout there it emitted one long line under a wrapped opener — the exact
+    // inconsistency that including endif/endwhile is meant to prevent.
+    let input = concat!(
+        "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" ",
+        "AND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\")\n",
+        "\tmessage(hi)\n",
+        "endif()\n"
+    );
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        ..Default::default()
+    };
+    let result = format_text(input, &config);
+
+    let laid_out = concat!(
+        "(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+        "\tAND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\"\n",
+        ")"
+    );
+    assert_eq!(
+        result,
+        format!("if{}\n\tmessage(hi)\nendif{}\n", laid_out, laid_out)
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_else_gets_the_same_layout_as_its_opener() {
+    // `else` is a mid-block command but not `elseif`, so it fell past both the
+    // elseif special case and the condition check into the join fallback — a
+    // 107-column line between a wrapped `if` and a wrapped `endif`.
+    let cond = "NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" AND NOT WICKHOPPER_MODE STREQUAL \"GROUP\"";
+    let input = format!(
+        "if({})\n\tmessage(hi)\nelse()\n\tmessage(bye)\nendif()\n",
+        cond
+    );
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        ..Default::default()
+    };
+    let result = format_text(&input, &config);
+
+    for line in result.lines() {
+        assert!(
+            line.len() <= 80,
+            "line over the limit, so a closer did not get the clause layout:\n{}",
+            result
+        );
+    }
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_forced_closer_uses_merged_arguments() {
+    // opener_args came from raw tokens while the opener used merged logical
+    // arguments, so `${VAR}` and `/path` were one argument to the opener and
+    // two to the closer. The injected space makes CMake itself warn that the
+    // block opens and closes with mis-matching arguments.
+    let input = concat!(
+        "if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/utils/googletest/include/gtest/gtest.h ",
+        "AND SOMETHING_ELSE_LONG)\n",
+        "\tmessage(hi)\n",
+        "endif()\n"
+    );
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        ..Default::default()
+    };
+    let result = format_text(input, &config);
+
+    assert!(
+        !result.contains("${CMAKE_CURRENT_SOURCE_DIR} /utils"),
+        "a space was injected into the path:\n{}",
+        result
+    );
+    let opener = result
+        .lines()
+        .next()
+        .expect("opener")
+        .trim_start_matches("if");
+    let closer_line = result
+        .lines()
+        .find(|l| l.starts_with("endif"))
+        .expect("closer");
+    assert_eq!(
+        opener,
+        closer_line.trim_start_matches("endif"),
+        "opener and closer disagree:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_forced_closer_paren_spacing_is_symmetric() {
+    // has_args read the source `endif()`, which has no arguments, so the width
+    // model assumed a space the renderer never emitted and `endif(X)` became
+    // `endif( X)` on a second pass.
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        space_between_command_parens: true,
+        ..Default::default()
+    };
+    let result = format_text("if(A)\n\tmessage(x)\nendif()\n", &config);
+
+    assert!(
+        result.contains("endif( A )"),
+        "closer spacing should mirror the opener:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_paren_spacing_follows_the_arguments_actually_written() {
+    // The same width-model bug in its two remaining shapes. `elseif` carries a
+    // condition of its own, so `closing_style` never reconstructs it from the
+    // opener — but the opener's arguments were consulted anyway, and an
+    // argument-less `elseif` came out as `elseif( )`. Under `remove` a closer's
+    // arguments are dropped, yet its own argument list still asked for a space,
+    // so `endif(EXISTS x)` became `endif( )` and only reached `endif()` on a
+    // second pass.
+    let forced = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        space_between_command_parens: true,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(A)\n\tmessage(x)\nelseif()\n\tmessage(y)\nendif()\n",
+        &forced,
+    );
+    assert!(
+        result.contains("elseif()\n"),
+        "an argument-less elseif should stay empty:\n{}",
+        result
+    );
+    assert!(
+        result.contains("endif( A )"),
+        "the closer should still echo its opener:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &forced), "not idempotent");
+
+    let removed = FormatConfig {
+        closing_style: ClosingStyle::Remove,
+        space_between_command_parens: true,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(EXISTS foo)\n\tmessage(x)\nendif(EXISTS foo)\n",
+        &removed,
+    );
+    assert!(
+        result.contains("endif()\n"),
+        "a removed closer should have no paren space:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &removed), "not idempotent");
+}
+
+#[test]
+fn test_joined_condition_closes_on_the_same_line() {
+    // A hand-wrapped condition that fits gets joined onto one line; a lone `)`
+    // underneath it reads as a bug, and nothing else in the formatter puts a
+    // hardline before `)` unless the arguments are themselves on separate lines.
+    let config = default_config();
+    let result = format_text(
+        "if(CMAKE_CXX_COMPILER_ID STREQUAL\n   \"GNU\")\nendif()\n",
+        &config,
+    );
+
+    assert_eq!(
+        result,
+        "if(CMAKE_CXX_COMPILER_ID STREQUAL \"GNU\")\nendif()\n"
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+/// The largest condition that still fits on one line, and the first that does not.
+///
+/// Every term of the width model — the indent, the command name, the space
+/// before `(`, the paren spaces, the inter-argument spaces and the closing `)` —
+/// shifts this boundary by one column, so pinning the boundary pins all of them.
+/// Six independent mutations of that arithmetic used to leave the whole suite
+/// green.
+fn assert_wrap_boundary(config: &FormatConfig, build: fn(&str) -> String, nesting: usize) {
+    let limit = config.max_line_length;
+    let mut last_flat: Option<(usize, usize)> = None;
+
+    for n in 1..200 {
+        let condition = build(&"A".repeat(n));
+        let input = if nesting == 0 {
+            format!("{}\n\tmessage(x)\nendif()\n", condition)
+        } else {
+            format!(
+                "if(OUTER)\n\t{}\n\t\tmessage(x)\n\tendif()\nendif()\n",
+                condition
+            )
+        };
+        let result = format_text(&input, config);
+        let line = result.lines().nth(nesting).expect("condition line");
+        let width = line.chars().count();
+
+        // The condition is on one line exactly when the `)` is still on it
+        if line.trim_end().ends_with(')') {
+            assert!(
+                width <= limit,
+                "a flat condition overflowed: {} columns > {} for n={}\n{}",
+                width,
+                limit,
+                n,
+                result
+            );
+            last_flat = Some((n, width));
+            continue;
+        }
+
+        // It broke. The last one that fitted must have filled the line exactly:
+        // one column short would mean the model reserves something the renderer
+        // does not emit, one column over is caught above.
+        let (flat_n, flat_width) = last_flat.expect("nothing fitted at all");
+        assert_eq!(
+            flat_width,
+            limit,
+            "the last flat condition (n={}) stopped {} columns short of the limit",
+            flat_n,
+            limit - flat_width
+        );
+        // And nothing in the broken form may overflow either
+        for line in result.lines() {
+            if line.split_whitespace().count() > 1 {
+                assert!(
+                    line.chars().count() <= limit,
+                    "wrapped line overflows: {:?}\n{}",
+                    line,
+                    result
+                );
+            }
+        }
+        // A `)` alone on a line must follow arguments that are themselves split,
+        // so the condition has to occupy at least two lines before it. The old
+        // form of this compared the total line count against `nesting + 3`,
+        // which the broken path always exceeds, so it could never fail.
+        if let Some(closer) = result.lines().position(|l| l.trim() == ")") {
+            assert!(
+                closer >= nesting + 2,
+                "the closing paren was stranded under a joined condition:\n{}",
+                result
+            );
+        }
+        return;
+    }
+    panic!("the condition never broke");
+}
+
+#[test]
+fn test_wrap_boundary_accounts_for_every_column() {
+    let single = |arg: &str| format!("if(FIRST STREQUAL \"{}\")", arg);
+    let two_clause = |arg: &str| format!("if(FIRST AND SECOND STREQUAL \"{}\")", arg);
+
+    for limit in [40, 60] {
+        // Tabs, spaces, and a deeper indent — pins the indent term
+        assert_wrap_boundary(
+            &FormatConfig {
+                max_line_length: limit,
+                ..Default::default()
+            },
+            single,
+            0,
+        );
+        assert_wrap_boundary(
+            &FormatConfig {
+                max_line_length: limit,
+                use_tabs: false,
+                indent_width: 4,
+                ..Default::default()
+            },
+            single,
+            1,
+        );
+        // Pins the paren-space term
+        assert_wrap_boundary(
+            &FormatConfig {
+                max_line_length: limit,
+                space_between_command_parens: true,
+                ..Default::default()
+            },
+            single,
+            0,
+        );
+        // Pins the space-before-paren term
+        assert_wrap_boundary(
+            &FormatConfig {
+                max_line_length: limit,
+                control_flow_space_before_paren: true,
+                ..Default::default()
+            },
+            single,
+            0,
+        );
+        // Pins the inter-argument spaces term
+        assert_wrap_boundary(
+            &FormatConfig {
+                max_line_length: limit,
+                ..Default::default()
+            },
+            two_clause,
+            0,
+        );
+    }
+}
+
+#[test]
+fn test_the_indent_counts_toward_the_conditions_width() {
+    // A condition nested in another block starts further right, and the layout
+    // only takes over when the condition will not fit. Leaving the indent out of
+    // that decision made it decline on a condition that overflows *because* of
+    // the indent, and the generic layout then put every argument on its own
+    // line — which is the shape this whole feature exists to avoid. Taken from
+    // llvm/AddLLVM.cmake, where it happens at a 40-column limit.
+    let config = FormatConfig {
+        max_line_length: 40,
+        use_tabs: false,
+        indent_width: 4,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(OUTER)\n\tif(NOT ARG_MODULE AND NOT ARG_OBJECT)\n\t\tmessage(x)\n\tendif()\nendif()\n",
+        &config,
+    );
+
+    assert!(
+        result.contains("if(NOT ARG_MODULE\n") && result.contains("AND NOT ARG_OBJECT\n"),
+        "the condition was not laid out by clause:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_clause_that_exactly_fills_the_line_is_not_broken() {
+    // The fill test asks whether the next word still fits; off by one it breaks
+    // the clause a word early and indents the tail for no reason. `AND SECOND
+    // STREQUAL "AAAAAAA"` is exactly 30 columns with its indent.
+    //
+    // The exactly-fitting clause is in the *middle* here, so `is_final` is
+    // false and nothing is reserved for the closer. The final position is a
+    // separate arm and has its own test below.
+    let config = FormatConfig {
+        max_line_length: 30,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(FIRST AND SECOND STREQUAL \"AAAAAAA\" AND THIRD)\n\tmessage(x)\nendif()\n",
+        &config,
+    );
+
+    assert!(
+        result.contains("\tAND SECOND STREQUAL \"AAAAAAA\"\n"),
+        "a clause that fits exactly was broken:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_the_last_clause_may_fill_the_line_once_the_condition_has_broken() {
+    // The final word reserves room for what follows the `)`, which is right
+    // while the whole condition is still on one line: the reservation is what
+    // moves the `)` down. Once the condition has broken, the `)` takes its own
+    // line and there is nothing left to reserve for — but the arm went on
+    // reserving `paren_space + 1`, so an operator was stranded alone on a line
+    // whose operand would have fit beside it:
+    //
+    //     if(NOT A                    if(NOT A
+    //         AND               ->        AND YYY…(72)
+    //             YYY…(72)            )
+    //     )
+    //
+    // A one-column band, and the same one-word-per-line shape this layout
+    // exists to remove. `    AND ` plus 72 operand characters is exactly the
+    // 80-column limit.
+    let config = FormatConfig {
+        use_tabs: false,
+        ..Default::default()
+    };
+    let operand = "Y".repeat(72);
+    let result = format_text(
+        &format!("if(NOT A AND {})\n\tmessage(x)\nendif()\n", operand),
+        &config,
+    );
+
+    assert!(
+        result.contains(&format!("    AND {}\n", operand)),
+        "the operator was stranded from an operand that fits beside it:\n{}",
+        result
+    );
+    for line in result.lines() {
+        assert!(
+            line.chars().count() <= config.max_line_length,
+            "line over the limit ({} cols):\n{}",
+            line.chars().count(),
+            result
+        );
+    }
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+/// Grow a two-clause condition to the wrapping boundary and assert that when it
+/// breaks, the clause layout — not the generic one-argument-per-line layout —
+/// is what produced the break.
+///
+/// This is the assertion `assert_wrap_boundary` cannot make. When the width
+/// model under-counts by a column the layout *declines* at the boundary, the
+/// generic path breaks the line correctly, and the flat width still comes out
+/// equal to the limit — so the boundary assertion is satisfied by the wrong
+/// layout. Three mutations of the arithmetic survived for exactly that reason.
+fn assert_clause_layout_survives_the_boundary(config: &FormatConfig) {
+    let limit = config.max_line_length;
+    let mut broke = false;
+
+    for n in 1..120 {
+        let input = format!(
+            "if(FIRST AND SECOND STREQUAL \"{}\")\n\tmessage(x)\nendif()\n",
+            "A".repeat(n)
+        );
+        let result = format_text(&input, config);
+        let first = result.lines().next().expect("a first line");
+        if first.trim_end().ends_with(')') {
+            assert!(
+                first.chars().count() <= limit,
+                "a flat condition overflowed at n={}:\n{}",
+                n,
+                result
+            );
+            continue;
+        }
+
+        broke = true;
+        // The whole second clause belongs on one line. The generic layout puts
+        // `AND`, `SECOND` and `STREQUAL` on three lines of their own.
+        assert!(
+            result
+                .lines()
+                .any(|l| l.trim().starts_with("AND SECOND STREQUAL")),
+            "the clause layout gave way to the generic one at n={} (limit {}):\n{}",
+            n,
+            limit,
+            result
+        );
+        assert_eq!(result, format_text(&result, config), "not idempotent");
+        if n > 4 {
+            break;
+        }
+    }
+
+    assert!(broke, "the condition never wrapped at limit {}", limit);
+}
+
+#[test]
+fn test_the_clause_layout_survives_every_column_term() {
+    for limit in [40, 60, 80] {
+        assert_clause_layout_survives_the_boundary(&FormatConfig {
+            max_line_length: limit,
+            ..Default::default()
+        });
+        // Pins the paren-space term in both the fit decision and the fill: with
+        // it dropped, the layout declines one column early and the generic
+        // one-argument-per-line shape appears instead
+        assert_clause_layout_survives_the_boundary(&FormatConfig {
+            max_line_length: limit,
+            space_between_command_parens: true,
+            ..Default::default()
+        });
+        // Pins the space-before-paren term, which a corpus sweep cannot catch:
+        // it is a one-column threshold, and no corpus file sits on it
+        assert_clause_layout_survives_the_boundary(&FormatConfig {
+            max_line_length: limit,
+            control_flow_space_before_paren: true,
+            ..Default::default()
+        });
+        assert_clause_layout_survives_the_boundary(&FormatConfig {
+            max_line_length: limit,
+            space_between_command_parens: true,
+            control_flow_space_before_paren: true,
+            use_tabs: false,
+            indent_width: 2,
+            ..Default::default()
+        });
+    }
+}
+
+#[test]
+fn test_a_multi_line_argument_is_measured_by_both_its_ends() {
+    // A multi-line quoted or bracket argument consumes the current line only as
+    // far as its first newline, and leaves the column at the width of whatever
+    // follows its last. Measuring it once by its last line answered both
+    // questions with the same number, so an argument was joined onto a line
+    // that then overflowed — at the default 80 columns.
+    let config = FormatConfig::default();
+    let long = "y".repeat(78);
+    let result = format_text(
+        &format!("if(A \"{}\nz\")\n\tmessage(x)\nendif()\n", long),
+        &config,
+    );
+
+    for line in result.lines() {
+        if line.split_whitespace().count() > 1 {
+            assert!(
+                line.chars().count() <= 80,
+                "line overflows: {} columns\n{}",
+                line.chars().count(),
+                result
+            );
+        }
+    }
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // And a `)` on its own line still has to follow arguments that are
+    // themselves split. (The shape where `broke` and `must_wrap` genuinely
+    // disagree is narrower than this one — `if(A "xx\nyy")` at a 10-column
+    // limit stays joined while `must_wrap` is true — so this asserts the
+    // invariant rather than that particular discrimination.)
+    let narrow = FormatConfig {
+        max_line_length: 20,
+        ..Default::default()
+    };
+    let result = format_text("if(A \"xxxxxxxxxxxxxxxxxx\nyy\")\nendif()\n", &narrow);
+    if let Some(closer) = result.lines().position(|l| l.trim() == ")") {
+        assert!(
+            closer >= 2,
+            "the closing paren was stranded under a joined condition:\n{}",
+            result
+        );
+    }
+    assert_eq!(result, format_text(&result, &narrow), "not idempotent");
+
+    // After a multi-line argument the column is the width of its last line, not
+    // that line added to what came before it. Getting that wrong made the
+    // formatter think the line was full and break the next argument away.
+    let at24 = FormatConfig {
+        max_line_length: 24,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(A \"xxxxxxxxxxxxxxxx\nyy\" BBBB)\n\tmessage(x)\nendif()\n",
+        &at24,
+    );
+    assert!(
+        result.contains("yy\" BBBB)"),
+        "an argument was broken away after a multi-line one:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &at24), "not idempotent");
+}
+
+#[test]
+fn test_a_trailing_comment_counts_toward_the_conditions_line() {
+    // The layout measured only the condition, not the comment the caller
+    // appends after the `)`. So a condition that fits while its *line* does not:
+    // the layout declined, the generic path broke the line because it can see
+    // the comment, and on that broken input the layout took over and joined the
+    // condition again. A two-pass cycle with no fixed point, at default
+    // settings, which made `--check` reject the tool's own output forever.
+    let config = default_config();
+
+    for (name, closer) in [("if", "endif"), ("while", "endwhile")] {
+        for condition_len in [4, 8, 20] {
+            for comment_len in [40, 60, 67, 70] {
+                let input = format!(
+                    "{}({} BBBB) # {}\n{}()\n",
+                    name,
+                    "A".repeat(condition_len),
+                    "c".repeat(comment_len),
+                    closer
+                );
+                let once = format_text(&input, &config);
+                assert_eq!(
+                    once,
+                    format_text(&once, &config),
+                    "not a fixed point for a {}-column condition and a {}-column comment:\n{}",
+                    condition_len,
+                    comment_len,
+                    once
+                );
+            }
+        }
+    }
+
+    // And the clause layout is what breaks it: without the comment counted in
+    // the fit decision the layout declines and the generic path puts every
+    // argument on its own line
+    let result = format_text(
+        "if(FIRST_CONDITION AND SECOND_CONDITION) # explain why both of these have to hold\nendif()\n",
+        &config,
+    );
+    assert!(
+        result.contains("\tAND SECOND_CONDITION\n"),
+        "the clause layout gave way to the generic one:\n{}",
+        result
+    );
+
+    // The comment is what makes the difference: an 83-column line is broken,
+    // and the same condition with no comment stays on one line
+    let long = format!("if(AAAA BBBB) # {}\nendif()\n", "c".repeat(67));
+    assert_eq!(long.lines().next().unwrap().chars().count(), 83);
+    let with_comment = format_text(&long, &config);
+    assert!(
+        with_comment.lines().count() > 2,
+        "an 83-column line should have been broken:\n{}",
+        with_comment
+    );
+    assert_eq!(
+        format_text("if(AAAA BBBB)\nendif()\n", &config),
+        "if(AAAA BBBB)\nendif()\n"
+    );
+}
+
+#[test]
+fn test_the_column_after_a_multi_line_argument_is_its_last_line() {
+    // The column after an argument that spans lines is the width of its last
+    // line, not that width added to what came before it, and not the width of
+    // its first line. Both errors let the next argument join a line that then
+    // overflows.
+    let config = FormatConfig {
+        max_line_length: 30,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(A \"x\nyyyyyyyyyyyyyyyyyyyyyyyy\" BBBB)\n\tmessage(x)\nendif()\n",
+        &config,
+    );
+    for line in result.lines() {
+        if line.split_whitespace().count() > 1 {
+            assert!(
+                line.chars().count() <= 30,
+                "line overflows: {} columns\n{}",
+                line.chars().count(),
+                result
+            );
+        }
+    }
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // The column after it *replaces* what came before rather than adding to it:
+    // at a 12-column limit `yy" B)` fits, and adding the widths breaks `B` away
+    let narrow = FormatConfig {
+        max_line_length: 12,
+        ..Default::default()
+    };
+    let result = format_text("if(AAAA \"xx\nyy\" B)\n\tmessage(x)\nendif()\n", &narrow);
+    assert!(
+        result.contains("yy\" B)"),
+        "the column after a multi-line argument was added, not replaced:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &narrow), "not idempotent");
+
+    // And the flat closing space is emitted, which a mutation of it made
+    // non-idempotent
+    let spaced = FormatConfig {
+        space_between_command_parens: true,
+        ..Default::default()
+    };
+    let result = format_text("if(\n\tAAAA BBBB\n)\nendif()\n", &spaced);
+    assert!(
+        result.contains("if( AAAA BBBB )"),
+        "the flat closing paren space is missing:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &spaced), "not idempotent");
+}
+
+#[test]
+fn test_a_single_argument_condition_keeps_the_generic_layout() {
+    // A one-argument condition has nothing to split into clauses, so the clause
+    // layout must decline. Nothing pinned that boundary.
+    let config = FormatConfig {
+        max_line_length: 20,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if(AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA)\nendif()\n",
+        &config,
+    );
+    // The argument itself cannot be broken, so it overflows and the `)` takes
+    // the next line — the generic path's answer, not the clause layout's
+    assert_eq!(
+        result, "if(AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n)\nendif()\n",
+        "a one-argument condition should not reach the clause layout"
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_the_trailing_comment_is_measured_as_it_will_be_written() {
+    // The layout counted the source text of the trailing comment, but the
+    // renderer rewrites that region: one space before the `#`, the whitespace
+    // after it set by `comment_style`, trailing whitespace dropped, and only the
+    // first comment kept on the line. So the decision was made against a line
+    // that is never written — two spellings that render identically wrapped
+    // differently, and the two-space form stayed wrapped for ever.
+    let config = default_config();
+    let comment = "c".repeat(60);
+
+    let one_space = format_text(
+        &format!("if(AAAA AND BBBB) # {}\nendif()\n", comment),
+        &config,
+    );
+    let two_spaces = format_text(
+        &format!("if(AAAA AND BBBB)  # {}\nendif()\n", comment),
+        &config,
+    );
+    assert_eq!(
+        one_space, two_spaces,
+        "two spellings of the same rendered line formatted differently"
+    );
+    assert_eq!(one_space.lines().next().unwrap().chars().count(), 80);
+    assert_eq!(
+        one_space,
+        format_text(&one_space, &config),
+        "not idempotent"
+    );
+
+    // Each of the renderer's rewrites has to be counted, and only those. `#x`
+    // gains a space after the hash, so it is one column wider than the source
+    // says. Trailing whitespace goes the other way: it never reaches the file,
+    // so counting it — which this test used to require — decided the layout
+    // against a line that is never written, which is the mistake the paragraph
+    // above describes. It cost the fixed point: the layout broke the condition,
+    // the strip made the result fit, and the next pass joined it again.
+    let result = format_text(
+        &format!(
+            "if(AA AND BBBB) #{}   \n\tmessage(x)\nendif()\n",
+            "c".repeat(60)
+        ),
+        &config,
+    );
+    assert_eq!(
+        result.lines().next().unwrap().chars().count(),
+        78,
+        "78 columns once the three spaces are gone, so it stays flat:\n{}",
+        result
+    );
+    assert!(
+        !result.contains("\tAND BBBB\n"),
+        "a line that fits was wrapped for whitespace the file will not hold:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // A token that spans lines carries whitespace the strip removes from every
+    // *interior* line too, so trimming the end of the token was not enough. Both
+    // a bracket comment and a quoted argument reach the width models this way,
+    // and 320 of 800 such shapes had no fixed point while the trim was per
+    // token.
+    for trailer in [" ", "   ", "\t", " \t "] {
+        for input in [
+            format!(
+                "if(AAAA BBBB) #[[{}{}\nz]]\nendif()\n",
+                "P".repeat(52),
+                trailer
+            ),
+            format!(
+                "if(AAAA BBBB) #[[{}{}\nq{}\nz]]\nendif()\n",
+                "P".repeat(52),
+                trailer,
+                trailer
+            ),
+            // A multi-line *argument*, which reaches the width model through
+            // `collect_logical_args` rather than through the comment path. Three
+            // arguments, because with two the condition fits either way.
+            format!(
+                "if(AAAA BBBB \"q{}{}\nz\")\nendif()\n",
+                "P".repeat(62),
+                trailer
+            ),
+            format!(
+                "if(AAAA BBBB [[{}{}\nz]])\nendif()\n",
+                "P".repeat(62),
+                trailer
+            ),
+            format!("if(AAAA \"q{}{}\nz\")\nendif()\n", "P".repeat(62), trailer),
+            format!("set(A [[{}{}\nz]])\n", "P".repeat(70), trailer),
+            format!(
+                "# c{}\nset(A \"q{}{}\nz\")\n",
+                trailer,
+                "P".repeat(70),
+                trailer
+            ),
+        ] {
+            let once = format_text(&input, &config);
+            let twice = format_text(&once, &config);
+            assert_eq!(
+                once, twice,
+                "a multi-line token with interior trailing {:?} never settles:\n                 --- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+                trailer, once, twice
+            );
+            assert!(
+                !once
+                    .lines()
+                    .any(|line| line.ends_with(' ') || line.ends_with('\t')),
+                "trailing whitespace reached the file:\n{}",
+                once
+            );
+            // And nothing was duplicated: trimming the key `handled_comments` is
+            // built from, rather than the text that is written, emitted the
+            // comment a second time.
+            let content = |t: &str| t.split_whitespace().collect::<String>();
+            assert_eq!(
+                content(&once),
+                content(&input),
+                "content changed for {:?}:\n{}",
+                input,
+                once
+            );
+        }
+    }
+
+    // The shape that lost its fixed point: a single clause, so the layout can
+    // collapse back, and a comment ending in whitespace, so the two forms
+    // disagree about the width. Every spelling of the whitespace, and both the
+    // wrapped and the flat starting point, have to settle.
+    for trailer in [" ", "   ", "\t", " \t "] {
+        for start in [
+            format!(
+                "if(NOT AAAA {}) # c{}\n\tmessage(x)\nendif()\n",
+                "P".repeat(63),
+                trailer
+            ),
+            format!(
+                "if(NOT AAAA\n\t{}\n) # c{}\n\tmessage(x)\nendif()\n",
+                "P".repeat(63),
+                trailer
+            ),
+        ] {
+            let once = format_text(&start, &config);
+            let twice = format_text(&once, &config);
+            assert_eq!(
+                once, twice,
+                "a comment ending in {:?} never settles:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+                trailer, once, twice
+            );
+            assert!(
+                !once
+                    .lines()
+                    .any(|line| line.ends_with(' ') || line.ends_with('\t')),
+                "trailing whitespace reached the file:\n{}",
+                once
+            );
+        }
+    }
+
+    // `#x` gains a space, so it is one column wider than the source says
+    let tight = format_text(
+        &format!("if(AAAA AND BBBB) #{}\nendif()\n", "c".repeat(62)),
+        &config,
+    );
+    for line in tight.lines() {
+        if line.split_whitespace().count() > 1 {
+            assert!(
+                line.chars().count() <= 80,
+                "line overflows: {}\n{}",
+                line.chars().count(),
+                tight
+            );
+        }
+    }
+    assert_eq!(tight, format_text(&tight, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_broken_condition_does_not_reserve_room_for_the_trailing_comment() {
+    // Once the condition has broken, the `)` and the comment take their own
+    // line, so reserving room for the comment pushed the last word down for
+    // nothing.
+    let config = default_config();
+    let result = format_text(
+        "if(AAAA AND BBBBBBBB CCCCCCCC DDDDDDDD EEEEEEEE FFFFFFFF GGGG) # cccccccccccccccccccccccccccccc\n\tmessage(x)\nendif()\n",
+        &config,
+    );
+    assert!(
+        result.contains("FFFFFFFF GGGG\n"),
+        "the last word was pushed onto its own line:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_single_clause_condition_does_reserve_room_for_the_trailing_comment() {
+    // The companion to the test above, and the case it cannot see: with no
+    // AND/OR there is no earlier clause to have broken, so the reserve is still
+    // live at the final word — and it has to be. Declining to reserve would
+    // leave the condition flat, which keeps the `)` attached and puts the whole
+    // 81-column line back. Reserving is the mechanism that moves the `)` and its
+    // comment onto a line of their own, and nothing then overflows.
+    let config = default_config();
+    let result = format_text(
+        &format!("if(NOT AAAA BBBB) # {}\nendif()\n", "c".repeat(61)),
+        &config,
+    );
+    assert!(
+        result.starts_with("if(NOT AAAA\n"),
+        "the final word should be pushed down to free the `)`:\n{}",
+        result
+    );
+    for line in result.lines() {
+        assert!(
+            line.chars().count() <= 80,
+            "line overflows at {} columns:\n{}",
+            line.chars().count(),
+            result
+        );
+    }
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_forced_closer_counts_its_own_trailing_comment() {
+    // A forced closer is rebuilt from its opener, so it has no argument list to
+    // reach a trailing comment through — but the comment still lands on the
+    // closer's line, and the same comment on the same closer *is* counted under
+    // `closing_style = preserve`. Passing 0 let the closer run 15 columns past
+    // the limit while the identical opener wrapped.
+    let mut config = default_config();
+    config.closing_style = ClosingStyle::Force;
+    let condition = format!("{} AND {}", "A".repeat(30), "B".repeat(30));
+    let result = format_text(
+        &format!(
+            "if({condition})\n\tmessage(x)\nendif({condition}) # {}\n",
+            "c".repeat(20)
+        ),
+        &config,
+    );
+    for line in result.lines() {
+        assert!(
+            line.chars().count() <= 80,
+            "the forced closer overflows at {} columns:\n{}",
+            line.chars().count(),
+            result
+        );
+    }
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_multi_line_bracket_comment_after_a_condition_settles() {
+    // The width model and `pretty` have to answer "does this line fit?" with the
+    // same number. `pretty` widths an `RcDoc::text` over the whole string,
+    // newlines included, and the emitter hands it a multi-line bracket comment
+    // as one text node — so measuring only the comment's first line here, true
+    // as that is of the *line*, made the model declare a fit that `pretty` then
+    // refused. The two layouts alternated for ever: pass 2 came back broken,
+    // pass 3 re-joined it, and `--check` rejected the tool's own output after
+    // every write, at 100% default settings with no line over 80 columns in
+    // either state.
+    let config = default_config();
+    let input = format!("if(AAAA BBBB) #[[a\n{}]]\nendif()\n", "b".repeat(62));
+    let once = format_text(&input, &config);
+    let twice = format_text(&once, &config);
+    assert_eq!(
+        once, twice,
+        "the condition layout and the renderer disagree, so this never settles:\n         --- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+        once, twice
+    );
+    assert_eq!(twice, format_text(&twice, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_comment_written_verbatim_is_measured_verbatim() {
+    // The emitter writes anything starting `#[` as it stands — a bracket
+    // comment, or the line comment the lexer makes of a non-bracket `#[`. The
+    // width model normalized it anyway, so under the default `hash_space` it
+    // measured `# [[X]]` for a `#[[X]]` that is written unchanged: one column
+    // too wide, and a line sitting exactly on the limit was broken into three
+    // for ever. Stably, so `--check` never said a word about it.
+    let config = default_config();
+    for comment in ["#[[X]]", "#[X]", "#[=[X]=]"] {
+        // Padded so the line lands on exactly 80 columns, whatever the
+        // comment's spelling costs.
+        let fixed = "if(AAAA AND ) ".len() + comment.len();
+        let input = format!("if(AAAA AND {}) {}\n", "B".repeat(80 - fixed), comment);
+        assert_eq!(
+            input.trim_end().chars().count(),
+            80,
+            "the fixture is meant to sit exactly on the limit: {}",
+            input
+        );
+        assert_eq!(
+            format_text(&input, &config),
+            input,
+            "a line at exactly the limit was wrapped"
+        );
+    }
+}
+
+#[test]
+fn test_a_user_grammar_never_reaches_a_closer_s_condition() {
+    // There are two copies of the "no builtin grammar, and not a control-flow
+    // command" guard: one on the normal path and one on the closer path. Only
+    // the first was pinned. Without the second, a user grammar named after a
+    // closer gets to treat the closer's condition as its own argument list —
+    // and a `SOURCES`-style keyword then *reorders* it.
+    let mut config = default_config();
+    config.closing_style = cmake_fmt::formatter::ClosingStyle::Preserve;
+    config.sort_sources = cmake_fmt::formatter::SortSources::Alphabetical;
+    config.command_grammars.insert(
+        "endif".to_string(),
+        cmake_fmt::formatter::config::CommandGrammarConfig {
+            multi_value_keywords: vec!["SOURCES".to_string()],
+            sortable_keywords: Some(vec!["SOURCES".to_string()]),
+            ..Default::default()
+        },
+    );
+    let input = "if(SOURCES z.cpp a.cpp b.cpp)
+	message(x)
+endif(SOURCES z.cpp a.cpp b.cpp)
+";
+    let result = format_text(input, &config);
+    assert!(
+        result.contains("endif(SOURCES z.cpp a.cpp b.cpp)"),
+        "a user grammar reordered a closer's condition:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_width_directive_applies_from_where_it_appears() {
+    // The docs for a whole file were rendered in one batch, at whatever
+    // `max_line_length` the *last* directive had set — while the clause layout
+    // had already decided using the value in force where its command sat. A
+    // `# cmake-fmt: max_line_length=40` after a block put the two 40 columns
+    // apart: the layout declined, `pretty` broke, and the next pass swapped them
+    // back, so `--check` rejected the tool's own output for ever.
+    //
+    // The batch is flushed when the width changes, which also makes the setting
+    // positional like every other directive rather than retroactive.
+    let plain = default_config();
+    let block = "if(AAAAAAAAAAAAAAAAAAAA AND BBBBBBBBBBBBBBBBBBBB)\n\tmessage(x)\nendif()\n";
+
+    for directive in [
+        "# cmake-fmt: max_line_length=40",
+        "# cmake-fmt: max_line_length=0",
+        "# cmake-fmt: max_line_length=200",
+    ] {
+        // After the block: too late to reach it, and a fixed point either way
+        let after = format!("{block}{directive}\n");
+        let once = format_text(&after, &plain);
+        assert_eq!(
+            once,
+            format_text(&once, &plain),
+            "a width directive after the block never settles:\n{}",
+            once
+        );
+        assert!(
+            once.starts_with("if(AAAAAAAAAAAAAAAAAAAA AND BBBBBBBBBBBBBBBBBBBB)"),
+            "a directive after the block reached back into it:\n{}",
+            once
+        );
+
+        // Before it: applies, and settles
+        let before = format!("{directive}\n{block}");
+        let once = format_text(&before, &plain);
+        assert_eq!(
+            once,
+            format_text(&once, &plain),
+            "a width directive before the block never settles:\n{}",
+            once
+        );
+    }
+
+    // Two blocks either side of one directive: each laid out at its own width
+    let both = format!(
+        "{block}# cmake-fmt: max_line_length=40\nif(CCCCCCCCCCCCCCCCCCCC AND DDDDDDDDDDDDDDDDDDDD)\n\tmessage(y)\nendif()\n"
+    );
+    let once = format_text(&both, &plain);
+    assert!(
+        once.contains("if(AAAAAAAAAAAAAAAAAAAA AND BBBBBBBBBBBBBBBBBBBB)"),
+        "the block before the directive was re-laid out at the new width:\n{}",
+        once
+    );
+    assert!(
+        once.contains("if(CCCCCCCCCCCCCCCCCCCC\n"),
+        "the block after the directive ignored the new width:\n{}",
+        once
+    );
+    assert_eq!(once, format_text(&once, &plain), "not idempotent");
+}
+
+#[test]
+fn test_a_standalone_width_directive_flushes_too() {
+    // The width flush lives at both directive sites, and only the leading-comment
+    // one was pinned: `test_a_width_directive_applies_from_where_it_appears`
+    // puts its directive immediately before a command, which
+    // `extract_leading_comments` claims. An ERROR node between the two stops
+    // that backward walk, so the comment is standalone and the other site is
+    // the one that runs. Reverting it alone left the whole suite green.
+    let plain = default_config();
+    let condition = format!("{} AND {}", "A".repeat(45), "B".repeat(45));
+    let input =
+        format!("set(A b)\n# cmake-fmt: max_line_length=200\n)\nif({condition})\nendif()\n");
+    let once = format_text(&input, &plain);
+    assert!(
+        once.contains(&format!("if({condition})")),
+        "the standalone directive did not reach the condition:\n{}",
+        once
+    );
+    assert_eq!(
+        once,
+        format_text(&once, &plain),
+        "not idempotent:\n{}",
+        once
+    );
+}
+
+#[test]
+fn test_a_suppressed_command_keeps_its_trailing_comment_as_written() {
+    // `# cmake-fmt: off` emits the region verbatim, so its comment keeps the
+    // whitespace after the `#`; `# cmake-fmt: skip` suppresses only reformatting
+    // of the command, so `comment_style` still applies. Collapsing that branch
+    // either way — always normalize, or never — left the whole suite green.
+    let config = default_config();
+    assert_eq!(
+        format_text("# cmake-fmt: off\nset(A b) #   c\n", &config),
+        "# cmake-fmt: off\nset(A b) #   c\n",
+        "an off region rewrote its comment"
+    );
+    assert_eq!(
+        format_text("# cmake-fmt: skip\nset(A b) #   c\n", &config),
+        "# cmake-fmt: skip\nset(A b) # c\n",
+        "a skipped command did not have comment_style applied"
+    );
+}
+
+#[test]
+fn test_no_output_line_ends_in_whitespace() {
+    // The per-line strip in `post_process_rendered_output` is what the two width
+    // models are now trimmed to agree with, so it is load-bearing — and removing
+    // it left every test green. Every shape that can carry trailing whitespace
+    // into a token goes through here.
+    let config = default_config();
+    for input in [
+        "set(A b) # c   \n",
+        "set(A \"q   \nz\")\n",
+        "set(A [[q   \nz]])\n",
+        "if(A) #[[q   \nz]]\nendif()\n",
+        "#   \nset(A b)\n",
+        "set(A b)   \n",
+        "set(A\tb)\t\n",
+    ] {
+        let result = format_text(input, &config);
+        for line in result.lines() {
+            assert!(
+                !line.ends_with(' ') && !line.ends_with('\t'),
+                "a line ends in whitespace for {:?}:\n{:?}",
+                input,
+                result
+            );
+        }
+    }
+}
+
+#[test]
+fn test_an_unlimited_line_length_never_wraps_a_condition() {
+    // `max_line_length = 0` means unlimited. Without the `limit > 0` half of
+    // `must_wrap`, every condition is "too wide" and the clause layout takes
+    // over unasked.
+    let mut config = default_config();
+    config.max_line_length = 0;
+    let input = format!(
+        "if(AAAA AND {} AND CCCC)\n\tmessage(x)\nendif()\n",
+        "B".repeat(200)
+    );
+    let result = format_text(&input, &config);
+    assert!(
+        result.lines().next().unwrap().ends_with("AND CCCC)"),
+        "an unlimited line was wrapped anyway:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_preserved_closer_with_no_arguments_gets_no_paren_space() {
+    // Under `closing_style = preserve` a closer that wrote nothing has nothing
+    // to space out. Treating it as if it had arguments emitted `endif( )`.
+    let mut config = default_config();
+    config.closing_style = cmake_fmt::formatter::ClosingStyle::Preserve;
+    config.space_between_command_parens = true;
+    let result = format_text("if( A AND B )\n\tmessage( x )\nendif()\n", &config);
+    assert!(
+        result.contains("endif()") && !result.contains("endif( )"),
+        "an empty preserved closer was spaced:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}

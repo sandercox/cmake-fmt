@@ -32,6 +32,11 @@ enable-ansi-support = "0.2"
 console = "0.16.2"
 ignore = "0.4"
 rayon = "1.11"
+# The layout must width text exactly as `pretty` does. For a 0.x crate Cargo's
+# compatibility unit is the minor, so "0.2" is what makes this resolve to the
+# same instance `pretty` uses -- today unicode-width 0.2.2 for both. (A second
+# copy, 0.1.14, is in the lock file via miette; nothing there widths layout.)
+unicode-width = "0.2"
 
 [dev-dependencies]
 insta = { version = "1.46", features = ["yaml", "glob"] }
