@@ -643,9 +643,11 @@ fn reorderable_args(
         match section.sort_from {
             Some(from) if from < section.args.len() => {
                 out.extend(section.args[..from].iter().cloned());
-                for run in
-                    super::cmake_rules::sortable_runs(&section.args, from..section.args.len())
-                {
+                for run in super::cmake_rules::sortable_runs(
+                    &section.args,
+                    &section.group_args,
+                    from..section.args.len(),
+                ) {
                     let mut values: Vec<String> = section.args[run].to_vec();
                     if values.len() > 1 {
                         anything_moves = true;
@@ -778,6 +780,10 @@ fn normalize_comment(text: &str, comment_style: CommentStyle) -> String {
 /// Compare what `output` says against what `input` said.
 ///
 /// `None` means the formatter only moved characters around.
+/// Test-only since the formatter began handing its parse over: `check_parsed`
+/// is the production entry point, and this is what its invariant is checked
+/// against — the two must agree for every input.
+#[cfg(test)]
 pub(crate) fn check(
     input: &str,
     output: &str,
@@ -831,7 +837,7 @@ pub(crate) fn check_parsed(
 /// `\r`-stripped, and borrowed when there was nothing to strip — this runs over
 /// every formatted file, and two whole-file copies to find no `\r` was the
 /// measured cost of the guard on an already-formatted tree.
-fn strip_carriage_returns(text: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn strip_carriage_returns(text: &str) -> std::borrow::Cow<'_, str> {
     if text.contains('\r') {
         std::borrow::Cow::Owned(text.replace('\r', ""))
     } else {
@@ -845,6 +851,8 @@ fn strip_carriage_returns(text: &str) -> std::borrow::Cow<'_, str> {
 /// short-circuit above is an optimization, and with the comparison behind it the
 /// reflexivity property — comparing a text against itself never fires — was
 /// asserted of a `return None` rather than of the code it is meant to hold for.
+/// The self-parsing half of `check`, and test-only for the same reason.
+#[cfg(test)]
 fn compare(
     input: &str,
     output: &str,

@@ -579,11 +579,17 @@ pub fn run() -> Result<ExitCode> {
         // Collect files, expanding directories and glob patterns
         let collected =
             collect_cmake_files(&paths_to_search, cli.recursive, cli.ignore_file.as_deref())?;
+        let unmatched_pattern = collected.unmatched_pattern;
+        let collected = collected.files;
 
         // Handle case where no files found
         if collected.is_empty() {
             eprintln!("No files found");
-            return Ok(ExitCode::SUCCESS);
+            return Ok(if unmatched_pattern {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            });
         }
 
         // Validate --line-ranges with multiple files
@@ -610,7 +616,7 @@ pub fn run() -> Result<ExitCode> {
             );
         }
 
-        process_files(
+        let outcome = process_files(
             &collected,
             cli.style.as_deref(),
             &cli.grammar_files,
@@ -619,7 +625,15 @@ pub fn run() -> Result<ExitCode> {
             diff_mode,
             cli.verbose,
             parsed_line_ranges.as_deref(),
-        )
+        )?;
+
+        // A pattern that matched nothing fails the run even when its siblings
+        // matched, for the same reason a named path that is not there does.
+        Ok(if unmatched_pattern {
+            ExitCode::FAILURE
+        } else {
+            outcome
+        })
     }
 }
 
@@ -633,15 +647,31 @@ pub fn run() -> Result<ExitCode> {
 /// Directory walking respects .gitignore, .cmake-fmt-ignore (in every walked
 /// directory), and the optional extra `ignore_file`.  When `recursive` is false
 /// the walk is limited to depth 1 (immediate directory contents).
+/// The CMake files named, globbed or walked, and whether any pattern matched
+/// nothing.
+struct Collected {
+    files: Vec<PathBuf>,
+    unmatched_pattern: bool,
+}
+
 fn collect_cmake_files(
     paths: &[PathBuf],
     recursive: bool,
     ignore_file: Option<&Path>,
-) -> Result<Vec<PathBuf>> {
+) -> Result<Collected> {
     use ignore::WalkBuilder;
 
     let mut result: Vec<PathBuf> = Vec::new();
     let mut dir_paths: Vec<PathBuf> = Vec::new();
+    // A pattern that matched nothing is a failed run, for the same reason a
+    // named path that is not there is: `cmake-fmt --check 'src/**/*.cmake'`
+    // reporting success after a directory rename is how an unformatted file
+    // reaches a release. A *directory* holding no CMake files is not — there was
+    // nothing to do and the caller said so.
+    //
+    // cmake-fmt expands its own globs, so this is the normal spelling wherever
+    // the shell does not.
+    let mut unmatched_pattern = false;
 
     for path in paths {
         let path_str = path.to_string_lossy();
@@ -665,6 +695,7 @@ fn collect_cmake_files(
                     }
                     if !found_any {
                         eprintln!("Warning: No files matched pattern: {}", path_str);
+                        unmatched_pattern = true;
                     }
                 }
                 Err(e) => {
@@ -731,7 +762,10 @@ fn collect_cmake_files(
 
     result.sort();
     result.dedup();
-    Ok(result)
+    Ok(Collected {
+        files: result,
+        unmatched_pattern,
+    })
 }
 
 /// Returns true if the path is a CMake file (CMakeLists.txt or *.cmake)

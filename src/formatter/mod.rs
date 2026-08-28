@@ -21,6 +21,13 @@ pub use grammar::{
 pub use line_ranges::{LineRange, format_with_line_ranges, parse_line_ranges};
 pub use suppression::FormatWarning;
 
+/// The former name of [`FormatWarning`].
+///
+/// It stopped being only about suppression when the content guard added a
+/// variant, but it is a published name, so it stays until the next major.
+#[deprecated(since = "0.11.0", note = "renamed to FormatWarning")]
+pub type SuppressionWarning = FormatWarning;
+
 use crate::cst::parse_text;
 use std::collections::HashMap;
 use std::path::Path;
@@ -57,9 +64,13 @@ pub(crate) fn describe_content_change(
     file_path: Option<&Path>,
     verbose: bool,
 ) -> Option<String> {
-    let cst = parse_text(&input.replace('\r', ""));
+    // The same two savings the main path got: borrow when there is no `\r` to
+    // strip, and hand the parse over rather than making a third.
+    let input = content_check::strip_carriage_returns(input);
+    let cst = parse_text(&input);
     let grammars = resolve_user_grammars(&cst.root, config, file_path, verbose);
-    content_check::check(input, output, config, &grammars).map(|difference| difference.summary)
+    content_check::check_parsed(&cst, &input, output, config, &grammars)
+        .map(|difference| difference.summary)
 }
 
 /// The grammars the formatter will use for one file: auto-detected from

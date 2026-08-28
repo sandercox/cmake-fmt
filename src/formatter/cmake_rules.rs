@@ -1079,9 +1079,10 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
 /// check to canonicalise the same way.
 pub(super) fn sortable_runs(
     args: &[String],
+    group_args: &[usize],
     seg: std::ops::Range<usize>,
 ) -> Vec<std::ops::Range<usize>> {
-    split_at_barriers(args, seg)
+    split_at_barriers(args, group_args, seg)
 }
 
 /// Split `seg` into runs of adjacent sortable args, with each variable-like arg
