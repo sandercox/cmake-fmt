@@ -149,7 +149,7 @@ fn print_style_help() {
     );
     println!(
         "  {:<25} {:<15} {:<15} {}",
-        "final_newline", "enum", "force", "preserve, remove, force (also accepts true/false)"
+        "final_newline", "enum", "preserve", "preserve, remove, force (also accepts true/false)"
     );
     println!(
         "  {:<25} {:<15} {:<15} {}",
@@ -162,6 +162,20 @@ fn print_style_help() {
     println!(
         "  {:<25} {:<15} {:<15} {}",
         "sort_sources", "enum", "none", "none, alphabetical"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "collapse_empty_flags",
+        "boolean",
+        "true",
+        "true, false — keep a no-argument flag on the previous line"
+    );
+    println!(
+        "  {:<25} {:<15} {:<15} {}",
+        "inline_single_keyword",
+        "boolean",
+        "false",
+        "true, false — keep a lone keyword on the opening line"
     );
     println!();
     println!("CLI usage:  cmake-fmt --style \"indent_width=4,max_line_length=120\" <file>");
@@ -227,15 +241,32 @@ fn print_grammar_help() {
     println!("Reordering:");
     println!("  sort_sources and source_grouping only reorder keywords listed in");
     println!("  'sortable_keywords', plus the keyword-less arguments when");
-    println!("  'sortable_positional: true'. Both default to leaving order alone,");
-    println!("  since argument order usually carries meaning. BinPack and PairValue");
-    println!("  keywords are never reordered, and a positional run additionally");
-    println!("  requires every value to look like a source file, so flag and");
-    println!("  library lists are left alone.");
+    println!("  'sortable_positional: true'. That reaches two runs: the leading");
+    println!("  one, whose first argument is pinned because it names the list or");
+    println!("  the target, and the run overflowing a leading single-value");
+    println!("  keyword, with nothing pinned because the keyword consumed the");
+    println!("  name — which is what sorts list(APPEND SRCS ...), and applies to");
+    println!("  your own grammar too. Do not set it on a command whose tail after");
+    println!("  such a keyword is order-significant.");
+    println!("  Argument order usually carries meaning, so nothing is sortable");
+    println!("  until something says it is.");
+    println!("  In a grammar file that is the whole rule: a keyword is sortable");
+    println!("  only if it is listed, and there is no fallback. A .cmake-fmt");
+    println!("  config entry has one — omitting 'sortable_keywords' falls back to");
+    println!("  keywords named SOURCES, SRCS or FILES, and writing it as an empty");
+    println!("  list says nothing in that command is sortable.");
+    println!("  BinPack and PairValue keywords are never reordered, and a");
+    println!("  positional run additionally requires every value to look like a");
+    println!("  source file, so flag and library lists are left alone.");
     println!();
     println!("Multi-mode commands:");
+    println!("  NOT YET SUPPORTED ON IMPORT. --export-all-grammar writes these entries,");
+    println!("  and --grammar-file skips every one of them with a warning, so the export");
+    println!("  does not round-trip. The shape is documented because that is what the");
+    println!("  export writes:");
+    println!();
     println!("  For commands like install() that have different keyword sets per sub-command,");
-    println!("  add a 'mode' field to each grammar entry:");
+    println!("  a 'mode' field distinguishes the entries:");
     println!();
     println!("    - command: install");
     println!("      mode: TARGETS");

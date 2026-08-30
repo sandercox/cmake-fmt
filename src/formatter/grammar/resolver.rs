@@ -9,6 +9,28 @@ pub struct GrammarRegistry {
 }
 
 impl GrammarRegistry {
+    /// Every builtin grammar, as `(command, mode, grammar)`.
+    ///
+    /// Exposed so a test can assert the *whole* reordering allowlist rather than
+    /// its effects: `mark_sortable_lists` is this branch's entire contract, and
+    /// adding a command to it — `file(GLOB)`, say, where glob order decides
+    /// match order — passed the suite silently because nothing enumerated it.
+    pub fn entries(&self) -> Vec<(&str, Option<&str>, &CommandGrammar)> {
+        let mut out = Vec::new();
+        for (command, grammar) in &self.grammars {
+            match grammar {
+                Grammar::Simple(g) => out.push((command.as_str(), None, g)),
+                Grammar::Modes { modes } => {
+                    for (mode, g) in modes {
+                        out.push((command.as_str(), Some(mode.as_str()), g));
+                    }
+                }
+            }
+        }
+        out.sort_by_key(|(command, mode, _)| (*command, *mode));
+        out
+    }
+
     /// Get the global singleton instance
     pub fn global() -> &'static GrammarRegistry {
         static REGISTRY: OnceLock<GrammarRegistry> = OnceLock::new();
@@ -143,14 +165,17 @@ pub fn config_grammars_to_map(
             // declared keyword: a `FILES` declared as a flag takes no values, so
             // marking it sortable only reorders whatever positional arguments
             // happen to follow it.
-            let sortable_keywords: HashSet<String> = if cfg.sortable_keywords.is_empty() {
-                cfg.multi_value_keywords
+            let sortable_keywords: HashSet<String> = match &cfg.sortable_keywords {
+                // Named, however short the list: that list is the whole list
+                Some(declared) => declared.iter().cloned().collect(),
+                // Not named at all: the same default an auto-detected grammar
+                // would have carried
+                None => cfg
+                    .multi_value_keywords
                     .iter()
                     .filter(|kw| super::argparse_extractor::is_conventional_file_list(kw))
                     .cloned()
-                    .collect()
-            } else {
-                cfg.sortable_keywords.iter().cloned().collect()
+                    .collect(),
             };
 
             (

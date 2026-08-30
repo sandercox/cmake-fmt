@@ -264,6 +264,54 @@ fn grouped_section(
     }
 }
 
+/// Emit the comments of a keyword section that has no values.
+///
+/// Every arm that renders a section guards its comment machinery on the section
+/// having arguments, so a comment attached to a keyword with no values had
+/// nowhere to go and was deleted outright — `target_sources(t\n\tPRIVATE # note)`
+/// lost `# note`, and so did the `PairValue`, `BinPack` and inline equivalents.
+///
+/// They are always own-line comments: the section parser only records a trailing
+/// comment for a section that already holds an argument, so a comment written on
+/// the same line as a valueless keyword arrives at position 0 of `comments`.
+/// Whether the section before `index` has already put a comment on its line.
+///
+/// A line comment runs to the end of its line, so nothing may follow that
+/// section on the same line. Every separator that collapses a keyword onto the
+/// previous line has to ask this first: collapsing regardless put the keyword
+/// *inside* the comment — `# note QUIET` — and the keyword was gone from the
+/// file, permanently, at a stable fixed point and exit 0.
+///
+/// Three arms have made that same mistake in three consecutive rounds, each time
+/// one arm over from the last fix, so the question lives in one place and every
+/// separator consults it.
+fn previous_section_ended_in_a_comment(sections: &[KeywordSection], index: usize) -> bool {
+    index
+        .checked_sub(1)
+        .and_then(|previous| sections.get(previous))
+        .is_some_and(|previous| {
+            !previous.comments.is_empty() || !previous.trailing_comments.is_empty()
+        })
+}
+
+/// Emit the comments of a keyword section that has no values.
+///
+/// At `keyword_indent`, not `value_indent`: there are no values for the comment
+/// to sit under, and the comment belongs to the keyword. Three of the five arms
+/// used the deeper level, so `find_package(Foo REQUIRED # n)` put its comment one
+/// tab in and `target_sources(t PRIVATE # n)` put an identical construct two.
+fn push_valueless_section_comments(
+    docs: &mut Vec<RcDoc<'static, ()>>,
+    comments: &[(usize, String)],
+    indent: &str,
+) {
+    for (_, comment) in comments {
+        docs.push(RcDoc::hardline());
+        docs.push(RcDoc::text(indent.to_string()));
+        docs.push(RcDoc::text(comment.clone()));
+    }
+}
+
 /// Group only the runs the sorting pass is allowed to permute: from `sort_from`
 /// onward, and never across a barrier.
 ///
@@ -745,8 +793,10 @@ pub fn parse_keyword_sections_with_grammar(
 fn is_search_path_variable(name: &str) -> bool {
     // Compared case-insensitively: CMake variable names are case-sensitive, and
     // project-local lists are conventionally lowercase (`warning_flags`), so a
-    // byte comparison would miss most of them.
-    let name = name.to_ascii_uppercase();
+    // byte comparison would miss most of them. Unquoted first, as every sibling
+    // predicate does — `"CMAKE_MODULE_PATH"` is as ordinary a spelling as the
+    // bare one, and only the `FLAGS` substring test survived the quotes.
+    let name = name.trim_matches('"').to_ascii_uppercase();
 
     const EXACT: &[&str] = &[
         "CMAKE_MODULE_PATH",
@@ -873,6 +923,13 @@ fn unmark_unsortable_positional_runs(
 
         // At index 0 the first argument names the thing being defined — a
         // variable for `set`, but a *target* for add_library/add_executable.
+        //
+        // Which of the two is still decided by builtin command name, inside a
+        // path that is otherwise grammar-driven, so a user wrapper cannot say
+        // "my first positional is a target" and gets the conservative answer:
+        // `my_add_library(my_LIBS z.cpp a.cpp)` holds where `add_library` sorts.
+        // Saying it needs a third grammar field; until there is one, a wrapper
+        // declines to sort where the builtin would, which is the safe direction.
         // A later run is opened by a mode keyword that already consumed the
         // list variable, so there the name provably governs the list.
         let (governing, governs_the_list) = if idx == 0 {
@@ -1326,9 +1383,10 @@ pub fn format_keyword_aware_args(
                                 Some(prev) if prev.keyword.is_none()
                             );
                         let flag_has_trailing_args = !flag_args.is_empty();
-                        if (prev_is_pre_keyword && flag_has_trailing_args)
-                            || ((prev_is_flag || prev_is_pre_keyword)
-                                && config.collapse_empty_flags)
+                        if !previous_section_ended_in_a_comment(&sections, i)
+                            && ((prev_is_pre_keyword && flag_has_trailing_args)
+                                || ((prev_is_flag || prev_is_pre_keyword)
+                                    && config.collapse_empty_flags))
                         {
                             docs.push(RcDoc::space());
                         } else if signals.force_multiline {
@@ -1342,6 +1400,27 @@ pub fn format_keyword_aware_args(
                         }
                     }
                     docs.push(RcDoc::text(keyword.clone()));
+
+                    // A flag with no values still carries its comments — the
+                    // whole comment machinery below lives inside the
+                    // `!flag_args.is_empty()` arm, so `find_package(Foo REQUIRED
+                    // # note\n COMPONENTS ...)` lost `# note` outright.
+                    //
+                    // They are all own-line comments here whatever the author
+                    // wrote: the section parser only fills `trailing_comments`
+                    // for a section that already has an argument, so a comment on
+                    // the same line as a valueless flag arrives at position 0 of
+                    // `comments`. Each therefore takes its own line, and the
+                    // separator for the *next* section refuses to collapse after
+                    // one — a line comment runs to end of line, and collapsing
+                    // put the next keyword inside it.
+                    if flag_args.is_empty() {
+                        for (_, comment) in &flag_comments {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.clone()));
+                            docs.push(RcDoc::text(comment.clone()));
+                        }
+                    }
 
                     // Output any trailing non-keyword arguments in this section
                     if !flag_args.is_empty() {
@@ -1449,7 +1528,21 @@ pub fn format_keyword_aware_args(
                     }
                 }
 
-                // SingleValue keywords: keep value inline (ignore force_multiline for idempotency)
+                // SingleValue keywords: keep value inline (ignore force_multiline for
+                // idempotency).
+                //
+                // A comment used to demote the whole section into the catch-all
+                // arm, which puts the keyword on its own line and its value one
+                // level deeper. That cost the fixed point as well as the layout:
+                // the parser gives a comment written after this keyword's one
+                // value to *this* section, while a `list(APPEND V …)` run's
+                // elements live in the following keyword-less section — so
+                // sorting the run to put the commented element first moved the
+                // comment into this slot, and the next pass laid the command out
+                // differently. `--check` then rejected freshly formatted output.
+                //
+                // The comments are emitted after the value instead, so the arm
+                // renders the same shape with them as without.
                 Some(KeywordType::SingleValue) if section.args.len() == 1 => {
                     // Add separator before the keyword
                     if is_first_arg && first_keyword_inline {
@@ -1478,7 +1571,9 @@ pub fn format_keyword_aware_args(
                                 sections.first(),
                                 Some(first) if first.keyword_type == Some(KeywordType::Flag) && first.args.is_empty()
                             );
-                        if prev_is_first_empty_flag {
+                        if prev_is_first_empty_flag
+                            && !previous_section_ended_in_a_comment(&sections, i)
+                        {
                             docs.push(RcDoc::space());
                         } else {
                             docs.push(RcDoc::flat_alt(
@@ -1491,6 +1586,13 @@ pub fn format_keyword_aware_args(
                     // Add the single value inline
                     docs.push(RcDoc::space());
                     docs.push(RcDoc::text(section.args[0].clone()));
+                    // Then anything written about it, on its own line — a
+                    // comment runs to end of line, so it cannot precede the
+                    // value, and it must not be dropped
+                    for (_, comment) in &section.trailing_comments {
+                        docs.push(RcDoc::text(format!(" {}", comment)));
+                    }
+                    push_valueless_section_comments(&mut docs, &section.comments, &keyword_indent);
                 }
 
                 // PairValue keywords: format as key-value pairs
@@ -1520,6 +1622,13 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(keyword.clone()));
 
                     // Format values as key-value pairs
+                    if section.args.is_empty() {
+                        push_valueless_section_comments(
+                            &mut docs,
+                            &section.comments,
+                            &keyword_indent,
+                        );
+                    }
                     if !section.args.is_empty() {
                         let pairs: Vec<_> = section.args.chunks(2).collect();
                         let use_per_line = section.values_on_new_line
@@ -1527,8 +1636,15 @@ pub fn format_keyword_aware_args(
                             || !section.trailing_comments.is_empty()
                             || !section.blank_lines.is_empty();
 
-                        if pairs.len() == 1 {
-                            // Single pair: keep inline with keyword (e.g., PROPERTIES KEY VALUE)
+                        if pairs.len() == 1
+                            && section.comments.is_empty()
+                            && section.trailing_comments.is_empty()
+                        {
+                            // Single pair: keep inline with keyword (e.g., PROPERTIES KEY VALUE).
+                            // Guarded on comments like every other shortcut that
+                            // emits the keyword and its values and nothing else —
+                            // and this one is tested *before* `use_per_line`, so
+                            // the comments that set that flag never reached it.
                             docs.push(RcDoc::space());
                             docs.push(RcDoc::text(pairs[0][0].clone()));
                             if pairs[0].len() > 1 {
@@ -1536,8 +1652,25 @@ pub fn format_keyword_aware_args(
                                 docs.push(RcDoc::text(pairs[0][1].clone()));
                             }
                         } else if use_per_line || signals.force_multiline {
-                            // Per-line pairs
-                            for chunk in pairs {
+                            // Per-line pairs. The comments are what put us on
+                            // this branch — `use_per_line` is set by them — and
+                            // they were then never emitted, so a `PROPERTIES`
+                            // run with comments lost every one of them.
+                            let mut comment_iter = section.comments.iter().peekable();
+                            for (pair_idx, chunk) in pairs.iter().enumerate() {
+                                let key_index = pair_idx * 2;
+
+                                // Own-line comments written before this pair
+                                while let Some((position, comment)) = comment_iter.peek() {
+                                    if *position > key_index {
+                                        break;
+                                    }
+                                    docs.push(RcDoc::hardline());
+                                    docs.push(RcDoc::text(value_indent.clone()));
+                                    docs.push(RcDoc::text((*comment).clone()));
+                                    comment_iter.next();
+                                }
+
                                 if signals.force_multiline {
                                     docs.push(RcDoc::hardline());
                                     docs.push(RcDoc::text(value_indent.clone()));
@@ -1554,6 +1687,26 @@ pub fn format_keyword_aware_args(
                                     docs.push(RcDoc::space());
                                     docs.push(RcDoc::text(chunk[1].clone()));
                                 }
+                                // Both trailing comments come after the value. A comment runs to
+                                // the end of its line, so emitting the key's before the value put
+                                // the value *inside* the comment — `CXX_STANDARD # note 17` — and
+                                // the next pass swallowed the following key too, losing a token per
+                                // run. The inline_single_keyword twin has always emitted them in
+                                // this order.
+                                for (tc_index, tc_text) in &section.trailing_comments {
+                                    if *tc_index == key_index
+                                        || (chunk.len() > 1 && *tc_index == key_index + 1)
+                                    {
+                                        docs.push(RcDoc::text(format!(" {}", tc_text)));
+                                    }
+                                }
+                            }
+
+                            // Anything written after the last pair
+                            for (_, comment) in comment_iter {
+                                docs.push(RcDoc::hardline());
+                                docs.push(RcDoc::text(value_indent.clone()));
+                                docs.push(RcDoc::text(comment.clone()));
                             }
                         } else {
                             // Auto-layout: flat_alt pairs inherit from outer group
@@ -1573,7 +1726,18 @@ pub fn format_keyword_aware_args(
                 }
 
                 // MultiValue with exactly 1 arg: keep inline like SingleValue
-                Some(KeywordType::MultiValue) if section.args.len() == 1 => {
+                // A single value goes inline with its keyword — but only when
+                // there is nothing else to place. This arm emits the keyword and
+                // the value and nothing else, so a comment written on its own
+                // line inside the section was silently deleted:
+                // `target_sources(t PRIVATE\n\t# impl\n\tb.cpp)` lost `# impl`
+                // entirely. The `inline_single_keyword` path already guards its
+                // equivalent shortcut this way; the general path did not.
+                Some(KeywordType::MultiValue)
+                    if section.args.len() == 1
+                        && section.comments.is_empty()
+                        && section.trailing_comments.is_empty() =>
+                {
                     // Add separator before the keyword
                     if is_first_arg {
                         is_first_arg = false;
@@ -1624,6 +1788,13 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(keyword.clone()));
 
                     // Values: bin-pack using per-value groups
+                    if section.args.is_empty() {
+                        push_valueless_section_comments(
+                            &mut docs,
+                            &section.comments,
+                            &keyword_indent,
+                        );
+                    }
                     if !section.args.is_empty() {
                         let has_annotations = !section.comments.is_empty()
                             || !section.trailing_comments.is_empty()
@@ -1786,6 +1957,13 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(keyword.clone()));
 
                     // Values under the keyword with explicit indentation
+                    if section.args.is_empty() {
+                        push_valueless_section_comments(
+                            &mut docs,
+                            &section.comments,
+                            &keyword_indent,
+                        );
+                    }
                     if !section.args.is_empty() {
                         // Check if this is a collection keyword with sub_keyword grouping
                         // (e.g., FILES_MATCHING with PATTERN/REGEX/EXCLUDE sub-items)
@@ -2130,7 +2308,7 @@ fn format_keyword_aware_args_inline_single(
     let mut docs = Vec::new();
     let mut is_first_arg = true;
 
-    for section in sections.iter() {
+    for (i, section) in sections.iter().enumerate() {
         if let Some(keyword) = &section.keyword {
             // There is exactly one keyword section — emit keyword INLINE with preceding args.
             // Separator: space (flat and broken both use space here)
@@ -2147,6 +2325,12 @@ fn format_keyword_aware_args_inline_single(
                     ));
                 }
                 // force_multiline=true: emit nothing — keyword stays on the opening line after '('
+            } else if previous_section_ended_in_a_comment(sections, i) {
+                // The pre-keyword args ended in a comment, so this keyword cannot
+                // share their line — it would become part of the comment.
+                is_first_arg = false;
+                docs.push(RcDoc::hardline());
+                docs.push(RcDoc::text(keyword_indent.to_string()));
             } else {
                 // Keyword follows pre-keyword args — stays on same line as the last pre-keyword arg.
                 // In flat mode this is already inline; in broken mode we want a space (not a newline).
@@ -2158,11 +2342,19 @@ fn format_keyword_aware_args_inline_single(
             // For SingleValue keywords with exactly one arg, render the value inline (same line as
             // the keyword) rather than indented below. This keeps "APPEND SOURCES" together on the
             // opening line when the overflow positional args follow in the next section.
+            //
+            // Comments do not disqualify it — they are emitted after the value
+            // below, exactly as the general path does. Requiring the section to
+            // carry none put the mode keyword on its own line as soon as anyone
+            // wrote one, and cost the first-pass fixed point under sorting: the
+            // parser gives a comment written after this keyword's value to *this*
+            // section while the run's elements live in the next, so sorting the
+            // commented element to the front moved the comment into that slot and
+            // the following pass laid the command out differently. A blank line
+            // still disqualifies it, because the shortcut has nowhere to put one.
             let is_single_value_with_one_arg = section.keyword_type
                 == Some(KeywordType::SingleValue)
                 && section.args.len() == 1
-                && section.comments.is_empty()
-                && section.trailing_comments.is_empty()
                 && section.blank_lines.is_empty();
 
             let is_pair_value = section.keyword_type == Some(KeywordType::PairValue);
@@ -2171,6 +2363,12 @@ fn format_keyword_aware_args_inline_single(
                 // Always emit inline with a space — even when force_multiline is true.
                 docs.push(RcDoc::space());
                 docs.push(RcDoc::text(section.args[0].clone()));
+                // Then anything written about it, on its own line — a comment
+                // runs to end of line, so it cannot precede the value
+                for (_, comment) in &section.trailing_comments {
+                    docs.push(RcDoc::text(format!(" {}", comment)));
+                }
+                push_valueless_section_comments(&mut docs, &section.comments, keyword_indent);
             } else if is_pair_value && !section.args.is_empty() {
                 // PairValue keywords (e.g., PROPERTIES): format as key-value pairs
                 // Use keyword_indent (single indent) since the keyword is inlined on the command line
@@ -2180,8 +2378,12 @@ fn format_keyword_aware_args_inline_single(
                     || !section.trailing_comments.is_empty()
                     || !section.blank_lines.is_empty();
 
-                if pairs.len() == 1 {
-                    // Single pair: keep inline with keyword
+                if pairs.len() == 1
+                    && section.comments.is_empty()
+                    && section.trailing_comments.is_empty()
+                {
+                    // Single pair: keep inline with keyword. Same guard as the
+                    // general path's twin, for the same reason.
                     docs.push(RcDoc::space());
                     docs.push(RcDoc::text(pairs[0][0].clone()));
                     if pairs[0].len() > 1 {
@@ -2189,10 +2391,23 @@ fn format_keyword_aware_args_inline_single(
                         docs.push(RcDoc::text(pairs[0][1].clone()));
                     }
                 } else if use_per_line || signals.force_multiline {
+                    let mut pair_comments = section.comments.iter().peekable();
                     for (pair_idx, chunk) in pairs.iter().enumerate() {
                         if section.blank_lines.contains(&(pair_idx * 2)) && signals.force_multiline
                         {
                             docs.push(RcDoc::hardline());
+                        }
+                        // Own-line comments written before this pair. This loop
+                        // was missing entirely, so the twin emitted only trailing
+                        // comments and deleted every own-line one.
+                        while let Some((position, comment)) = pair_comments.peek() {
+                            if *position > pair_idx * 2 {
+                                break;
+                            }
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.to_string()));
+                            docs.push(RcDoc::text((*comment).clone()));
+                            pair_comments.next();
                         }
                         if signals.force_multiline {
                             docs.push(RcDoc::hardline());
@@ -2216,6 +2431,12 @@ fn format_keyword_aware_args_inline_single(
                             }
                         }
                     }
+                    // Anything written after the last pair
+                    for (_, comment) in pair_comments {
+                        docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(keyword_indent.to_string()));
+                        docs.push(RcDoc::text(comment.clone()));
+                    }
                 } else {
                     for chunk in pairs {
                         docs.push(RcDoc::flat_alt(
@@ -2229,7 +2450,9 @@ fn format_keyword_aware_args_inline_single(
                         }
                     }
                 }
-            } else if !section.args.is_empty() {
+            } else if section.args.is_empty() {
+                push_valueless_section_comments(&mut docs, &section.comments, keyword_indent);
+            } else {
                 // Apply source grouping to keyword section args (e.g., source files after PUBLIC)
                 let (
                     effective_args,

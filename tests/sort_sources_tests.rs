@@ -874,7 +874,7 @@ fn test_a_config_grammar_can_say_what_is_not_sortable() {
         CommandGrammarConfig {
             one_value_keywords: vec!["OUT".to_string()],
             multi_value_keywords: vec!["FILES".to_string(), "PARTS".to_string()],
-            sortable_keywords: vec!["PARTS".to_string()],
+            sortable_keywords: Some(vec!["PARTS".to_string()]),
             ..Default::default()
         },
     );
@@ -998,5 +998,393 @@ fn test_grouping_keeps_a_comment_with_its_argument_across_a_barrier() {
         comment_line > 1,
         "the comment was hoisted to the head of the list:\n{}",
         result
+    );
+}
+
+#[test]
+fn test_the_blocklist_reads_a_quoted_variable_name() {
+    // Every sibling predicate strips quotes; this one only uppercased, so a
+    // quoted name defeated all of it except the `FLAGS` substring test — and
+    // `"CMAKE_MODULE_PATH"` is as ordinary a spelling as the bare one.
+    let config = reordering_config();
+    for input in [
+        "list(APPEND \"CMAKE_MODULE_PATH\" cmake/zz.cmake cmake/aa.cmake)\n",
+        "list(APPEND \"CMAKE_PREFIX_PATH\" zz.cmake aa.cmake)\n",
+        "set(\"MY_LIBS\" zz.cpp aa.cpp)\n",
+        "set(\"MY_INCLUDE_DIRS\" zz.cmake aa.cmake)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &config),
+            input,
+            "a quoted search-path or flag variable was sorted"
+        );
+    }
+}
+
+#[test]
+fn test_an_auto_detected_flag_does_not_vouch_for_what_follows_it() {
+    // The conventional file-list default is drawn from multi-value keywords
+    // only: a `FILES` declared as a flag takes no values, so marking it sortable
+    // reorders whatever positional arguments happen to follow it. The config
+    // copy of that default was narrowed and this one — read from
+    // `cmake_parse_arguments` — was missed, which reordered a flag list.
+    let config = reordering_config();
+    let input = concat!(
+        "function(compile_unit)\n",
+        "\tcmake_parse_arguments(ARG \"FILES;QUIET\" \"\" \"\" ${ARGN})\n",
+        "endfunction()\n",
+        "\n",
+        "compile_unit(FILES -Wall -Wno-unused -O3 -O0)\n"
+    );
+    let result = format_text(input, &config);
+    assert!(
+        result.contains("compile_unit(FILES -Wall -Wno-unused -O3 -O0)"),
+        "a flag's trailing positionals were sorted:\n{}",
+        result
+    );
+
+    // Declared as a multi-value keyword, the same name does sort
+    let input = concat!(
+        "function(compile_unit)\n",
+        "\tcmake_parse_arguments(ARG \"QUIET\" \"\" \"FILES\" ${ARGN})\n",
+        "endfunction()\n",
+        "\n",
+        "compile_unit(FILES z.cpp a.cpp)\n"
+    );
+    let result = format_text(input, &config);
+    assert!(
+        result.contains("compile_unit(FILES a.cpp z.cpp)"),
+        "a conventionally named multi-value list should sort:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_an_empty_sortable_keywords_list_means_none() {
+    // The default applies when the key is absent. Writing it as an empty list is
+    // the user saying nothing here is sortable — the only way to refuse a
+    // conventionally named keyword when it is the command's only one, and what
+    // three doc surfaces promise.
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_wrap".to_string(),
+        CommandGrammarConfig {
+            multi_value_keywords: vec!["SOURCES".to_string()],
+            sortable_keywords: Some(Vec::new()),
+            ..Default::default()
+        },
+    );
+    let config = FormatConfig {
+        command_grammars,
+        ..reordering_config()
+    };
+    assert_eq!(
+        format_text("my_wrap(SOURCES z.cpp a.cpp)\n", &config),
+        "my_wrap(SOURCES z.cpp a.cpp)\n",
+        "an empty sortable_keywords list should mean nothing is sortable"
+    );
+
+    // And omitting the key keeps the conventional default
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_wrap".to_string(),
+        CommandGrammarConfig {
+            multi_value_keywords: vec!["SOURCES".to_string()],
+            ..Default::default()
+        },
+    );
+    let config = FormatConfig {
+        command_grammars,
+        ..reordering_config()
+    };
+    assert_eq!(
+        format_text("my_wrap(SOURCES z.cpp a.cpp)\n", &config),
+        "my_wrap(SOURCES a.cpp z.cpp)\n"
+    );
+}
+
+#[test]
+fn test_a_quoted_governing_variable_is_read_as_one() {
+    // `is_whole_variable_reference` is the sibling predicate that decides whether
+    // the name holding a list can be read at all. It did not unquote, so a
+    // quoted dynamic name looked readable and its list was sorted.
+    let config = reordering_config();
+    for input in [
+        "set(\"${PFX}\" b.cpp a.cpp)\n",
+        "list(APPEND \"${VAR}\" b.cpp a.cpp)\n",
+        "set(\"$ENV{X}\" b.cpp a.cpp)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &config),
+            input,
+            "a list held in an unreadable name was sorted"
+        );
+    }
+}
+
+#[test]
+fn test_grouping_leaves_a_section_with_a_trailing_comment_alone() {
+    // Grouping moves a file to its pair's index but cannot move the comment
+    // attached to it, so a section carrying a trailing comment is left alone
+    // entirely. Without that, the comment ends up describing a different file.
+    let config = FormatConfig {
+        sort_sources: SortSources::None,
+        source_grouping: SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
+    let input = "set(SRCS\n\tb.cpp # note\n\tb.h\n\ta.cpp\n\ta.h\n)\n";
+    assert_eq!(
+        format_text(input, &config),
+        input,
+        "a section carrying a trailing comment should be left alone entirely"
+    );
+}
+
+#[test]
+fn test_sorting_moves_a_trailing_comment_with_its_argument() {
+    // `sort_source_args` rebuilds the trailing-comment indices alongside the
+    // arguments it permutes. Dropping that rebuild left the whole suite green
+    // while every trailing comment in a sorted list was deleted — silent content
+    // loss, which is the family six rounds of review were about. The nearest
+    // existing test sets `sort_sources: None`, so it never enters this function.
+    let config = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        ..Default::default()
+    };
+    for (input, expected) in [
+        (
+            "set(SRCS\n\tb.cpp # bee\n\ta.cpp # ay\n)\n",
+            "set(SRCS\n\ta.cpp # ay\n\tb.cpp # bee\n)\n",
+        ),
+        (
+            "add_library(l STATIC\n\tz.cpp # zed\n\ta.cpp # ay\n)\n",
+            "add_library(l STATIC\n\ta.cpp # ay\n\tz.cpp # zed\n)\n",
+        ),
+        (
+            "target_sources(t PRIVATE\n\tc.cpp # see\n\tb.cpp\n\ta.cpp # ay\n)\n",
+            "target_sources(t\n\tPRIVATE\n\t\ta.cpp # ay\n\t\tb.cpp\n\t\tc.cpp # see\n)\n",
+        ),
+    ] {
+        let result = format_text(input, &config);
+        assert_eq!(
+            result, expected,
+            "a trailing comment did not move with its argument"
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+
+    // A barrier splits the run, and each side sorts independently, so a comment
+    // has to stay with its argument across the split too
+    let result = format_text(
+        "set(SRCS\n\tz.cpp # zed\n\t${V} # var\n\tb.cpp # bee\n\ta.cpp # ay\n)\n",
+        &config,
+    );
+    assert_eq!(
+        result, "set(SRCS\n\tz.cpp # zed\n\t${V} # var\n\ta.cpp # ay\n\tb.cpp # bee\n)\n",
+        "a comment did not stay with its argument across a barrier"
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // The arguments *before* the sortable range — the list variable, a target
+    // name — are rebuilt by a second path with its own comment loop, which none
+    // of the cases above reach.
+    for (input, expected) in [
+        (
+            "set(SRCS # the list\n\tz.cpp # zed\n\ta.cpp # ay\n)\n",
+            "set(SRCS # the list\n\ta.cpp # ay\n\tz.cpp # zed\n)\n",
+        ),
+        (
+            "add_library(l # target\n\tSTATIC\n\tz.cpp # zed\n\ta.cpp # ay\n)\n",
+            "add_library(l # target\n\tSTATIC\n\ta.cpp # ay\n\tz.cpp # zed\n)\n",
+        ),
+    ] {
+        let result = format_text(input, &config);
+        assert_eq!(
+            result, expected,
+            "a pinned argument's trailing comment was lost"
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+#[test]
+fn test_sortable_positional_reaches_exactly_two_runs() {
+    // The README, `--help-grammar` and the VS Code schema all describe what this
+    // flag reaches, and all three said "a run that follows a keyword is left
+    // alone" — which is false, in the unsafe direction. The run overflowing a
+    // *leading single-value* keyword is reached, with nothing pinned, because
+    // that keyword already consumed the name. That is what sorts
+    // `list(APPEND SRCS ...)`, and it applies to a user grammar too, so someone
+    // reading the old sentence could have enabled it on a `FROM src dst`
+    // wrapper believing the tail was protected.
+    //
+    // Pinned here so the three descriptions and the code cannot drift apart
+    // again.
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "w_single".to_string(),
+        CommandGrammarConfig {
+            one_value_keywords: vec!["FROM".to_string()],
+            sortable_positional: true,
+            sortable_keywords: Some(Vec::new()),
+            ..Default::default()
+        },
+    );
+    command_grammars.insert(
+        "w_flag".to_string(),
+        CommandGrammarConfig {
+            options: vec!["QUIET".to_string()],
+            sortable_positional: true,
+            sortable_keywords: Some(Vec::new()),
+            ..Default::default()
+        },
+    );
+    let config = FormatConfig {
+        command_grammars,
+        ..reordering_config()
+    };
+
+    // 1. The leading run, first argument pinned
+    assert_eq!(
+        format_text("w_single(x.cpp z.cpp a.cpp)\n", &config),
+        "w_single(x.cpp a.cpp z.cpp)\n",
+        "the leading run should sort with its first argument pinned"
+    );
+    assert_eq!(
+        format_text("w_single(z.cpp a.cpp)\n", &config),
+        "w_single(z.cpp a.cpp)\n",
+        "a two-element leading run has nothing to sort once the first is pinned"
+    );
+
+    // 2. The run overflowing a leading single-value keyword, nothing pinned
+    assert_eq!(
+        format_text("w_single(FROM base.cpp z.cpp m.cpp a.cpp)\n", &config),
+        "w_single(FROM base.cpp a.cpp m.cpp z.cpp)\n",
+        "the overflow run after a leading single-value keyword should sort whole"
+    );
+
+    // ...and only when that keyword leads: after a leading run, the keyword's
+    // own value is its business and the run before it is the leading one
+    assert_eq!(
+        format_text("w_single(x.cpp z.cpp a.cpp FROM base.cpp)\n", &config),
+        "w_single(x.cpp a.cpp z.cpp FROM base.cpp)\n",
+        "a trailing keyword should not change what the leading run does"
+    );
+
+    // 3. Nothing else. A run after a leading flag is not reached.
+    assert_eq!(
+        format_text("w_flag(QUIET z.cpp m.cpp a.cpp)\n", &config),
+        "w_flag(QUIET z.cpp m.cpp a.cpp)\n",
+        "a run after a leading flag is not reached"
+    );
+
+    // And the builtin the overflow rule exists for behaves the same way
+    assert_eq!(
+        format_text("list(APPEND V z.cpp m.cpp a.cpp)\n", &config),
+        "list(APPEND V a.cpp m.cpp z.cpp)\n",
+        "list(APPEND ...) is the same rule"
+    );
+}
+
+#[test]
+fn test_the_three_conventional_file_list_names_all_sort() {
+    // Omitting `sortable_keywords` on a `command_grammars` entry falls back to
+    // the conventional names, which the README, the CHANGELOG, `--help-grammar`
+    // and the VS Code schema all give as SOURCES, SRCS and FILES. Only two of
+    // the three were reachable by any test: dropping `"SRCS"` from the list left
+    // the whole suite green.
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_w".to_string(),
+        CommandGrammarConfig {
+            multi_value_keywords: vec![
+                "SOURCES".to_string(),
+                "SRCS".to_string(),
+                "FILES".to_string(),
+                "DEPS".to_string(),
+            ],
+            ..Default::default()
+        },
+    );
+    let config = FormatConfig {
+        command_grammars,
+        ..reordering_config()
+    };
+
+    for name in ["SOURCES", "SRCS", "FILES"] {
+        let input = format!("my_w({name} z.cpp a.cpp)\n");
+        assert_eq!(
+            format_text(&input, &config),
+            format!("my_w({name} a.cpp z.cpp)\n"),
+            "the conventional name {} did not fall back to sortable",
+            name
+        );
+    }
+    // and only those three
+    assert_eq!(
+        format_text("my_w(DEPS z.cpp a.cpp)\n", &config),
+        "my_w(DEPS z.cpp a.cpp)\n",
+        "a keyword nobody named was reordered"
+    );
+}
+
+#[test]
+fn test_the_search_path_blocklist_is_case_insensitive() {
+    // The README and the CHANGELOG both promise it, "since project-local lists
+    // are often lowercase" — and `set(my_dirs ...)` is the shape that motivates
+    // it. Replacing the `to_ascii_uppercase()` with a plain `to_string()` left
+    // the whole suite green while every lowercase name started sorting again.
+    let config = reordering_config();
+    for name in [
+        "my_dirs",
+        "MY_DIRS",
+        "My_Dirs",
+        "warning_flags",
+        "cmake_module_path",
+        "extra_options",
+    ] {
+        let input = format!("set({name} z.cpp a.cpp)\n");
+        assert_eq!(
+            format_text(&input, &config),
+            input,
+            "the blocklist missed {} — it is matched case-insensitively",
+            name
+        );
+    }
+    // A name the blocklist does not cover still sorts, so the test above is not
+    // passing because nothing sorts
+    assert_eq!(
+        format_text("set(my_sources z.cpp a.cpp)\n", &config),
+        "set(my_sources a.cpp z.cpp)\n",
+        "an ordinary list stopped sorting"
+    );
+}
+
+#[test]
+fn test_a_value_holding_an_equals_sign_is_not_a_source_file() {
+    // `NAME=value` is a definition, not a filename, and its position can carry
+    // meaning. Deleting the `=` rejection left the whole suite green: the
+    // existing test's values have no extension either, so they are refused by
+    // the extension check and the `=` guard never runs.
+    let config = reordering_config();
+    for input in [
+        "set(V ZED=z.cpp AYE=a.cpp)\n",
+        "set(V FOO=1 BAR=2 a.cpp)\n",
+        "add_library(l ZED=z.cpp AYE=a.cpp)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &config),
+            input,
+            "a value holding `=` was treated as a source file"
+        );
+    }
+
+    // The other half of the same documented rule: a *keyword* vouches for its
+    // own values, so the `=` test does not apply under one. This is the
+    // asymmetry the README states as "a keyword vouches for its own values".
+    assert_eq!(
+        format_text("target_sources(t PRIVATE ZED=z.cpp AYE=a.cpp)\n", &config),
+        "target_sources(t PRIVATE AYE=a.cpp ZED=z.cpp)\n",
+        "a keyword's own values should sort regardless of their shape"
     );
 }

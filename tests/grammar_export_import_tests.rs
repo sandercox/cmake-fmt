@@ -808,3 +808,58 @@ fn test_exporting_and_reimporting_keeps_the_allowlist() {
         );
     }
 }
+
+#[test]
+fn test_exporting_the_builtins_keeps_the_allowlist() {
+    // The test above goes through `export_command_grammars`, the *user* grammar
+    // path. `--export-all-grammar` uses `export_grammars_to_yaml` / `_toml`,
+    // which build their entries in `build_grammar_entries` — a different
+    // function, with one branch per grammar kind. Blanking the allowlist fields
+    // in either branch left the whole suite green, so the export of the
+    // builtins could silently drop what it says is sortable.
+    //
+    // Counted, not searched for: both fields are `skip_serializing_if` empty, so
+    // blanking them removes the keys entirely — while every keyword name they
+    // hold also appears in the entry's `keywords` map, which is why looking for
+    // the names proves nothing.
+    use cmake_fmt::formatter::grammar::builtin_grammars;
+    use cmake_fmt::formatter::{export_grammars_to_toml, export_grammars_to_yaml};
+
+    // The same map `--export-all-grammar` writes
+    let grammars = builtin_grammars();
+
+    // Six entries mark keywords sortable — add_executable, add_library,
+    // source_group and target_sources through the `Simple` branch, install's
+    // FILES and PROGRAMS modes through the `Modes` one — and six mark
+    // positional: those two add_*, set, and the three list modes. Blanking
+    // either branch changes both counts, which is what makes counting the whole
+    // check.
+    const WITH_KEYWORDS: usize = 6;
+    const WITH_POSITIONAL: usize = 6;
+
+    for (label, exported, positional_key) in [
+        (
+            "yaml",
+            export_grammars_to_yaml(&grammars),
+            "sortable_positional: true",
+        ),
+        (
+            "toml",
+            export_grammars_to_toml(&grammars),
+            "sortable_positional = true",
+        ),
+    ] {
+        assert_eq!(
+            exported.matches("sortable_keywords").count(),
+            WITH_KEYWORDS,
+            "{} export wrote the wrong number of sortable_keywords lists",
+            label
+        );
+        assert_eq!(
+            exported.matches(positional_key).count(),
+            WITH_POSITIONAL,
+            "{} export wrote the wrong number of sortable_positional entries",
+            label
+        );
+    }
+}
