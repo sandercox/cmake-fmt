@@ -379,7 +379,9 @@ where a list is known to be unordered:
 | `list(APPEND\|PREPEND\|REMOVE_ITEM var …)` | the elements |
 | `install(FILES\|PROGRAMS …)` | the file list |
 | `source_group(… FILES …)` | the file list |
-| your own commands | keywords named `SOURCES`, `SRCS` or `FILES` |
+| your own commands | keywords named `SOURCES`, `SRCS` or `FILES` — see the note below |
+
+That last row is a *fallback*, and only for a `command_grammars` entry in `.cmake-fmt` or a grammar auto-detected from `cmake_parse_arguments` — it is what such a grammar gets when it says nothing about sortability. A grammar file loaded with `--grammar-file` has no fallback: a keyword there is sortable only if `sortable_keywords` names it.
 
 Everything else is left alone, because argument order usually carries meaning:
 `COMMAND` holds an argv, `PROPERTIES` holds key/value pairs, `file(RENAME a b)`

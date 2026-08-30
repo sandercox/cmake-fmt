@@ -3842,6 +3842,73 @@ fn test_a_valueless_keywords_comment_sits_at_the_keywords_indent() {
 }
 
 #[test]
+fn test_a_comment_before_a_commands_first_keyword_survives() {
+    // The section parser pushed its leading section only when that section held
+    // an argument or a keyword, so a section holding *only* comments was thrown
+    // away — deleting every comment written before a command's first argument
+    // when that argument is a keyword. Stable fixed point, exit 0.
+    //
+    // The cause predates this branch, but the branch decides which spellings
+    // reach it: adding `TYPE`, `FILES`, `BASE_DIRS` to `target_sources` and
+    // creating `source_group` brought six new (command, keyword) pairs into it,
+    // all of which the previous release formatted correctly.
+    //
+    // Over every (command, keyword) pair the grammar knows, the previous release
+    // loses this comment on 227 of 375; this loses none.
+    let config = FormatConfig::default();
+    for (command, keyword) in [
+        // the six this branch would have added to the defect
+        ("source_group", "FILES"),
+        ("source_group", "PREFIX"),
+        ("source_group", "TREE"),
+        ("target_sources", "BASE_DIRS"),
+        ("target_sources", "FILES"),
+        ("target_sources", "TYPE"),
+        // and the shapes that were already reaching it
+        ("install", "FILES"),
+        ("target_sources", "PUBLIC"),
+        ("find_package", "REQUIRED"),
+        ("execute_process", "COMMAND"),
+        // multi-mode, where the mode keyword is emitted inline with the command
+        // name — it must not be inlined onto a line the comment has ended
+        ("list", "APPEND"),
+        ("file", "APPEND"),
+        ("define_property", "CACHED_VARIABLE"),
+    ] {
+        let input = format!("{command}(\n\t# ship the headers\n\t{keyword} x\n)\n");
+        let result = format_text(&input, &config);
+        assert!(
+            result.contains("# ship the headers"),
+            "the leading comment was deleted for {} {}:\n{}",
+            command,
+            keyword,
+            result
+        );
+        assert!(
+            appears_as_code(&result, keyword),
+            "{} was swallowed by the comment in {}:\n{}",
+            keyword,
+            command,
+            result
+        );
+        assert!(
+            appears_as_code(&result, "x"),
+            "the value was swallowed by the comment in {} {}:\n{}",
+            command,
+            keyword,
+            result
+        );
+        assert_eq!(
+            result,
+            format_text(&result, &config),
+            "not idempotent for {} {}",
+            command,
+            keyword
+        );
+    }
+}
+
+#[test]
 fn test_a_single_value_keyword_keeps_a_comment_on_its_value() {
     // The arm that stopped a comment demoting a `SingleValue` section emits two
     // kinds after the value: the trailing comment on the value's own line, and
@@ -4262,4 +4329,38 @@ fn test_a_comment_after_the_last_property_pair_survives() {
         );
         assert_eq!(result, format_text(&result, &config), "not idempotent");
     }
+}
+
+#[test]
+fn test_the_inline_twins_pair_comments_stay_with_their_pairs() {
+    // The inline twin's per-pair comment loop was pinned for *presence* only:
+    // making it never fire left every comment preserved and every one detached
+    // from the pair it annotates, falling through to the drain that runs after
+    // the last pair —
+    //
+    //     PROPERTIES / A 1 / B 2 / # about A / # about B
+    //
+    // No content lost, so no oracle that counts tokens or comments notices.
+    // Exact output is what sees it.
+    let inline = FormatConfig {
+        inline_single_keyword: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        format_text(
+            "set_target_properties(t PROPERTIES\n\t# about A\n\tA 1\n\t# about B\n\tB 2\n)\n",
+            &inline
+        ),
+        "set_target_properties(t PROPERTIES\n\t# about A\n\tA 1\n\t# about B\n\tB 2\n)\n",
+        "a pair's comment came away from its pair"
+    );
+    // A comment after the last pair still belongs after it
+    assert_eq!(
+        format_text(
+            "set_target_properties(t PROPERTIES\n\tA 1\n\tB 2\n\t# after all\n)\n",
+            &inline
+        ),
+        "set_target_properties(t PROPERTIES\n\tA 1\n\tB 2\n\t# after all\n)\n",
+        "a trailing comment moved"
+    );
 }

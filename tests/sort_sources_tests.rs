@@ -1388,3 +1388,93 @@ fn test_a_value_holding_an_equals_sign_is_not_a_source_file() {
         "a keyword's own values should sort regardless of their shape"
     );
 }
+
+#[test]
+fn test_a_comment_does_not_switch_reordering_off() {
+    // The overflow run after a leading mode keyword is marked sortable only for
+    // the command's *first* section, and that test was written as
+    // `sections.is_empty()`. Pushing a leading comments-only section — which is
+    // what stops a comment before the first keyword being deleted — made that
+    // false, so a comment silently switched off `sort_sources` and
+    // `source_grouping` for `list(APPEND|PREPEND|REMOVE_ITEM ...)` and for every
+    // grammar with `sortable_positional`. Safe direction, exit 0, stable, and
+    // invisible to every other test.
+    //
+    // The property is the one worth pinning: a comment changes where things are
+    // written, never what is written or in what order.
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_copy".to_string(),
+        CommandGrammarConfig {
+            one_value_keywords: vec!["FROM".to_string()],
+            sortable_positional: true,
+            ..Default::default()
+        },
+    );
+    let sorting = FormatConfig {
+        command_grammars: command_grammars.clone(),
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        ..Default::default()
+    };
+    let grouping = FormatConfig {
+        command_grammars,
+        source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
+
+    // (bare, commented) pairs whose argument order must come out the same
+    let cases: &[(&str, &str)] = &[
+        (
+            "list(APPEND V z.cpp a.cpp)\n",
+            "list(\n\t# note\n\tAPPEND V z.cpp a.cpp)\n",
+        ),
+        (
+            "list(PREPEND V z.cpp a.cpp)\n",
+            "list(\n\t#[[bc]]\n\tPREPEND V z.cpp a.cpp)\n",
+        ),
+        (
+            "list(REMOVE_ITEM V z.cpp a.cpp)\n",
+            "list( # trailing\n\tREMOVE_ITEM V z.cpp a.cpp)\n",
+        ),
+        (
+            "my_copy(FROM base.cpp z.cpp a.cpp)\n",
+            "my_copy(\n\t# note\n\tFROM base.cpp z.cpp a.cpp)\n",
+        ),
+        (
+            "list(APPEND V a.cpp a.h)\n",
+            "list(\n\t# note\n\tAPPEND V a.cpp a.h)\n",
+        ),
+    ];
+
+    for config in [&sorting, &grouping] {
+        for (bare, commented) in cases {
+            let order = |text: &str| -> Vec<String> {
+                text.lines()
+                    .flat_map(|line| {
+                        line.split('#')
+                            .next()
+                            .unwrap_or("")
+                            .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+                            .filter(|w| !w.is_empty())
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .collect()
+            };
+            assert_eq!(
+                order(&format_text(commented, config)),
+                order(&format_text(bare, config)),
+                "the comment changed what was reordered:\nbare:      {}\ncommented: {}",
+                format_text(bare, config),
+                format_text(commented, config)
+            );
+            // and the comment is still there
+            let result = format_text(commented, config);
+            assert!(
+                result.contains("note") || result.contains("bc") || result.contains("trailing"),
+                "the comment was lost:\n{}",
+                result
+            );
+        }
+    }
+}

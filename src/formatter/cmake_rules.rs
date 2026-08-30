@@ -264,16 +264,6 @@ fn grouped_section(
     }
 }
 
-/// Emit the comments of a keyword section that has no values.
-///
-/// Every arm that renders a section guards its comment machinery on the section
-/// having arguments, so a comment attached to a keyword with no values had
-/// nowhere to go and was deleted outright — `target_sources(t\n\tPRIVATE # note)`
-/// lost `# note`, and so did the `PairValue`, `BinPack` and inline equivalents.
-///
-/// They are always own-line comments: the section parser only records a trailing
-/// comment for a section that already holds an argument, so a comment written on
-/// the same line as a valueless keyword arrives at position 0 of `comments`.
 /// Whether the section before `index` has already put a comment on its line.
 ///
 /// A line comment runs to the end of its line, so nothing may follow that
@@ -295,6 +285,15 @@ fn previous_section_ended_in_a_comment(sections: &[KeywordSection], index: usize
 }
 
 /// Emit the comments of a keyword section that has no values.
+///
+/// Every arm that renders a section used to guard its comment machinery on the
+/// section having arguments, so a comment attached to a keyword with no values
+/// had nowhere to go and was deleted outright — `target_sources(t\n\tPRIVATE # note)`
+/// lost `# note`, and so did the `PairValue`, `BinPack` and inline equivalents.
+///
+/// They are always own-line comments: the section parser only records a trailing
+/// comment for a section that already holds an argument, so a comment written on
+/// the same line as a valueless keyword arrives at position 0 of `comments`.
 ///
 /// At `keyword_indent`, not `value_indent`: there are no values for the comment
 /// to sit under, and the comment belongs to the keyword. Three of the five arms
@@ -641,8 +640,22 @@ pub fn parse_keyword_sections_with_grammar(
                             .is_some_and(|g| g.is_sortable_keyword(&text))
                             .then_some(0);
 
-                        // Start a new section
-                        if !current_section.args.is_empty() || current_section.keyword.is_some() {
+                        // Start a new section.
+                        //
+                        // A leading section holding *only* comments is pushed
+                        // too. Dropping it deleted every comment written before
+                        // a command's first argument when that argument is a
+                        // keyword — `install(\n\t# ship the headers\n\tFILES a.h\n\tDESTINATION inc)`
+                        // lost the comment, at a stable fixed point and exit 0.
+                        // The condition was "has anything worth emitting", and
+                        // comments are worth emitting.
+                        // `trailing_comments` is deliberately not asked: the
+                        // parser only records one for a section that already
+                        // holds an argument, so the first disjunct covers it.
+                        if !current_section.args.is_empty()
+                            || current_section.keyword.is_some()
+                            || !current_section.comments.is_empty()
+                        {
                             sections.push(current_section);
                         }
                         current_section = KeywordSection {
@@ -679,9 +692,20 @@ pub fn parse_keyword_sections_with_grammar(
                             // `list(APPEND var a b)`. Only the command's first
                             // section qualifies: anywhere later, this is a stray
                             // positional argument rather than the command's
-                            // argument list. Computed before the push, which is
-                            // what makes `sections` still empty here.
-                            let overflow_sortable = sections.is_empty()
+                            // argument list.
+                            //
+                            // "Nothing but comments so far", not "nothing so
+                            // far": a leading section holding only comments is
+                            // pushed too, so `sections.is_empty()` stopped
+                            // meaning what it said the moment that changed — and
+                            // a comment before the mode keyword switched this
+                            // branch's own feature off, silently, at exit 0.
+                            // `list(# note / APPEND V z.cpp a.cpp)` stopped
+                            // sorting, and so did every `sortable_positional`
+                            // grammar.
+                            let overflow_sortable = sections
+                                .iter()
+                                .all(|s| s.keyword.is_none() && s.args.is_empty())
                                 && grammar.is_some_and(|g| g.sortable_positional);
                             sections.push(current_section);
                             current_section = KeywordSection {
@@ -1359,9 +1383,13 @@ pub fn format_keyword_aware_args(
                     // Add separator before the flag keyword
                     if is_first_arg {
                         is_first_arg = false;
-                        if first_keyword_inline {
+                        if first_keyword_inline
+                            && !previous_section_ended_in_a_comment(&sections, i)
+                        {
                             // Multi-mode: first keyword stays inline with command name
-                            // (no separator emitted)
+                            // (no separator emitted). Not when a comment section
+                            // precedes it — the comment runs to end of line, so
+                            // inlining put the mode keyword inside it.
                         } else if signals.force_multiline {
                             docs.push(RcDoc::hardline());
                             docs.push(RcDoc::text(keyword_indent.clone()));
@@ -1545,10 +1573,14 @@ pub fn format_keyword_aware_args(
                 // renders the same shape with them as without.
                 Some(KeywordType::SingleValue) if section.args.len() == 1 => {
                     // Add separator before the keyword
-                    if is_first_arg && first_keyword_inline {
+                    if is_first_arg
+                        && first_keyword_inline
+                        && !previous_section_ended_in_a_comment(&sections, i)
+                    {
                         is_first_arg = false;
                         // Multi-mode command (e.g., list(APPEND <var>)):
-                        // keep inline like ARGL-03 for first positional arg
+                        // keep inline like ARGL-03 for first positional arg —
+                        // but not onto a line a comment has already ended
                     } else if is_first_arg {
                         is_first_arg = false;
                         // Regular command: first keyword drops to next line when multiline

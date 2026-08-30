@@ -100,78 +100,99 @@ fn print_style_help() {
     );
     println!();
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "Setting", "Type", "Default", "Values"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "-------", "----", "-------", "------"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "disable_format", "boolean", "false", "true, false — skip formatting entirely"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "indent_width", "integer", "4", "Number of spaces per indent level"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "max_line_length", "integer", "80", "Max line length (0 = unlimited)"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "use_tabs", "boolean", "true", "true, false"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "command_case", "enum", "lowercase", "lowercase, uppercase, preserve"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "user_command_case", "enum", "infer", "lowercase, uppercase, preserve, infer"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "max_blank_lines", "integer", "1", "Maximum consecutive blank lines allowed"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "line_ending", "enum", "auto", "auto, lf, crlf"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "closing_style", "enum", "remove", "preserve, remove, force"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "force_break_keywords", "boolean", "false", "true, false"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "final_newline", "enum", "preserve", "preserve, remove, force (also accepts true/false)"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "comment_style", "enum", "hash_space", "preserve, hash_space, hash_no_space"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "source_grouping", "enum", "none", "none, headers_first, sources_first"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "sort_sources", "enum", "none", "none, alphabetical"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
+        "space_between_command_parens",
+        "boolean",
+        "false",
+        "true, false — `set( A b )` rather than `set(A b)`"
+    );
+    println!(
+        "  {:<31} {:<15} {:<15} {}",
+        "control_flow_space_before_paren",
+        "boolean",
+        "false",
+        "true, false — `if (A)` rather than `if(A)`"
+    );
+    println!(
+        "  {:<31} {:<15} {:<15} {}",
+        "indent_closing_paren",
+        "boolean",
+        "false",
+        "true, false — indent a `)` that sits on its own line"
+    );
+    println!(
+        "  {:<31} {:<15} {:<15} {}",
         "collapse_empty_flags",
         "boolean",
         "true",
         "true, false — keep a no-argument flag on the previous line"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "inline_single_keyword",
         "boolean",
         "false",
@@ -183,6 +204,10 @@ fn print_style_help() {
     println!("Config file only (not available via --style):");
     println!(
         "  command_grammars        map            {{}}              Custom command grammar definitions"
+    );
+    println!("  grammar_files           list           []              Grammar files to import");
+    println!(
+        "  root                    boolean        false           Stop searching for config above this directory"
     );
     println!();
     println!("Example .cmake-fmt.toml:");
