@@ -244,24 +244,303 @@ fn grouped_section(
     grouping: super::config::SourceGrouping,
 ) -> GroupedSection {
     if grouping != super::config::SourceGrouping::None && section.trailing_comments.is_empty() {
-        group_source_pairs_preserving_blanks(
-            &section.args,
-            section.sort_from,
-            &section.blank_lines,
-            &section.comments,
-            &section.post_comment_blanks,
-            &section.comment_blank_indices,
-            grouping,
-        )
+        group_source_pairs_preserving_blanks(section, grouping)
     } else {
-        (
-            section.args.clone(),
-            section.blank_lines.clone(),
-            section.comments.clone(),
-            section.post_comment_blanks.clone(),
-            section.comment_blank_indices.clone(),
-        )
+        GroupedSection {
+            args: section.args.clone(),
+            blank_lines: section.blank_lines.clone(),
+            comments: section.comments.clone(),
+            post_comment_blanks: section.post_comment_blanks.clone(),
+            comment_blank_indices: section.comment_blank_indices.clone(),
+            annotations: section.annotations.clone(),
+        }
     }
+}
+
+/// One thing the author wrote between a section's arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Annotation {
+    /// A comment on a line of its own.
+    Comment(String),
+    /// A blank line.
+    Blank,
+}
+
+/// Everything written between a section's arguments, in source order.
+///
+/// One ordered list, each item keyed by the argument position it precedes. This
+/// replaces a position-keyed *set* of blank lines plus two further arrays whose
+/// only job was to re-encode the ordering that set had thrown away:
+/// `post_comment_blanks` ("the blank at this position comes after the comments,
+/// not before") and `comment_blank_indices` ("a blank precedes comment number
+/// k"). Both were unrepresentable states waiting to be reached, and both were
+/// reached — a blank written twice because two rules matched one entry, and an
+/// index naming a comment that sorting had since moved, or that never arrived.
+///
+/// Here the order *is* the order, so there is nothing to keep in step.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Annotations {
+    items: Vec<(usize, Annotation)>,
+}
+
+impl Annotations {
+    // The two questions the render arms ask before they open a comment block.
+    // They ask it of `comments` and `blank_lines` today; these are what they ask
+    // instead once they read the list, which is the next commit.
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    pub fn push_comment(&mut self, position: usize, text: String) {
+        self.items.push((position, Annotation::Comment(text)));
+    }
+
+    pub fn push_blank(&mut self, position: usize) {
+        self.items.push((position, Annotation::Blank));
+    }
+
+    /// The own-line comments, as `(position, text)` in source order.
+    pub fn comments(&self) -> impl Iterator<Item = (usize, &str)> + '_ {
+        self.items.iter().filter_map(|(position, item)| match item {
+            Annotation::Comment(text) => Some((*position, text.as_str())),
+            Annotation::Blank => None,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn has_comments(&self) -> bool {
+        self.comments().next().is_some()
+    }
+
+    /// The positions that carry at least one blank line, deduplicated and in
+    /// order — the old `blank_lines`.
+    ///
+    /// This and the two views below are the faithfulness assertion's
+    /// instruments: they exist to say what the arrays say, and they are compiled
+    /// only where the assertion is. Nothing renders through them, so they go
+    /// when the arrays do.
+    #[cfg(any(debug_assertions, test))]
+    pub fn blank_positions(&self) -> Vec<usize> {
+        let mut out: Vec<usize> = Vec::new();
+        for (position, item) in &self.items {
+            if matches!(item, Annotation::Blank) && !out.contains(position) {
+                out.push(*position);
+            }
+        }
+        out
+    }
+
+    /// Whether the blank at `position` was written *after* the comments there
+    /// rather than before them — the old `post_comment_blanks`.
+    #[cfg(any(debug_assertions, test))]
+    pub fn blank_follows_comments_at(&self, position: usize) -> bool {
+        let mut seen_comment = false;
+        for (item_position, item) in &self.items {
+            if *item_position != position {
+                continue;
+            }
+            match item {
+                Annotation::Comment(_) => seen_comment = true,
+                Annotation::Blank => return seen_comment,
+            }
+        }
+        false
+    }
+
+    /// Whether a blank line precedes the `index`-th comment — the old
+    /// `comment_blank_indices`.
+    ///
+    /// The blank must sit at the same position *and* not be the first blank
+    /// there: a position's first blank is written by the blank-position rule
+    /// instead, so counting it here would write it twice. That asymmetry is the
+    /// whole reason the two old arrays existed, and it is the one thing this
+    /// view has to reproduce faithfully.
+    #[cfg(any(debug_assertions, test))]
+    pub fn blank_precedes_comment(&self, index: usize) -> bool {
+        let mut comments_seen = 0;
+        let mut blanks_at: std::collections::HashMap<usize, usize> =
+            std::collections::HashMap::new();
+        let mut previous_was_a_later_blank_at = None;
+        for (position, item) in &self.items {
+            match item {
+                Annotation::Comment(_) => {
+                    if comments_seen == index {
+                        return previous_was_a_later_blank_at == Some(*position);
+                    }
+                    comments_seen += 1;
+                    previous_was_a_later_blank_at = None;
+                }
+                Annotation::Blank => {
+                    let seen = blanks_at.entry(*position).or_insert(0);
+                    *seen += 1;
+                    previous_was_a_later_blank_at = if *seen > 1 { Some(*position) } else { None };
+                }
+            }
+        }
+        false
+    }
+
+    /// Move every item to a new position, keeping source order.
+    ///
+    /// Source order, not position order: grouping's mapping is not monotonic —
+    /// `[a.h, b.cpp, a.cpp]` pairs indices 0 and 2 into one line, so index 2
+    /// maps *behind* index 1 — and the comment list it produces is in source
+    /// order with the new positions written over the old, exactly as here. A
+    /// sort by position would reorder the comments against it.
+    pub fn remap(&mut self, mut position_of: impl FnMut(usize) -> usize) {
+        for (position, _) in &mut self.items {
+            *position = position_of(*position);
+        }
+    }
+
+    /// Rebuild from a permutation that has already moved the comments.
+    ///
+    /// Sorting reorders the arguments within each blank-line segment, so it
+    /// cannot be expressed as a position rewrite: two comments can swap places
+    /// in the list. The blanks are the segment boundaries and so are fixed
+    /// points; `comments` arrives already remapped — each entry is the comment
+    /// and the argument position it now sits in front of, in its new order.
+    fn rebuilt_for_permuted_comments(
+        comments: &[(usize, String)],
+        blank_positions: &[usize],
+        blank_follows_comments: impl Fn(usize) -> bool,
+    ) -> Self {
+        let mut positions: Vec<usize> = comments.iter().map(|(position, _)| *position).collect();
+        positions.extend_from_slice(blank_positions);
+        positions.sort_unstable();
+        positions.dedup();
+
+        let mut rebuilt = Self::default();
+        for position in positions {
+            let carries_blank = blank_positions.contains(&position);
+            let blank_last = carries_blank && blank_follows_comments(position);
+            if carries_blank && !blank_last {
+                rebuilt.push_blank(position);
+            }
+            for (_, text) in comments.iter().filter(|(at, _)| *at == position) {
+                rebuilt.push_comment(position, text.clone());
+            }
+            if blank_last {
+                rebuilt.push_blank(position);
+            }
+        }
+        rebuilt
+    }
+}
+
+/// The ordered list must say exactly what the four arrays say, everywhere either
+/// encoding is written — not only where they are first filled in.
+///
+/// A spike that migrated the render arms while leaving `sort_source_args` to
+/// rebuild the arrays alone got past the parse-time check and surfaced two files
+/// later as a section that laid out differently on the second pass. Sorting and
+/// grouping rewrite these fields as much as parsing does, so they are checked
+/// too.
+///
+/// Only what a reader can observe is compared. A blank line's post-comment-ness
+/// is unobservable when no comment shares its position, and sorting can strand
+/// exactly that: a comment travels with its argument, so the comment that made
+/// the blank at a segment boundary "post-comment" may have moved elsewhere in
+/// the segment, leaving an entry in `post_comment_blanks` that no longer names
+/// anything. Asserting on it would be asserting about dead data.
+///
+/// Returns *where* they disagree rather than asserting, so the unit tests can
+/// make the same comparison in a release profile: `debug_assert_eq!` compiles
+/// out under `cargo test --release`, and a lost remap has to fail there too.
+#[cfg(any(debug_assertions, test))]
+fn annotations_disagreement(
+    annotations: &Annotations,
+    comments: &[(usize, String)],
+    blank_lines: &[usize],
+    post_comment_blanks: &[usize],
+    comment_blank_indices: &[usize],
+) -> Option<String> {
+    let list_comments: Vec<(usize, String)> = annotations
+        .comments()
+        .map(|(position, text)| (position, text.to_string()))
+        .collect();
+    if list_comments != comments {
+        return Some(format!(
+            "comments: list says {list_comments:?}, arrays say {comments:?}"
+        ));
+    }
+
+    let list_blanks = annotations.blank_positions();
+    if list_blanks != blank_lines {
+        return Some(format!(
+            "blank positions: list says {list_blanks:?}, arrays say {blank_lines:?}"
+        ));
+    }
+
+    for position in blank_lines {
+        if !comments.iter().any(|(at, _)| at == position) {
+            continue;
+        }
+        let from_list = annotations.blank_follows_comments_at(*position);
+        if from_list != post_comment_blanks.contains(position) {
+            return Some(format!(
+                "blank-after-comments at {position}: list says {from_list}, arrays say {}",
+                !from_list
+            ));
+        }
+    }
+
+    for index in 0..comments.len() {
+        let from_list = annotations.blank_precedes_comment(index);
+        if from_list != comment_blank_indices.contains(&index) {
+            return Some(format!(
+                "blank before comment {index}: list says {from_list}, arrays say {}",
+                !from_list
+            ));
+        }
+    }
+
+    None
+}
+
+#[cfg(debug_assertions)]
+fn debug_assert_annotations_agree(
+    stage: &str,
+    annotations: &Annotations,
+    comments: &[(usize, String)],
+    blank_lines: &[usize],
+    post_comment_blanks: &[usize],
+    comment_blank_indices: &[usize],
+) {
+    if let Some(disagreement) = annotations_disagreement(
+        annotations,
+        comments,
+        blank_lines,
+        post_comment_blanks,
+        comment_blank_indices,
+    ) {
+        panic!("after {stage}: {disagreement}");
+    }
+}
+
+#[cfg(debug_assertions)]
+fn debug_assert_section_annotations(stage: &str, section: &KeywordSection) {
+    debug_assert_annotations_agree(
+        stage,
+        &section.annotations,
+        &section.comments,
+        &section.blank_lines,
+        &section.post_comment_blanks,
+        &section.comment_blank_indices,
+    );
+}
+
+#[cfg(debug_assertions)]
+fn debug_assert_grouped_annotations(stage: &str, grouped: &GroupedSection) {
+    debug_assert_annotations_agree(
+        stage,
+        &grouped.annotations,
+        &grouped.comments,
+        &grouped.blank_lines,
+        &grouped.post_comment_blanks,
+        &grouped.comment_blank_indices,
+    );
 }
 
 /// Whether the section before `index` has already put a comment on its line.
@@ -382,30 +661,38 @@ fn group_sortable_runs(
     (out, old_to_new)
 }
 
-/// A section after grouping: the arguments, the blank-line positions, the
-/// comments with their new positions, the post-comment blanks, and the indices
-/// of comments that carry a blank line.
-type GroupedSection = (
-    Vec<String>,
-    Vec<usize>,
-    Vec<(usize, String)>,
-    Vec<usize>,
-    Vec<usize>,
-);
+/// A section after grouping: the arguments, and everything the author wrote
+/// between them, at the positions grouping has moved them to.
+///
+/// A struct rather than the tuple this was: the render arms destructure it by
+/// name, so adding `annotations` alongside the four arrays it will replace costs
+/// one line per arm instead of six positional bindings shifting under each one.
+struct GroupedSection {
+    args: Vec<String>,
+    blank_lines: Vec<usize>,
+    comments: Vec<(usize, String)>,
+    post_comment_blanks: Vec<usize>,
+    comment_blank_indices: Vec<usize>,
+    // Read by the faithfulness assertion, which only exists in a debug build,
+    // until the render arms migrate onto it.
+    #[allow(dead_code)]
+    annotations: Annotations,
+}
 
 /// Group within each blank-line segment independently, adjusting the blank-line
 /// and comment positions to the shorter grouped segments.
 fn group_source_pairs_preserving_blanks(
-    args: &[String],
-    sort_from: Option<usize>,
-    blank_lines: &[usize],
-    comments: &[(usize, String)],
-    post_comment_blanks: &[usize],
-    comment_blank_indices: &[usize],
+    section: &KeywordSection,
     grouping: super::config::SourceGrouping,
 ) -> GroupedSection {
+    let args = &section.args;
+    let blank_lines = &section.blank_lines;
+    let comments = &section.comments;
+    let post_comment_blanks = &section.post_comment_blanks;
+    let comment_blank_indices = &section.comment_blank_indices;
+
     // A section with no sortable run groups nothing, so `None` pins everything
-    let sort_from = sort_from.unwrap_or(usize::MAX);
+    let sort_from = section.sort_from.unwrap_or(usize::MAX);
 
     if blank_lines.is_empty() {
         let (grouped_args, old_to_new) = group_sortable_runs(args, sort_from, grouping);
@@ -422,13 +709,27 @@ fn group_source_pairs_preserving_blanks(
                 (new_pos, text.clone())
             })
             .collect();
-        return (
-            grouped_args,
-            Vec::new(),
-            new_comments,
-            Vec::new(),
-            comment_blank_indices.to_vec(),
-        );
+        // `blank_lines` empty means the ordered list holds no blanks either, so
+        // one mapping covers every item.
+        let mut annotations = section.annotations.clone();
+        annotations.remap(|position| {
+            old_to_new
+                .get(position)
+                .copied()
+                .unwrap_or(grouped_args.len())
+        });
+
+        let grouped = GroupedSection {
+            args: grouped_args,
+            blank_lines: Vec::new(),
+            comments: new_comments,
+            post_comment_blanks: Vec::new(),
+            comment_blank_indices: comment_blank_indices.to_vec(),
+            annotations,
+        };
+        #[cfg(debug_assertions)]
+        debug_assert_grouped_annotations("group (no blanks)", &grouped);
+        return grouped;
     }
 
     // Split args into segments at blank line boundaries
@@ -496,13 +797,30 @@ fn group_source_pairs_preserving_blanks(
         })
         .collect();
 
-    (
-        result,
-        new_blank_lines,
-        new_comments,
-        new_post_comment_blanks,
-        comment_blank_indices.to_vec(),
-    )
+    // One mapping for comments and blanks alike. A blank sits at a segment
+    // boundary, and `group_sortable_runs` always maps a segment's first argument
+    // to the start of that segment's grouped output — `group_source_pairs` emits
+    // each group at its earliest member's index, and index 0 is its own
+    // earliest — so the boundary and that argument still share a position.
+    let mut annotations = section.annotations.clone();
+    annotations.remap(|position| {
+        global_old_to_new
+            .get(position)
+            .copied()
+            .unwrap_or(result.len())
+    });
+
+    let grouped = GroupedSection {
+        args: result,
+        blank_lines: new_blank_lines,
+        comments: new_comments,
+        post_comment_blanks: new_post_comment_blanks,
+        comment_blank_indices: comment_blank_indices.to_vec(),
+        annotations,
+    };
+    #[cfg(debug_assertions)]
+    debug_assert_grouped_annotations("group", &grouped);
+    grouped
 }
 
 /// Check if a command name requires keyword-aware formatting
@@ -594,6 +912,10 @@ pub struct KeywordSection {
     /// Tracks blank lines between comment groups at the same arg position, which blank_lines
     /// cannot represent (since blank_lines is position-based and deduplicates).
     pub comment_blank_indices: Vec<usize>,
+    /// The same information as `comments`, `blank_lines`, `post_comment_blanks`
+    /// and `comment_blank_indices`, in one ordered list. Those four are being
+    /// migrated onto this; a debug assertion checks the two agree.
+    pub annotations: Annotations,
     /// The type of the keyword (if known from grammar)
     pub keyword_type: Option<KeywordType>,
     /// `Some(n)` when this section's arguments are an unordered list that
@@ -624,6 +946,7 @@ pub fn parse_keyword_sections_with_grammar(
         blank_lines: Vec::new(),
         post_comment_blanks: Vec::new(),
         comment_blank_indices: Vec::new(),
+        annotations: Annotations::default(),
         keyword_type: None,
         // Leading positional run: index 0 is the variable or target name
         sort_from: grammar.is_some_and(|g| g.sortable_positional).then_some(1),
@@ -713,6 +1036,7 @@ pub fn parse_keyword_sections_with_grammar(
                             blank_lines: Vec::new(),
                             post_comment_blanks: Vec::new(),
                             comment_blank_indices: Vec::new(),
+                            annotations: Annotations::default(),
                             keyword_type: kw_type,
                             sort_from: kw_sort_from,
                             values_on_new_line: false,
@@ -763,6 +1087,7 @@ pub fn parse_keyword_sections_with_grammar(
                                 blank_lines: Vec::new(),
                                 post_comment_blanks: Vec::new(),
                                 comment_blank_indices: Vec::new(),
+                                annotations: Annotations::default(),
                                 keyword_type: None,
                                 sort_from: overflow_sortable.then_some(0),
                                 values_on_new_line: false,
@@ -788,6 +1113,8 @@ pub fn parse_keyword_sections_with_grammar(
                             current_section
                                 .comment_blank_indices
                                 .retain(|index| *index < comments_so_far);
+                            // no equivalent needed for `annotations`: an entry
+                            // there names no comment, it *is* an item in order
                             // Add as argument to current section
                             current_section.args.push(text);
                         }
@@ -810,7 +1137,8 @@ pub fn parse_keyword_sections_with_grammar(
                     } else {
                         // Own line (leading comment before next arg)
                         let position = current_section.args.len();
-                        current_section.comments.push((position, text));
+                        current_section.comments.push((position, text.clone()));
+                        current_section.annotations.push_comment(position, text);
                     }
                     consecutive_newlines = 0;
                 }
@@ -830,6 +1158,10 @@ pub fn parse_keyword_sections_with_grammar(
                     if consecutive_newlines == 2 {
                         // Blank line detected - record position after last arg
                         let position = current_section.args.len();
+                        // The whole of what the ordered list needs. Everything
+                        // below is the four arrays reconstructing, from a
+                        // position-keyed set, the order this push already has.
+                        current_section.annotations.push_blank(position);
                         if !current_section.blank_lines.contains(&position) {
                             current_section.blank_lines.push(position);
                             // Check if comments already exist at this position
@@ -889,6 +1221,11 @@ pub fn parse_keyword_sections_with_grammar(
         .map(|name| !matches!(name.as_str(), "add_library" | "add_executable"))
         .unwrap_or(true);
     unmark_unsortable_positional_runs(&mut sections, first_positional_governs);
+
+    #[cfg(debug_assertions)]
+    for section in &sections {
+        debug_assert_section_annotations("parse", section);
+    }
 
     sections
 }
@@ -1285,10 +1622,25 @@ pub fn sort_source_args(section: &mut KeywordSection) {
     // release kept.
     if section.comments != new_comments {
         section.comment_blank_indices.clear();
+        // The ordered list is rebuilt for the same reason, and clearing is what
+        // rebuilding it does: a position carries one blank afterwards, so no
+        // blank sits between two comment groups any more. Leaving the list
+        // alone instead would have kept the entry the arrays just dropped, and
+        // the two encodings would have rendered different files as soon as a
+        // reader moved across.
+        let rebuilt = Annotations::rebuilt_for_permuted_comments(
+            &new_comments,
+            &section.blank_lines,
+            |position| section.post_comment_blanks.contains(&position),
+        );
+        section.annotations = rebuilt;
     }
     section.args = new_args;
     section.comments = new_comments;
     section.trailing_comments = new_trailing_comments;
+
+    #[cfg(debug_assertions)]
+    debug_assert_section_annotations("sort", section);
 }
 
 /// Group args that start with sub-keywords into logical groups.
@@ -1485,13 +1837,14 @@ pub fn format_keyword_aware_args(
                     // already reorders that run, so skipping `source_grouping`
                     // made the two passes disagree about a list the allowlist
                     // owns.
-                    let (
-                        flag_args,
-                        flag_blank_lines,
-                        flag_comments,
-                        _flag_post_comment_blanks,
-                        flag_comment_blank_indices,
-                    ) = grouped_section(section, config.source_grouping);
+                    let GroupedSection {
+                        args: flag_args,
+                        blank_lines: flag_blank_lines,
+                        comments: flag_comments,
+                        post_comment_blanks: _flag_post_comment_blanks,
+                        comment_blank_indices: flag_comment_blank_indices,
+                        annotations: _,
+                    } = grouped_section(section, config.source_grouping);
                     // Flags typically have no values, but flag_args may contain
                     // non-keyword arguments that follow before the next keyword
                     // Add separator before the flag keyword
@@ -2139,13 +2492,14 @@ pub fn format_keyword_aware_args(
                         // Disable grouping only when trailing comments are present (can't merge inline comments)
                         // Leading comments can be remapped to their new positions
                         // Blank lines are preserved as segment boundaries
-                        let (
-                            effective_args,
-                            effective_blank_lines,
-                            effective_comments,
-                            effective_post_comment_blanks,
-                            effective_comment_blank_indices,
-                        ) = grouped_section(section, config.source_grouping);
+                        let GroupedSection {
+                            args: effective_args,
+                            blank_lines: effective_blank_lines,
+                            comments: effective_comments,
+                            post_comment_blanks: effective_post_comment_blanks,
+                            comment_blank_indices: effective_comment_blank_indices,
+                            annotations: _,
+                        } = grouped_section(section, config.source_grouping);
 
                         // Use per-line when values were explicitly on new lines,
                         // or when there are comments/blank lines that can't go inline
@@ -2276,13 +2630,14 @@ pub fn format_keyword_aware_args(
             // Disable grouping only when trailing comments are present (can't merge inline comments)
             // Leading comments can be remapped to their new positions
             // Blank lines are preserved as segment boundaries
-            let (
-                effective_args,
-                effective_blank_lines,
-                effective_comments,
-                effective_post_comment_blanks,
-                effective_comment_blank_indices,
-            ) = grouped_section(section, config.source_grouping);
+            let GroupedSection {
+                args: effective_args,
+                blank_lines: effective_blank_lines,
+                comments: effective_comments,
+                post_comment_blanks: effective_post_comment_blanks,
+                comment_blank_indices: effective_comment_blank_indices,
+                annotations: _,
+            } = grouped_section(section, config.source_grouping);
 
             let is_list = effective_args.len() > 1 || force_args_on_new_line;
             let mut comment_iter = effective_comments.iter().peekable();
@@ -2581,13 +2936,14 @@ fn format_keyword_aware_args_inline_single(
                 push_valueless_section_comments(&mut docs, &section.comments, keyword_indent);
             } else {
                 // Apply source grouping to keyword section args (e.g., source files after PUBLIC)
-                let (
-                    effective_args,
-                    effective_blank_lines,
-                    effective_comments,
-                    _effective_post_comment_blanks,
-                    effective_comment_blank_indices,
-                ) = grouped_section(section, config.source_grouping);
+                let GroupedSection {
+                    args: effective_args,
+                    blank_lines: effective_blank_lines,
+                    comments: effective_comments,
+                    post_comment_blanks: _effective_post_comment_blanks,
+                    comment_blank_indices: effective_comment_blank_indices,
+                    annotations: _,
+                } = grouped_section(section, config.source_grouping);
 
                 // Values are indented at keyword_indent level (single indent, not double)
                 let use_per_line = section.values_on_new_line
@@ -2684,13 +3040,14 @@ fn format_keyword_aware_args_inline_single(
             }
         } else {
             // Pre-keyword section: same as the main loop's pre-keyword handling
-            let (
-                effective_args,
-                effective_blank_lines,
-                effective_comments,
-                effective_post_comment_blanks,
-                effective_comment_blank_indices,
-            ) = grouped_section(section, config.source_grouping);
+            let GroupedSection {
+                args: effective_args,
+                blank_lines: effective_blank_lines,
+                comments: effective_comments,
+                post_comment_blanks: effective_post_comment_blanks,
+                comment_blank_indices: effective_comment_blank_indices,
+                annotations: _,
+            } = grouped_section(section, config.source_grouping);
 
             let is_list = effective_args.len() > 1;
             let mut comment_iter = effective_comments.iter().peekable();
@@ -2869,13 +3226,14 @@ fn format_simple_args(
         // Disable grouping only when trailing comments are present (can't merge inline comments)
         // Leading comments can be remapped to their new positions
         // Blank lines are preserved as segment boundaries
-        let (
-            effective_args,
-            effective_blank_lines,
-            effective_comments,
-            effective_post_comment_blanks,
-            effective_comment_blank_indices,
-        ) = grouped_section(section, config.source_grouping);
+        let GroupedSection {
+            args: effective_args,
+            blank_lines: effective_blank_lines,
+            comments: effective_comments,
+            post_comment_blanks: effective_post_comment_blanks,
+            comment_blank_indices: effective_comment_blank_indices,
+            annotations: _,
+        } = grouped_section(section, config.source_grouping);
 
         let mut comment_iter = effective_comments.iter().peekable();
         let mut comment_index = 0usize;
@@ -2989,5 +3347,241 @@ fn format_simple_args(
         combined
     } else {
         combined.group()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::formatter::config::SourceGrouping;
+
+    /// A section whose four arrays are filled in *from* the ordered list, which
+    /// is what parsing guarantees and what the parse-time assertion checks. Any
+    /// disagreement a test then reports was introduced by the transformation
+    /// under test, not smuggled in by the fixture.
+    fn section(
+        args: &[&str],
+        annotations: Annotations,
+        sort_from: Option<usize>,
+    ) -> KeywordSection {
+        let comments: Vec<(usize, String)> = annotations
+            .comments()
+            .map(|(position, text)| (position, text.to_string()))
+            .collect();
+        let blank_lines = annotations.blank_positions();
+        let post_comment_blanks = blank_lines
+            .iter()
+            .copied()
+            .filter(|position| annotations.blank_follows_comments_at(*position))
+            .collect();
+        let comment_blank_indices = (0..comments.len())
+            .filter(|index| annotations.blank_precedes_comment(*index))
+            .collect();
+
+        KeywordSection {
+            keyword: None,
+            args: args.iter().map(|arg| arg.to_string()).collect(),
+            comments,
+            trailing_comments: Vec::new(),
+            blank_lines,
+            post_comment_blanks,
+            comment_blank_indices,
+            annotations,
+            keyword_type: None,
+            sort_from,
+            values_on_new_line: false,
+        }
+    }
+
+    #[track_caller]
+    fn assert_encodings_agree(section: &KeywordSection) {
+        if let Some(disagreement) = annotations_disagreement(
+            &section.annotations,
+            &section.comments,
+            &section.blank_lines,
+            &section.post_comment_blanks,
+            &section.comment_blank_indices,
+        ) {
+            panic!("{disagreement}");
+        }
+    }
+
+    #[track_caller]
+    fn assert_grouped_encodings_agree(grouped: &GroupedSection) {
+        if let Some(disagreement) = annotations_disagreement(
+            &grouped.annotations,
+            &grouped.comments,
+            &grouped.blank_lines,
+            &grouped.post_comment_blanks,
+            &grouped.comment_blank_indices,
+        ) {
+            panic!("{disagreement}");
+        }
+    }
+
+    fn comment_at(position: usize, text: &str) -> (usize, Annotation) {
+        (position, Annotation::Comment(text.to_string()))
+    }
+
+    fn list(items: &[(usize, Annotation)]) -> Annotations {
+        let mut annotations = Annotations::default();
+        for (position, item) in items {
+            match item {
+                Annotation::Comment(text) => annotations.push_comment(*position, text.clone()),
+                Annotation::Blank => annotations.push_blank(*position),
+            }
+        }
+        annotations
+    }
+
+    /// Sorting carries a comment along with the argument it sits in front of, so
+    /// the ordered list has to be rebuilt rather than repositioned — two
+    /// comments can swap places, which no position rewrite expresses.
+    #[test]
+    fn sorting_moves_the_ordered_list_with_the_comments() {
+        let mut section = section(
+            &["c.cpp", "b.cpp", "a.cpp"],
+            list(&[comment_at(0, "# about c")]),
+            Some(0),
+        );
+
+        sort_source_args(&mut section);
+
+        assert_eq!(section.args, ["a.cpp", "b.cpp", "c.cpp"]);
+        assert_eq!(section.comments, [(2, "# about c".to_string())]);
+        assert_encodings_agree(&section);
+    }
+
+    /// A blank line the author left between two comment groups cannot survive a
+    /// sort that dissolves the groups: the arrays clear `comment_blank_indices`,
+    /// and rebuilding the list leaves one blank at the position, which says the
+    /// same thing. Both encodings have to lose it, or a reader on either side
+    /// renders a different file.
+    #[test]
+    fn sorting_drops_a_blank_between_comment_groups_in_both_encodings() {
+        let mut section = section(
+            &["c.cpp", "b.cpp", "a.cpp"],
+            list(&[
+                (0, Annotation::Blank),
+                comment_at(0, "# one"),
+                (0, Annotation::Blank),
+                comment_at(0, "# two"),
+            ]),
+            Some(0),
+        );
+        assert_eq!(
+            section.comment_blank_indices,
+            [1],
+            "fixture should start with a blank between the two comment groups"
+        );
+
+        sort_source_args(&mut section);
+
+        assert!(section.comment_blank_indices.is_empty());
+        assert!(!section.annotations.blank_precedes_comment(1));
+        assert_eq!(section.blank_lines, [0], "the segment boundary holds");
+        assert_eq!(section.annotations.blank_positions(), [0]);
+        assert_encodings_agree(&section);
+    }
+
+    /// Grouping's mapping runs backwards: `a.h` and `a.cpp` pair onto one line
+    /// at the earlier index, so `a.cpp` lands *before* the `b.cpp` between them
+    /// and the comment positions stop ascending. The comment list keeps source
+    /// order regardless, so the ordered list must not sort itself by position.
+    #[test]
+    fn grouping_keeps_source_order_when_the_new_positions_run_backwards() {
+        let section = section(
+            &["a.h", "b.cpp", "a.cpp"],
+            list(&[comment_at(1, "# about b"), comment_at(2, "# about a.cpp")]),
+            Some(0),
+        );
+
+        let grouped = grouped_section(&section, SourceGrouping::HeadersFirst);
+
+        assert_eq!(grouped.args, ["a.h a.cpp", "b.cpp"]);
+        assert_eq!(
+            grouped.comments,
+            [
+                (1, "# about b".to_string()),
+                (0, "# about a.cpp".to_string()),
+            ],
+            "positions run backwards, order does not"
+        );
+        assert_grouped_encodings_agree(&grouped);
+    }
+
+    /// A blank line is a segment boundary, and grouping shortens the segments it
+    /// bounds. The boundary and the argument that opens the segment still share
+    /// a position afterwards — which is why one mapping serves both — and a
+    /// blank the author wrote *after* the comments there stays after them.
+    #[test]
+    fn grouping_keeps_a_blank_with_the_argument_that_opens_its_segment() {
+        let section = section(
+            &["x.cpp", "a.h", "b.cpp", "a.cpp"],
+            list(&[comment_at(1, "# next group"), (1, Annotation::Blank)]),
+            Some(0),
+        );
+        assert_eq!(section.post_comment_blanks, [1]);
+
+        let grouped = grouped_section(&section, SourceGrouping::HeadersFirst);
+
+        assert_eq!(grouped.args, ["x.cpp", "a.h a.cpp", "b.cpp"]);
+        assert_eq!(grouped.blank_lines, [1]);
+        assert_eq!(grouped.comments, [(1, "# next group".to_string())]);
+        assert!(grouped.annotations.blank_follows_comments_at(1));
+        assert_grouped_encodings_agree(&grouped);
+    }
+
+    /// A comment written after the last argument has no argument to be mapped
+    /// through, and grouping has just made the list shorter, so it has to be
+    /// pulled back to the new end.
+    #[test]
+    fn grouping_pulls_a_trailing_comment_back_to_the_shortened_end() {
+        let section = section(
+            &["a.h", "a.cpp"],
+            list(&[comment_at(2, "# after them all")]),
+            Some(0),
+        );
+
+        let grouped = grouped_section(&section, SourceGrouping::HeadersFirst);
+
+        assert_eq!(grouped.args, ["a.h a.cpp"]);
+        assert_eq!(grouped.comments, [(1, "# after them all".to_string())]);
+        assert_grouped_encodings_agree(&grouped);
+    }
+
+    /// The same pull-back, on the segmented path — a section with a blank line
+    /// takes a different route through grouping, and the two routes each carry
+    /// their own end-of-list fallback.
+    #[test]
+    fn grouping_pulls_a_trailing_comment_back_across_segments_too() {
+        let section = section(
+            &["x.cpp", "a.h", "b.cpp", "a.cpp"],
+            list(&[(1, Annotation::Blank), comment_at(4, "# after them all")]),
+            Some(0),
+        );
+
+        let grouped = grouped_section(&section, SourceGrouping::HeadersFirst);
+
+        assert_eq!(grouped.args, ["x.cpp", "a.h a.cpp", "b.cpp"]);
+        assert_eq!(grouped.blank_lines, [1]);
+        assert_eq!(grouped.comments, [(3, "# after them all".to_string())]);
+        assert_grouped_encodings_agree(&grouped);
+    }
+
+    #[test]
+    fn a_rebuilt_blank_sits_where_the_arrays_say_it_did() {
+        let comments = [(1, "# note".to_string())];
+
+        let before = Annotations::rebuilt_for_permuted_comments(&comments, &[1], |_| false);
+        assert!(!before.blank_follows_comments_at(1));
+
+        let after = Annotations::rebuilt_for_permuted_comments(&comments, &[1], |_| true);
+        assert!(after.blank_follows_comments_at(1));
+
+        for rebuilt in [before, after] {
+            assert_eq!(rebuilt.blank_positions(), [1]);
+            assert!(!rebuilt.blank_precedes_comment(0));
+        }
     }
 }
