@@ -4119,6 +4119,34 @@ fn test_sorting_a_run_past_a_comment_still_reaches_a_fixed_point() {
 }
 
 #[test]
+fn test_only_the_second_section_groups_with_the_leading_flag() {
+    // `define_property(TEST PROPERTY name)` puts the mode flag and the keyword
+    // after it on one line. Section index 1 only: a *later* `SingleValue` is an
+    // ordinary keyword and takes its own line. Loosening the index test to
+    // `>= 1` survived the suite and is observable on 9 of 18 probed shapes —
+    // `string(RANDOM LENGTH 8 ALPHABET abc)` collapses two keywords onto the
+    // opening line instead of one.
+    let config = FormatConfig::default();
+    for (input, expected) in [
+        (
+            "string(RANDOM\n\tLENGTH 8\n\tALPHABET abc\n\tv\n)\n",
+            "string(RANDOM LENGTH 8\n\tALPHABET abc\n\tv\n)\n",
+        ),
+        (
+            "define_property(TEST\n\tPROPERTY x\n\tBRIEF_DOCS \"b\"\n)\n",
+            "define_property(TEST PROPERTY x\n\tBRIEF_DOCS \"b\"\n)\n",
+        ),
+    ] {
+        let result = format_text(input, &config);
+        assert_eq!(
+            result, expected,
+            "only the section right after the leading flag joins its line"
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+#[test]
 fn test_a_multi_mode_commands_first_flag_keeps_its_comment() {
     // The `SingleValue` arm collapses a multi-mode command's mode keyword onto
     // the following keyword — `define_property(TEST PROPERTY foo)` — and its

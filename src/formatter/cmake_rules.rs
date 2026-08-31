@@ -299,6 +299,47 @@ fn previous_section_ended_in_a_comment(sections: &[KeywordSection], index: usize
 /// to sit under, and the comment belongs to the keyword. Three of the five arms
 /// used the deeper level, so `find_package(Foo REQUIRED # n)` put its comment one
 /// tab in and `target_sources(t PRIVATE # n)` put an identical construct two.
+/// Whether this section's keyword is emitted on the opening line, beside the
+/// command name — `list(APPEND …)`, `define_property(TEST …)`.
+///
+/// Only a multi-mode command's first section qualifies, and not when a comment
+/// section precedes it: a line comment runs to the end of its line, so inlining
+/// put the mode keyword *inside* the comment.
+///
+/// Asked here rather than in each arm because "one arm over from the last fix"
+/// has been the shape of four consecutive defects in this function, and the two
+/// questions already hoisted — `previous_section_ended_in_a_comment` and the
+/// comment emission — are the two that stopped recurring. Note four of the six
+/// arms still never ask this one, which is why `file(CHMOD v)` breaks to its own
+/// line; making them ask is a behaviour change rather than a fix, so it is not
+/// done here.
+fn keyword_stays_on_the_opening_line(
+    sections: &[KeywordSection],
+    index: usize,
+    first_keyword_inline: bool,
+) -> bool {
+    first_keyword_inline && !previous_section_ended_in_a_comment(sections, index)
+}
+
+/// Whether this `SingleValue` section is grouped onto the line of the valueless
+/// `Flag` that opened a multi-mode command — the `PROPERTY name` of
+/// `define_property(TEST PROPERTY name)`.
+///
+/// Section index 1 only: anywhere later this is an ordinary keyword.
+fn groups_with_the_leading_flag(
+    sections: &[KeywordSection],
+    index: usize,
+    first_keyword_inline: bool,
+) -> bool {
+    first_keyword_inline
+        && index == 1
+        && matches!(
+            sections.first(),
+            Some(first) if first.keyword_type == Some(KeywordType::Flag) && first.args.is_empty()
+        )
+        && !previous_section_ended_in_a_comment(sections, index)
+}
+
 fn push_valueless_section_comments(
     docs: &mut Vec<RcDoc<'static, ()>>,
     comments: &[(usize, String)],
@@ -1456,13 +1497,8 @@ pub fn format_keyword_aware_args(
                     // Add separator before the flag keyword
                     if is_first_arg {
                         is_first_arg = false;
-                        if first_keyword_inline
-                            && !previous_section_ended_in_a_comment(&sections, i)
-                        {
-                            // Multi-mode: first keyword stays inline with command name
-                            // (no separator emitted). Not when a comment section
-                            // precedes it — the comment runs to end of line, so
-                            // inlining put the mode keyword inside it.
+                        if keyword_stays_on_the_opening_line(&sections, i, first_keyword_inline) {
+                            // No separator: the keyword belongs on the opening line
                         } else if signals.force_multiline {
                             docs.push(RcDoc::hardline());
                             docs.push(RcDoc::text(keyword_indent.clone()));
@@ -1647,13 +1683,10 @@ pub fn format_keyword_aware_args(
                 Some(KeywordType::SingleValue) if section.args.len() == 1 => {
                     // Add separator before the keyword
                     if is_first_arg
-                        && first_keyword_inline
-                        && !previous_section_ended_in_a_comment(&sections, i)
+                        && keyword_stays_on_the_opening_line(&sections, i, first_keyword_inline)
                     {
                         is_first_arg = false;
-                        // Multi-mode command (e.g., list(APPEND <var>)):
-                        // keep inline like ARGL-03 for first positional arg —
-                        // but not onto a line a comment has already ended
+                        // No separator: the keyword belongs on the opening line
                     } else if is_first_arg {
                         is_first_arg = false;
                         // Regular command: first keyword drops to next line when multiline
@@ -1667,18 +1700,7 @@ pub fn format_keyword_aware_args(
                             ));
                         }
                     } else {
-                        // In multi-mode commands with first_keyword_inline, group the first empty Flag
-                        // with the immediately following SingleValue (e.g., TEST PROPERTY name).
-                        // Only apply to section index 1 (right after first Flag at index 0).
-                        let prev_is_first_empty_flag = first_keyword_inline
-                            && i == 1
-                            && matches!(
-                                sections.first(),
-                                Some(first) if first.keyword_type == Some(KeywordType::Flag) && first.args.is_empty()
-                            );
-                        if prev_is_first_empty_flag
-                            && !previous_section_ended_in_a_comment(&sections, i)
-                        {
+                        if groups_with_the_leading_flag(&sections, i, first_keyword_inline) {
                             docs.push(RcDoc::space());
                         } else {
                             docs.push(RcDoc::flat_alt(
