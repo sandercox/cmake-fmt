@@ -202,12 +202,18 @@ fn print_style_help() {
     println!("CLI usage:  cmake-fmt --style \"indent_width=4,max_line_length=120\" <file>");
     println!();
     println!("Config file only (not available via --style):");
+    // Same column widths as the table above, so the two blocks line up
     println!(
-        "  command_grammars        map            {{}}              Custom command grammar definitions"
+        "  {:<31} {:<15} {:<15} {}",
+        "command_grammars", "map", "{}", "Custom command grammar definitions"
     );
-    println!("  grammar_files           list           []              Grammar files to import");
     println!(
-        "  root                    boolean        false           Stop searching for config above this directory"
+        "  {:<31} {:<15} {:<15} {}",
+        "grammar_files", "list", "[]", "Grammar files to import"
+    );
+    println!(
+        "  {:<31} {:<15} {:<15} {}",
+        "root", "boolean", "false", "Stop searching for config above this directory"
     );
     println!();
     println!("Example .cmake-fmt.toml:");

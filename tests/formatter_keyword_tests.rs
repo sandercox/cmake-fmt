@@ -4364,3 +4364,196 @@ fn test_the_inline_twins_pair_comments_stay_with_their_pairs() {
         "a trailing comment moved"
     );
 }
+
+#[test]
+fn test_a_blank_line_before_a_leading_comment_is_written_once() {
+    // Two rules wrote the same blank. A comments-only section holds no
+    // arguments, so its own `blank_lines[0]` and the "blank line between
+    // sections" rule — which looks at `blank_lines.contains(&args.len())` —
+    // are the same entry, and both fired. One blank line in the source came
+    // back as two, on 233 of 233 grammar shapes; the previous release cannot
+    // show it only because it deletes the comment.
+    let config = FormatConfig::default();
+    for (command, keyword) in [
+        ("install", "FILES"),
+        ("target_sources", "PRIVATE"),
+        ("source_group", "FILES"),
+        ("find_package", "COMPONENTS"),
+    ] {
+        let input = format!("{command}(\n\n\t# ship\n\t{keyword} a.h\n)\n");
+        let result = format_text(&input, &config);
+        assert!(
+            !result.contains("\n\n\t# ship\n\n"),
+            "one blank line came back as two for {} {}:\n{:?}",
+            command,
+            keyword,
+            result
+        );
+        assert_eq!(
+            result.matches("\n\n").count(),
+            input.matches("\n\n").count(),
+            "the number of blank lines changed for {} {}:\n{:?}",
+            command,
+            keyword,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+
+    // A positional argument in the same slot is not a comments-only section and
+    // must keep the behaviour it had
+    let control = format_text("install(\n\n\tq\n\tFILES a.h\n)\n", &config);
+    assert_eq!(
+        control,
+        format_text(&control, &config),
+        "control not idempotent"
+    );
+}
+
+#[test]
+fn test_a_blank_after_the_last_argument_survives_grouping() {
+    // Blanks are re-emitted at segment boundaries, so a blank whose recorded
+    // position equals `args.len()` had no boundary to be written at and was
+    // dropped — while the comment-blank bookkeeping passed through unchanged.
+    // The next parse read the survivor as a different kind of entry and laid the
+    // section out differently, so `--check` rejected freshly formatted output.
+    for config in [
+        FormatConfig {
+            source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+            ..Default::default()
+        },
+        FormatConfig {
+            sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+            ..Default::default()
+        },
+    ] {
+        for input in [
+            "define_property(\n\n\t# c\n\n\t# d\n\tDIRECTORY\n\tSRCS\n\tz.cpp\n\ta.cpp\n)\n",
+            "set(SRCS\n\tz.cpp\n\ta.cpp\n\n\t# after the last\n)\n",
+            // Two comment groups separated by a blank, inside a sortable
+            // keyword section: `comment_blank_indices` names a comment by index
+            // and sorting rebuilds the comments in a new order, so the entry
+            // came to name a different comment than the author meant and the
+            // next parse recorded a different index again. The previous release
+            // fails this at one blank and passes at two and three by accident —
+            // its blank record fired a spurious second time, which happened to
+            // make those spellings self-consistent. All three settle here.
+            "install(\n\tFILES\n\tSRCS\n\n\t# c\n\n\t# d\n\tz.cpp\n\ta.cpp\n)\n",
+            "install(\n\tFILES\n\tSRCS\n\n\n\t# c\n\n\n\t# d\n\tz.cpp\n\ta.cpp\n)\n",
+            "install(\n\tFILES\n\tSRCS\n\n\n\n\t# c\n\n\n\n\t# d\n\tz.cpp\n\ta.cpp\n)\n",
+        ] {
+            let once = format_text(input, &config);
+            let twice = format_text(&once, &config);
+            assert_eq!(
+                once, twice,
+                "no first-pass fixed point:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+                once, twice
+            );
+        }
+    }
+}
+
+#[test]
+fn test_a_blank_run_before_a_comment_reaches_a_fixed_point() {
+    // The blank-line record fired once per newline past the first, so the third
+    // newline of one blank run took the "blank line between comment groups"
+    // branch and recorded a blank before comment index 0 — for a comment that
+    // sits at a later argument position. The next pass then wrote a blank in
+    // front of that comment, so `--check` rejected freshly formatted output.
+    //
+    // Whitespace only, no content at risk, but the previous release has 99 of
+    // these across the (command, keyword) pairs the grammar knows and this has
+    // none.
+    let config = FormatConfig::default();
+    for input in [
+        "add_custom_command(\n\n\n\tq\n\t#b\n\tVERBATIM\n)\n",
+        "target_sources(\n\n\n\tt\n\t# note\n\tPRIVATE a.cpp\n)\n",
+        "install(\n\n\n\tx\n\t# note\n\tFILES a.h\n)\n",
+        // more than one blank run, and a blank between comment groups, which
+        // still has to keep its blank
+        "set(SRCS\n\n\n\tx.cpp\n\n\n\t# a\n\ty.cpp\n)\n",
+        "set(SRCS\n\t# a\n\n\t# b\n\tx.cpp\n)\n",
+    ] {
+        let once = format_text(input, &config);
+        let twice = format_text(&once, &config);
+        assert_eq!(
+            once, twice,
+            "no first-pass fixed point for {:?}:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+            input, once, twice
+        );
+    }
+}
+
+#[test]
+fn test_a_blank_between_comment_groups_names_the_right_comment() {
+    // `comment_blank_indices` promises "a blank line before the *next* comment
+    // at this argument position". Three ways that promise went wrong, all
+    // whitespace, all costing the output its first-pass fixed point or adding a
+    // line nobody wrote:
+    //
+    //  - an argument arriving instead of a second comment left the promise
+    //    unkept, and the entry went on to name whatever comment landed at that
+    //    index later — where `blank_lines` already carried a blank of its own
+    //  - the "already wrote it" guard read `args.is_empty()`, which is only one
+    //    of the three section shapes that emit their own blank
+    //  - clearing the vector after a sort was right when the sort reordered the
+    //    comments and wrong when it was the identity
+    let config = FormatConfig::default();
+    let sorting = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        ..Default::default()
+    };
+
+    // (a) an argument between the two comment groups
+    for input in [
+        "install(\n\tFILES\n\n\t# note\n\n\tx\n\n\t# c\n)\n",
+        "target_sources(t\n\tPRIVATE\n\n\t# note\n\n\ta.cpp\n\n\t# c\n)\n",
+    ] {
+        let once = format_text(input, &config);
+        assert_eq!(
+            once,
+            format_text(&once, &config),
+            "no first-pass fixed point:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+            once,
+            format_text(&once, &config)
+        );
+    }
+
+    // (b) every shape that writes its own blank writes exactly one
+    for input in [
+        "install(\n\n\t# ship\n\tFILES a.h\n)\n",
+        "install(\n\tFILES a.h\n\n\t# c\n\tDESTINATION inc)\n",
+        "target_sources(t\n\n\t# c\n\tPRIVATE a.cpp\n)\n",
+    ] {
+        let result = format_text(input, &config);
+        assert_eq!(
+            result.matches("\n\n").count(),
+            input.matches("\n\n").count(),
+            "the number of blank lines changed for {:?}:\n{:?}",
+            input,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+
+    // (c) an identity sort keeps the blank; a real sort settles
+    assert_eq!(
+        format_text(
+            "add_executable(\n\tEXCLUDE_FROM_ALL\n\n\t# c\n\n\t# d\n\ta.cpp\n\tz.cpp\n)\n",
+            &sorting
+        ),
+        "add_executable(\n\tEXCLUDE_FROM_ALL\n\n\t# c\n\n\t# d\n\ta.cpp\n\tz.cpp\n)\n",
+        "an identity sort should not delete the blank between comment groups"
+    );
+    for input in [
+        "install(\n\tFILES\n\tSRCS\n\n\t# c\n\n\t# d\n\tz.cpp\n\ta.cpp\n)\n",
+        "install(\n\tFILES\n\tSRCS\n\n\n\t# c\n\n\n\t# d\n\tz.cpp\n\ta.cpp\n)\n",
+    ] {
+        let once = format_text(input, &sorting);
+        assert_eq!(
+            once,
+            format_text(&once, &sorting),
+            "a real sort never settles"
+        );
+    }
+}

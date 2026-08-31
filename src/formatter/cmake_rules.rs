@@ -399,10 +399,15 @@ fn group_source_pairs_preserving_blanks(
         segments.push(&args[start..end]);
         start = end;
     }
-    // Final segment
-    if start < args.len() {
-        segments.push(&args[start..]);
-    }
+    // Final segment, always — even when empty.
+    //
+    // Blanks are re-emitted at segment boundaries (`if i > 0`), so
+    // `segments.len()` has to be `blank_lines.len() + 1` or a blank at the end
+    // has no boundary to be written at and is dropped, while
+    // `comment_blank_indices` passes through unchanged. The next parse then read
+    // the survivor as a different kind of entry and laid the section out
+    // differently — no first-pass fixed point.
+    segments.push(&args[start.min(args.len())..]);
 
     // Group each segment independently and track new blank line positions
     let mut result = Vec::new();
@@ -586,7 +591,8 @@ pub fn parse_keyword_sections_with_grammar(
 
     let mut consecutive_newlines = 0;
     let mut saw_separator = true; // tracks whitespace for adjacent token merging
-    let mut saw_newline_since_keyword = false; // tracks newlines between keyword and first value
+    // tracks newlines between a keyword and its first value
+    let mut saw_newline_since_keyword = false;
 
     // Iterate through all tokens in the argument list
     for child in arg_list.syntax().children_with_tokens() {
@@ -728,6 +734,19 @@ pub fn parse_keyword_sections_with_grammar(
                             {
                                 current_section.values_on_new_line = true;
                             }
+                            // A `comment_blank_indices` entry promises "a blank
+                            // line before the *next* comment at this argument
+                            // position". An argument arriving instead means that
+                            // comment never came, and the entry would otherwise
+                            // go on to name whatever comment lands at that index
+                            // later in the section — where `blank_lines` already
+                            // carries a blank of its own, so both fired and one
+                            // blank line came back as two. Dropping the unkept
+                            // promise is the whole fix.
+                            let comments_so_far = current_section.comments.len();
+                            current_section
+                                .comment_blank_indices
+                                .retain(|index| *index < comments_so_far);
                             // Add as argument to current section
                             current_section.args.push(text);
                         }
@@ -759,7 +778,15 @@ pub fn parse_keyword_sections_with_grammar(
                     saw_separator = true;
                     saw_newline_since_keyword = true;
                     consecutive_newlines += 1;
-                    if consecutive_newlines >= 2 {
+                    // Exactly 2, not 2-or-more. The third newline of one
+                    // blank run took the `else` branch below and recorded "a
+                    // blank line before comment index 0" for a comment that sits
+                    // at a later argument position — so the next pass wrote a
+                    // blank in front of that comment, and the output had no
+                    // first-pass fixed point. A blank line *between comment
+                    // groups* still reaches the `else`: the counter resets at
+                    // the comment and climbs back to exactly 2.
+                    if consecutive_newlines == 2 {
                         // Blank line detected - record position after last arg
                         let position = current_section.args.len();
                         if !current_section.blank_lines.contains(&position) {
@@ -793,7 +820,24 @@ pub fn parse_keyword_sections_with_grammar(
         }
     }
 
-    // Push the last section if it has content
+    // Push the last section if it has content.
+    //
+    // Deliberately *not* the same question the mid-loop push asks, and the
+    // asymmetry is not an oversight. Adding `|| !comments.is_empty()` here would
+    // keep the comments of an argument list that holds nothing else — but a line
+    // comment runs to the end of its line, so in `source_group(# why)` the
+    // comment token already contains the command's closing paren. Emitting it on
+    // its own line puts that paren inside the comment and the renderer writes a
+    // second one, inventing a character. Guarding on "a newline followed the
+    // comment" fixes the plain `f(# why)` spelling and not the grammar-aware
+    // one, so the whole shape stays as the previous release left it: the
+    // comments of an argument list holding nothing else are dropped.
+    //
+    // That is a real bug, it is older than this branch, and it is not reached by
+    // any keyword this branch adds — an unknown command loses such a comment
+    // too. Fixing it means teaching the emitter that a comment can own the
+    // closing paren, which is where `render_nested_group` had to go for the same
+    // reason.
     if !current_section.args.is_empty() || current_section.keyword.is_some() {
         sections.push(current_section);
     }
@@ -1186,6 +1230,21 @@ pub fn sort_source_args(section: &mut KeywordSection) {
         }
     }
 
+    // `comment_blank_indices` indexes into `comments`, and if the comments have
+    // been rebuilt in a *different* order then every entry now names a different
+    // comment than it did. Kept, it put a blank line in front of whichever
+    // comment landed at that index — and the next parse recorded a different
+    // index again, so the section never reached a fixed point. There is no
+    // correct remapping: the entry means "the author left a blank between these
+    // two comment groups", and sorting has dissolved the groups.
+    //
+    // Only when the order actually changed, though. A sort that is the identity
+    // — an already-alphabetical list — rebuilds the same sequence, every index
+    // stays valid, and clearing regardless deleted a blank line the previous
+    // release kept.
+    if section.comments != new_comments {
+        section.comment_blank_indices.clear();
+    }
     section.args = new_args;
     section.comments = new_comments;
     section.trailing_comments = new_trailing_comments;
@@ -1354,7 +1413,21 @@ pub fn format_keyword_aware_args(
         // Check if previous section had a trailing blank line (blank line between sections)
         if i > 0 && signals.force_multiline {
             let prev_section = &sections[i - 1];
-            if prev_section.blank_lines.contains(&prev_section.args.len()) {
+            // Every arm emits a section's own-line comments at
+            // `blank_lines[args.len()]` when it has one there, so that blank has
+            // already been written and this rule wrote it a second time — one
+            // blank line in the source came back as two. The precondition is
+            // "the previous section holds an own-line comment at its own end",
+            // of which a comments-only section is just the `args.is_empty()`
+            // case; guarding on that alone left two of the three spellings
+            // doubling.
+            let previous_already_wrote_it = prev_section
+                .comments
+                .iter()
+                .any(|(position, _)| *position == prev_section.args.len());
+            if !previous_already_wrote_it
+                && prev_section.blank_lines.contains(&prev_section.args.len())
+            {
                 // Extra blank line between sections
                 docs.push(RcDoc::hardline());
             }

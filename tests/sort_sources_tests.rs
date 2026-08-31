@@ -1400,8 +1400,16 @@ fn test_a_comment_does_not_switch_reordering_off() {
     // grammar with `sortable_positional`. Safe direction, exit 0, stable, and
     // invisible to every other test.
     //
-    // The property is the one worth pinning: a comment changes where things are
-    // written, never what is written or in what order.
+    // The property pinned here: an own-line or bracket comment *before the mode
+    // keyword* changes where things are written, never what is written or in
+    // what order.
+    //
+    // Deliberately not stated more broadly, because the broader claim is false:
+    // a *trailing* comment anywhere in a section switches `source_grouping` off
+    // for that whole section — `grouped_section` requires
+    // `trailing_comments.is_empty()`. That is byte-identical to the previous
+    // release, so it is not this branch's, but it is the reason this test says
+    // "before the mode keyword" rather than "a comment".
     let mut command_grammars = HashMap::new();
     command_grammars.insert(
         "my_copy".to_string(),
@@ -1422,32 +1430,37 @@ fn test_a_comment_does_not_switch_reordering_off() {
         ..Default::default()
     };
 
-    // (bare, commented) pairs whose argument order must come out the same
-    let cases: &[(&str, &str)] = &[
+    // (bare, commented, the marker that must survive)
+    let cases: &[(&str, &str, &str)] = &[
         (
             "list(APPEND V z.cpp a.cpp)\n",
             "list(\n\t# note\n\tAPPEND V z.cpp a.cpp)\n",
+            "# note",
         ),
         (
             "list(PREPEND V z.cpp a.cpp)\n",
             "list(\n\t#[[bc]]\n\tPREPEND V z.cpp a.cpp)\n",
+            "#[[bc]]",
         ),
         (
             "list(REMOVE_ITEM V z.cpp a.cpp)\n",
             "list( # trailing\n\tREMOVE_ITEM V z.cpp a.cpp)\n",
+            "# trailing",
         ),
         (
             "my_copy(FROM base.cpp z.cpp a.cpp)\n",
             "my_copy(\n\t# note\n\tFROM base.cpp z.cpp a.cpp)\n",
+            "# note",
         ),
         (
             "list(APPEND V a.cpp a.h)\n",
             "list(\n\t# note\n\tAPPEND V a.cpp a.h)\n",
+            "# note",
         ),
     ];
 
     for config in [&sorting, &grouping] {
-        for (bare, commented) in cases {
+        for (bare, commented, marker) in cases {
             let order = |text: &str| -> Vec<String> {
                 text.lines()
                     .flat_map(|line| {
@@ -1468,13 +1481,48 @@ fn test_a_comment_does_not_switch_reordering_off() {
                 format_text(bare, config),
                 format_text(commented, config)
             );
-            // and the comment is still there
+            // and this case's own comment is still there — a disjunction over
+            // every marker in the list would pass on the wrong one
             let result = format_text(commented, config);
-            assert!(
-                result.contains("note") || result.contains("bc") || result.contains("trailing"),
-                "the comment was lost:\n{}",
-                result
-            );
+            assert!(result.contains(marker), "{} was lost:\n{}", marker, result);
         }
     }
+}
+
+#[test]
+fn test_a_flag_before_the_mode_keyword_does_not_open_the_overflow_run() {
+    // The overflow run is sortable only when the mode keyword *leads*, and the
+    // test for that reads "every section so far is keyword-less and empty". Both
+    // halves matter: a leading valueless Flag section leaves `args` empty too, so
+    // dropping `keyword.is_none()` let a flag in front of the mode keyword open
+    // the run — and that mutation survived the whole suite. Only a user grammar
+    // reaches it; no builtin has a flag before a mode keyword.
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_copy".to_string(),
+        CommandGrammarConfig {
+            options: vec!["VERBOSE".to_string()],
+            one_value_keywords: vec!["FROM".to_string()],
+            sortable_positional: true,
+            ..Default::default()
+        },
+    );
+    let config = FormatConfig {
+        command_grammars,
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        ..Default::default()
+    };
+
+    // A flag first: the run after FROM is not the command's argument list
+    assert_eq!(
+        format_text("my_copy(VERBOSE FROM base.cpp z.cpp a.cpp)\n", &config),
+        "my_copy(VERBOSE FROM base.cpp z.cpp a.cpp)\n",
+        "a flag before the mode keyword should not open the overflow run"
+    );
+    // ...and with the mode keyword leading, it still does
+    assert_eq!(
+        format_text("my_copy(FROM base.cpp z.cpp a.cpp)\n", &config),
+        "my_copy(FROM base.cpp a.cpp z.cpp)\n",
+        "a leading mode keyword should still open the overflow run"
+    );
 }
