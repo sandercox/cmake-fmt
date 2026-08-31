@@ -649,6 +649,81 @@ fn push_valueless_section_comments(
     }
 }
 
+/// Emit the comments written after a section's last argument.
+///
+/// Four arms had a copy of this and none of them consulted
+/// `post_comment_blanks`, so a blank line the author left *after* the last
+/// comment came back out *before* it. The comment let go of the argument it
+/// followed and attached itself to the closing paren instead:
+///
+/// ```text
+/// target_sources(t              target_sources(t
+///   PRIVATE                         PRIVATE
+///     a.cpp              ->             a.cpp
+///     # note                            <blank>
+///     <blank>                           # note
+/// )                             )
+/// ```
+///
+/// One place now, for the reason the other two hoisted questions live in one
+/// place: four consecutive defects in this function were each one arm over from
+/// the last fix, and the questions that got hoisted are the ones that stopped
+/// recurring.
+///
+/// A blank with no comment after it stays dropped. Nothing follows it in the
+/// section, so emitting it only put a blank line in front of the closing paren.
+///
+/// Returns whether anything was emitted, which is all one caller needs in order
+/// to stop treating the next thing as the section's first argument.
+#[allow(clippy::too_many_arguments)]
+fn push_end_of_section_comments<'a>(
+    docs: &mut Vec<RcDoc<'static, ()>>,
+    remaining: impl Iterator<Item = &'a (usize, String)>,
+    comment_index: &mut usize,
+    comment_blank_indices: &[usize],
+    blank_lines: &[usize],
+    post_comment_blanks: &[usize],
+    args_len: usize,
+    indent: &str,
+    force_multiline: bool,
+) -> bool {
+    let mut remaining = remaining.peekable();
+    if remaining.peek().is_none() {
+        return false;
+    }
+
+    let carries_blank = blank_lines.contains(&args_len) && force_multiline;
+    let blank_comes_last = post_comment_blanks.contains(&args_len);
+
+    if carries_blank && !blank_comes_last {
+        docs.push(RcDoc::hardline());
+    }
+
+    for (_, comment) in remaining {
+        // A blank line the author left between two comment groups here
+        if comment_blank_indices.contains(comment_index) && force_multiline {
+            docs.push(RcDoc::hardline());
+        }
+        if force_multiline {
+            docs.push(RcDoc::hardline());
+            docs.push(RcDoc::text(indent.to_string()));
+        } else {
+            docs.push(RcDoc::flat_alt(
+                RcDoc::hardline().append(RcDoc::text(indent.to_string())),
+                RcDoc::space(),
+            ));
+        }
+        docs.push(RcDoc::text(comment.clone()));
+        *comment_index += 1;
+    }
+
+    if carries_blank && blank_comes_last {
+        docs.push(RcDoc::hardline());
+    }
+
+    true
+}
+
 /// Group only the runs the sorting pass is allowed to permute: from `sort_from`
 /// onward, and never across a barrier.
 ///
@@ -1926,7 +2001,7 @@ pub fn format_keyword_aware_args(
                         args: flag_args,
                         blank_lines: flag_blank_lines,
                         comments: flag_comments,
-                        post_comment_blanks: _flag_post_comment_blanks,
+                        post_comment_blanks: flag_post_comment_blanks,
                         comment_blank_indices: flag_comment_blank_indices,
                         annotations: _,
                     } = grouped_section(section, config.source_grouping);
@@ -2057,33 +2132,19 @@ pub fn format_keyword_aware_args(
                                     }
                                 }
                             }
-                            // Blank line before trailing comments at end of section
-                            if comment_iter.peek().is_some()
-                                && flag_blank_lines.contains(&flag_args.len())
-                                && signals.force_multiline
-                            {
-                                docs.push(RcDoc::hardline());
-                            }
-                            for (_, comment) in comment_iter {
-                                // Blank line between comment groups at same position
-                                if flag_comment_blank_indices.contains(&comment_index)
-                                    && signals.force_multiline
-                                {
-                                    docs.push(RcDoc::hardline());
-                                }
-                                if signals.force_multiline {
-                                    docs.push(RcDoc::hardline());
-                                    docs.push(RcDoc::text(keyword_indent.clone()));
-                                } else {
-                                    docs.push(RcDoc::flat_alt(
-                                        RcDoc::hardline()
-                                            .append(RcDoc::text(keyword_indent.clone())),
-                                        RcDoc::space(),
-                                    ));
-                                }
-                                docs.push(RcDoc::text(comment.clone()));
-                                comment_index += 1;
-                            }
+                            // The comments after the last argument, and the blank line the author
+                            // left around them.
+                            push_end_of_section_comments(
+                                &mut docs,
+                                comment_iter,
+                                &mut comment_index,
+                                &flag_comment_blank_indices,
+                                &flag_blank_lines,
+                                &flag_post_comment_blanks,
+                                flag_args.len(),
+                                &keyword_indent,
+                                signals.force_multiline,
+                            );
                         } else {
                             // Values on same line as keyword: flat_alt inherits from outer group
                             for (arg_idx, arg) in flag_args.iter().enumerate() {
@@ -2660,32 +2721,19 @@ pub fn format_keyword_aware_args(
                                 }
                             }
 
-                            // Blank line before trailing comments at end of section
-                            if comment_iter.peek().is_some()
-                                && effective_blank_lines.contains(&effective_args.len())
-                                && signals.force_multiline
-                            {
-                                docs.push(RcDoc::hardline());
-                            }
-                            for (_, comment) in comment_iter {
-                                // Blank line between comment groups at same position
-                                if effective_comment_blank_indices.contains(&comment_index)
-                                    && signals.force_multiline
-                                {
-                                    docs.push(RcDoc::hardline());
-                                }
-                                if signals.force_multiline {
-                                    docs.push(RcDoc::hardline());
-                                    docs.push(RcDoc::text(value_indent.clone()));
-                                } else {
-                                    docs.push(RcDoc::flat_alt(
-                                        RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
-                                        RcDoc::space(),
-                                    ));
-                                }
-                                docs.push(RcDoc::text(comment.clone()));
-                                comment_index += 1;
-                            }
+                            // The comments after the last argument, and the blank line the author
+                            // left around them.
+                            push_end_of_section_comments(
+                                &mut docs,
+                                comment_iter,
+                                &mut comment_index,
+                                &effective_comment_blank_indices,
+                                &effective_blank_lines,
+                                &effective_post_comment_blanks,
+                                effective_args.len(),
+                                &value_indent,
+                                signals.force_multiline,
+                            );
                         } else {
                             // Values on same line as keyword: flat_alt inherits from outer group
                             for (arg_idx, arg) in effective_args.iter().enumerate() {
@@ -2811,33 +2859,19 @@ pub fn format_keyword_aware_args(
                 }
             }
 
-            // Blank line before trailing comments at end of section
-            if comment_iter.peek().is_some()
-                && effective_blank_lines.contains(&effective_args.len())
-                && signals.force_multiline
-            {
-                docs.push(RcDoc::hardline());
-            }
-            // Emit trailing comments (after last argument)
-            for (_, comment) in comment_iter {
-                // Blank line between comment groups at same position
-                if effective_comment_blank_indices.contains(&comment_index)
-                    && signals.force_multiline
-                {
-                    docs.push(RcDoc::hardline());
-                }
-                if signals.force_multiline {
-                    docs.push(RcDoc::hardline());
-                    docs.push(RcDoc::text(keyword_indent.clone()));
-                } else {
-                    docs.push(RcDoc::flat_alt(
-                        RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
-                        RcDoc::space(),
-                    ));
-                }
-                docs.push(RcDoc::text(comment.clone()));
-                comment_index += 1;
-            }
+            // The comments after the last argument, and the blank line the author
+            // left around them.
+            push_end_of_section_comments(
+                &mut docs,
+                comment_iter,
+                &mut comment_index,
+                &effective_comment_blank_indices,
+                &effective_blank_lines,
+                &effective_post_comment_blanks,
+                effective_args.len(),
+                &keyword_indent,
+                signals.force_multiline,
+            );
         }
     }
 
@@ -3391,30 +3425,19 @@ fn format_simple_args(
             is_first_arg = false;
         }
 
-        // Blank line before trailing comments at end of section
-        if comment_iter.peek().is_some()
-            && effective_blank_lines.contains(&effective_args.len())
-            && force_multiline
-        {
-            docs.push(RcDoc::hardline());
-        }
-        // Emit trailing comments (after last argument)
-        for (_, comment) in comment_iter {
-            // Blank line between comment groups at same position
-            if effective_comment_blank_indices.contains(&comment_index) && force_multiline {
-                docs.push(RcDoc::hardline());
-            }
-            if force_multiline {
-                docs.push(RcDoc::hardline());
-                docs.push(RcDoc::text(inner_indent.clone()));
-            } else {
-                docs.push(RcDoc::flat_alt(
-                    RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
-                    RcDoc::space(),
-                ));
-            }
-            docs.push(RcDoc::text(comment.clone()));
-            comment_index += 1;
+        // The comments after the last argument, and the blank line the author
+        // left around them.
+        if push_end_of_section_comments(
+            &mut docs,
+            comment_iter,
+            &mut comment_index,
+            &effective_comment_blank_indices,
+            &effective_blank_lines,
+            &effective_post_comment_blanks,
+            effective_args.len(),
+            &inner_indent,
+            force_multiline,
+        ) {
             is_first_arg = false;
         }
     }

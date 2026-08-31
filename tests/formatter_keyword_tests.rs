@@ -4585,3 +4585,60 @@ fn test_a_blank_between_comment_groups_names_the_right_comment() {
         );
     }
 }
+
+/// A blank line the author left *after* the last comment in a section came back
+/// out *before* it, so the comment let go of the argument it followed and
+/// attached itself to the closing paren. Four arms emitted the end of a section
+/// and none of them asked which way round the author had written it.
+#[test]
+fn test_blank_after_the_last_comment_stays_after_it() {
+    let input = "target_sources(t\n\tPRIVATE\n\t\ta.cpp\n\t\t# note\n\n)";
+
+    let output = format_text(input, &default_config());
+
+    assert!(
+        output.contains("a.cpp\n\t\t# note\n\n)"),
+        "the comment should stay with a.cpp and the blank stay before the paren:\n{}",
+        output
+    );
+    assert_eq!(
+        output,
+        format_text(&output, &default_config()),
+        "and the result has to be a fixed point"
+    );
+}
+
+/// The other way round still works, which is what the arms did unconditionally.
+#[test]
+fn test_blank_before_the_last_comment_stays_before_it() {
+    let input = "target_sources(t\n\tPRIVATE\n\t\ta.cpp\n\n\t\t# note\n)";
+
+    let output = format_text(input, &default_config());
+
+    assert!(
+        output.contains("a.cpp\n\n\t\t# note\n)"),
+        "the blank should stay above the comment:\n{}",
+        output
+    );
+    assert_eq!(output, format_text(&output, &default_config()));
+}
+
+/// And a blank with no comment after it is still dropped: nothing follows it in
+/// the section, so writing it back only put a blank line in front of the paren.
+///
+/// Long enough to force the section onto several lines — a section that collapses
+/// to one line has nowhere to put a blank either way, so a short input cannot
+/// tell the two behaviours apart.
+#[test]
+fn test_blank_at_the_end_of_a_section_with_no_comment_is_dropped() {
+    let input = "target_sources(t\n\tPRIVATE\n\t\taaaaaaaaaaaaaaaaaaaaaaaaa.cpp\n\t\tbbbbbbbbbbbbbbbbbbbbbbbbb.cpp\n\n)";
+
+    let output = format_text(input, &default_config());
+
+    assert!(
+        output.contains("bbbbbbbbbbbbbbbbbbbbbbbbb.cpp\n)"),
+        "no blank line should be left in front of the closing paren:\n{}",
+        output
+    );
+    assert_eq!(output, format_text(&output, &default_config()));
+}
