@@ -4644,7 +4644,8 @@ fn test_blank_at_the_end_of_a_section_with_no_comment_is_dropped() {
 }
 
 /// Every way up to two comments and two blank lines can be arranged in one gap
-/// between two arguments, written back exactly as given.
+/// between two arguments, written back as given — except the three where a note
+/// is fenced by a blank line on each side, which keep only the one above.
 ///
 /// Four of the thirteen used to come back changed, one of them by dropping a
 /// blank line outright:
@@ -4663,7 +4664,7 @@ fn test_blank_at_the_end_of_a_section_with_no_comment_is_dropped() {
 /// time, and the third only when a second blank was there to carry it. The
 /// arrangements above need two at once.
 #[test]
-fn test_every_comment_and_blank_arrangement_is_written_back_as_given() {
+fn test_every_comment_and_blank_arrangement_is_written_back_or_collapsed() {
     // Long enough that the section cannot collapse onto one line, where a blank
     // has nowhere to go either way.
     const FIRST: &str = "aaaaaaaaaaaaaaaaa.cpp";
@@ -4727,16 +4728,30 @@ fn test_every_comment_and_blank_arrangement_is_written_back_as_given() {
             .collect()
     }
 
+    // The three the formatter deliberately does not write back as given. A note
+    // describes what follows it, so the blank above it is the one separating it
+    // from what came before; the one below only pushes it away from the argument
+    // it is about. Stated as a rule: a gap never ends with a blank line when it
+    // already holds one.
+    let collapses = [("BCB", "BC"), ("BCCB", "BCC"), ("CBCB", "CBC")];
+
     let arrangements = arrangements();
     assert_eq!(arrangements.len(), 13, "{:?}", arrangements);
 
     for arrangement in arrangements {
+        let expected = collapses
+            .iter()
+            .find(|(written, _)| *written == arrangement)
+            .map(|(_, collapsed)| collapsed.to_string())
+            .unwrap_or_else(|| arrangement.clone());
+
         let output = format_text(&source(&arrangement), &default_config());
         assert_eq!(
             read_back(&output),
+            expected,
+            "written as {:?}, expected {:?}, came back as:\n{}",
             arrangement,
-            "written as {:?}, came back as:\n{}",
-            arrangement,
+            expected,
             output
         );
         assert_eq!(
@@ -4746,4 +4761,54 @@ fn test_every_comment_and_blank_arrangement_is_written_back_as_given() {
             arrangement
         );
     }
+}
+
+/// The rule on its own, on the code a person would actually write: a note set
+/// apart from the file above it does not also need setting apart from the file
+/// below, which is the one it is about.
+#[test]
+fn test_a_note_fenced_by_blank_lines_keeps_only_the_one_above_it() {
+    let input = "target_sources(renderer\n\tPRIVATE\n\t\tcompositor.cpp\n\n\t\t# goes with the 3.0 ABI\n\n\t\tlegacy_shim.cpp\n)";
+
+    let output = format_text(input, &default_config());
+
+    assert!(
+        output.contains("compositor.cpp\n\n\t\t# goes with the 3.0 ABI\n\t\tlegacy_shim.cpp"),
+        "the blank above the note should be kept and the one below dropped:\n{}",
+        output
+    );
+    assert_eq!(output, format_text(&output, &default_config()));
+}
+
+/// But a blank line with nothing above it is the author separating the note from
+/// what comes next on purpose, and it stays — the same arrangement this branch
+/// fixed at the end of a section.
+#[test]
+fn test_a_lone_blank_line_below_a_note_is_kept() {
+    let input = "target_sources(renderer\n\tPRIVATE\n\t\tpipeline.cpp\n\t\t# everything below is Vulkan-only\n\n\t\tvk_device.cpp\n)";
+
+    let output = format_text(input, &default_config());
+
+    assert!(
+        output.contains("# everything below is Vulkan-only\n\n\t\tvk_device.cpp"),
+        "the only blank line in the gap should be kept:\n{}",
+        output
+    );
+    assert_eq!(output, format_text(&output, &default_config()));
+}
+
+/// And a blank line between two notes is not a fence around either of them: it
+/// separates two groups, and both keep their place.
+#[test]
+fn test_a_blank_line_between_two_notes_is_not_a_fence() {
+    let input = "set(CORE_SOURCES\n\tclip_engine.cpp\n\t# the playback side\n\n\t# and the mixer it feeds\n\tmixer.cpp\n)";
+
+    let output = format_text(input, &default_config());
+
+    assert!(
+        output.contains("# the playback side\n\n\t# and the mixer it feeds\n\tmixer.cpp"),
+        "the blank between the two notes should stay between them:\n{}",
+        output
+    );
+    assert_eq!(output, format_text(&output, &default_config()));
 }

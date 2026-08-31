@@ -620,6 +620,9 @@ fn push_valueless_section_comments(
 /// blank at that position is there to carry the third case. An ordered walk has
 /// no such gap: it emits what is there.
 ///
+/// One rule of its own lives here, now that there is one place to put it: a gap
+/// never ends with a blank line when it already holds one — see below.
+///
 /// Returns whether anything was emitted, which is what tells a caller to stop
 /// treating the next thing as the section's first argument.
 fn push_annotations_before_argument(
@@ -629,9 +632,43 @@ fn push_annotations_before_argument(
     indent: &str,
     force_multiline: bool,
 ) -> bool {
+    let items: Vec<&Annotation> = annotations.at(index).collect();
+
+    // Air on both sides of the same note is one blank line too many. A note
+    // describes what comes after it, so the blank above is the one doing the
+    // separating and the one below only pushes the note away from what it is
+    // about:
+    //
+    //     compositor.cpp            compositor.cpp
+    //                           ->
+    //     # goes with the 3.0 ABI   # goes with the 3.0 ABI
+    //                               legacy_shim.cpp
+    //     legacy_shim.cpp
+    //
+    // Stated as "a gap never ends with a blank line when it already holds one",
+    // which also covers the note-blank-note-blank case, and leaves a gap whose
+    // only blank is the trailing one alone — there the author put the blank
+    // between the note and the closing paren deliberately, and nothing above it
+    // is separating anything.
+    //
+    // Two blanks in a row do reach here, so "already holds one" is meant
+    // literally and not as "holds one with a note under it". A run of blank
+    // lines in the source collapses to a single one whatever `max_blank_lines`
+    // says, but an argument the parser drops between two of them — `()`, say —
+    // leaves the pair adjacent. Dropping the second is right there too.
+    let surplus_trailing_blank = matches!(items.last(), Some(Annotation::Blank))
+        && items[..items.len() - 1]
+            .iter()
+            .any(|item| matches!(item, Annotation::Blank));
+    let items = if surplus_trailing_blank {
+        &items[..items.len() - 1]
+    } else {
+        &items[..]
+    };
+
     let mut emitted = false;
 
-    for item in annotations.at(index) {
+    for item in items {
         match item {
             Annotation::Blank => {
                 // Nothing to separate when the whole command is going on one
