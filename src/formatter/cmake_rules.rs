@@ -385,9 +385,11 @@ impl Annotations {
     ///
     /// Source order, not position order: grouping's mapping is not monotonic —
     /// `[a.h, b.cpp, a.cpp]` pairs indices 0 and 2 into one line, so index 2
-    /// maps *behind* index 1 — and the comment list it produces is in source
-    /// order with the new positions written over the old, exactly as here. A
-    /// sort by position would reorder the comments against it.
+    /// maps *behind* index 1 — and the comment array it produces is in source
+    /// order with the new positions written over the old, exactly as here. The
+    /// two are then put back into position order together, by
+    /// `settle_crossed_comments`; sorting here would reorder one against the
+    /// other in between.
     pub fn remap(&mut self, mut position_of: impl FnMut(usize) -> usize) {
         for (position, _) in &mut self.items {
             *position = position_of(*position);
@@ -499,6 +501,21 @@ fn annotations_disagreement(
     None
 }
 
+/// Every render arm walks the comment list forwards, matching each position as
+/// it reaches it, so a position that runs backwards names a comment the arm will
+/// never emit in place — it falls out at the end of the section instead.
+///
+/// Grouping was the one transformation that produced them, and
+/// `settle_crossed_comments` puts them back. Pinned here because the arms are
+/// about to be rewritten as a single ordered walk, which is only equivalent to
+/// what they do today while this holds.
+#[cfg(debug_assertions)]
+fn debug_assert_comments_run_forwards(stage: &str, comments: &[(usize, String)]) {
+    if let Some(pair) = comments.windows(2).find(|pair| pair[0].0 > pair[1].0) {
+        panic!("after {stage}: comment positions run backwards: {pair:?}");
+    }
+}
+
 #[cfg(debug_assertions)]
 fn debug_assert_annotations_agree(
     stage: &str,
@@ -517,6 +534,7 @@ fn debug_assert_annotations_agree(
     ) {
         panic!("after {stage}: {disagreement}");
     }
+    debug_assert_comments_run_forwards(stage, comments);
 }
 
 #[cfg(debug_assertions)]
@@ -679,6 +697,53 @@ struct GroupedSection {
     annotations: Annotations,
 }
 
+/// Put a comment back in front of the argument it was written for.
+///
+/// Grouping moves an argument backwards when it pairs with an earlier one, and
+/// the comment written in front of it moves with it — past any comment in
+/// between, so that comment's position now runs backwards. Every render arm
+/// walks the comment list forwards, matching each position as it reaches it, so
+/// a position that runs backwards is never matched again: the comment fell out
+/// at the end of the section, in front of the closing paren, describing nothing.
+///
+/// ```text
+/// target_sources(t PRIVATE      # with source_grouping=headers_first
+///   a.h                             a.h a.cpp
+///   # about b               ->      # about b
+///   b.cpp                           b.cpp
+///   # about a.cpp                   # about a.cpp
+///   a.cpp                       )
+/// )
+/// ```
+///
+/// A stable fixed point, and no corpus file or generated shape reaches it, which
+/// is why twelve rounds of review did not either. Found by asking what the
+/// ordered list would render for a crossed position, and answering that the
+/// arrays render this.
+///
+/// Sorting by position restores the pairing. It also renames every
+/// `comment_blank_indices` entry, so the rule `sort_source_args` applies when it
+/// permutes the same list applies here: an entry means "the author left a blank
+/// between these two comment groups", and reordering has dissolved the groups.
+fn settle_crossed_comments(
+    comments: &mut [(usize, String)],
+    comment_blank_indices: &mut Vec<usize>,
+    annotations: &mut Annotations,
+    blank_positions: &[usize],
+    post_comment_blanks: &[usize],
+) {
+    if comments.windows(2).all(|pair| pair[0].0 <= pair[1].0) {
+        return;
+    }
+
+    comments.sort_by_key(|(position, _)| *position);
+    comment_blank_indices.clear();
+    *annotations =
+        Annotations::rebuilt_for_permuted_comments(comments, blank_positions, |position| {
+            post_comment_blanks.contains(&position)
+        });
+}
+
 /// Group within each blank-line segment independently, adjusting the blank-line
 /// and comment positions to the shorter grouped segments.
 fn group_source_pairs_preserving_blanks(
@@ -719,12 +784,22 @@ fn group_source_pairs_preserving_blanks(
                 .unwrap_or(grouped_args.len())
         });
 
+        let mut new_comments: Vec<(usize, String)> = new_comments;
+        let mut comment_blank_indices = comment_blank_indices.to_vec();
+        settle_crossed_comments(
+            &mut new_comments,
+            &mut comment_blank_indices,
+            &mut annotations,
+            &[],
+            &[],
+        );
+
         let grouped = GroupedSection {
             args: grouped_args,
             blank_lines: Vec::new(),
             comments: new_comments,
             post_comment_blanks: Vec::new(),
-            comment_blank_indices: comment_blank_indices.to_vec(),
+            comment_blank_indices,
             annotations,
         };
         #[cfg(debug_assertions)]
@@ -810,12 +885,22 @@ fn group_source_pairs_preserving_blanks(
             .unwrap_or(result.len())
     });
 
+    let mut new_comments: Vec<(usize, String)> = new_comments;
+    let mut comment_blank_indices = comment_blank_indices.to_vec();
+    settle_crossed_comments(
+        &mut new_comments,
+        &mut comment_blank_indices,
+        &mut annotations,
+        &new_blank_lines,
+        &new_post_comment_blanks,
+    );
+
     let grouped = GroupedSection {
         args: result,
         blank_lines: new_blank_lines,
         comments: new_comments,
         post_comment_blanks: new_post_comment_blanks,
-        comment_blank_indices: comment_blank_indices.to_vec(),
+        comment_blank_indices,
         annotations,
     };
     #[cfg(debug_assertions)]
@@ -3485,11 +3570,12 @@ mod tests {
     }
 
     /// Grouping's mapping runs backwards: `a.h` and `a.cpp` pair onto one line
-    /// at the earlier index, so `a.cpp` lands *before* the `b.cpp` between them
-    /// and the comment positions stop ascending. The comment list keeps source
-    /// order regardless, so the ordered list must not sort itself by position.
+    /// at the earlier index, so `a.cpp` lands *before* the `b.cpp` between them,
+    /// and the comment it carries crosses the comment about `b.cpp`. Both
+    /// encodings come out of grouping back in position order, so every arm — all
+    /// of which walk forwards — still meets each comment at its argument.
     #[test]
-    fn grouping_keeps_source_order_when_the_new_positions_run_backwards() {
+    fn grouping_puts_a_crossed_comment_back_in_front_of_its_argument() {
         let section = section(
             &["a.h", "b.cpp", "a.cpp"],
             list(&[comment_at(1, "# about b"), comment_at(2, "# about a.cpp")]),
@@ -3502,10 +3588,10 @@ mod tests {
         assert_eq!(
             grouped.comments,
             [
-                (1, "# about b".to_string()),
                 (0, "# about a.cpp".to_string()),
+                (1, "# about b".to_string()),
             ],
-            "positions run backwards, order does not"
+            "the comment follows the argument grouping moved"
         );
         assert_grouped_encodings_agree(&grouped);
     }
