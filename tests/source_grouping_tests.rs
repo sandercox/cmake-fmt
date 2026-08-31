@@ -719,3 +719,29 @@ fn test_source_grouping_keeps_a_comment_with_the_file_it_moves() {
         "and the result has to be a fixed point"
     );
 }
+
+/// A blank line between two notes is not a fence around either of them, and
+/// grouping must not close them up — the case `settle_crossed_comments` returns
+/// early for when nothing crossed.
+///
+/// Without that early return, grouping rebuilds the list from the position-sorted
+/// comment array, which puts both notes together and the blank line below them.
+/// Nothing in the suite noticed, so this is here to notice.
+#[test]
+fn test_source_grouping_keeps_a_blank_line_between_two_notes() {
+    let input = "target_sources(t\n\tPRIVATE\n\t\tz.cpp\n\t\t# the playback side\n\n\t\t# and the mixer it feeds\n\t\ta.cpp\n)";
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+
+    let output = format_text(input, &config);
+
+    assert!(
+        output.contains("# the playback side\n\n\t\t# and the mixer it feeds\n\t\ta.cpp"),
+        "the blank should stay between the two notes:\n{}",
+        output
+    );
+    assert_eq!(output, format_text(&output, &config));
+}

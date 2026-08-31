@@ -4642,3 +4642,108 @@ fn test_blank_at_the_end_of_a_section_with_no_comment_is_dropped() {
     );
     assert_eq!(output, format_text(&output, &default_config()));
 }
+
+/// Every way up to two comments and two blank lines can be arranged in one gap
+/// between two arguments, written back exactly as given.
+///
+/// Four of the thirteen used to come back changed, one of them by dropping a
+/// blank line outright:
+///
+/// | as written | was written back as |
+/// |---|---|
+/// | `BCB`  | `BC`  — the blank after the comment was dropped |
+/// | `CBC`  | `CCB` — the blank between the comments slid below both |
+/// | `BCCB` | `BCC` — dropped |
+/// | `CBCB` | `CCB` — both |
+///
+/// Three arrays described this gap: a set of blank positions, one saying "the
+/// blank at this position comes *after* the comments", and one saying "a blank
+/// precedes comment number k". Between them they could put a blank before the
+/// comments, after them, or between two groups — but only one of the three at a
+/// time, and the third only when a second blank was there to carry it. The
+/// arrangements above need two at once.
+#[test]
+fn test_every_comment_and_blank_arrangement_is_written_back_as_given() {
+    // Long enough that the section cannot collapse onto one line, where a blank
+    // has nowhere to go either way.
+    const FIRST: &str = "aaaaaaaaaaaaaaaaa.cpp";
+    const LAST: &str = "bbbbbbbbbbbbbbbbb.cpp";
+
+    /// Up to two blanks (`B`) and two comments (`C`), never two blanks in a row
+    /// — `max_blank_lines` collapses those, so they are not a distinct input.
+    fn arrangements() -> Vec<String> {
+        let mut out = Vec::new();
+        for length in 0..=4 {
+            for bits in 0..(1u32 << length) {
+                let seq: String = (0..length)
+                    .map(|i| if bits >> i & 1 == 0 { 'B' } else { 'C' })
+                    .collect();
+                let blanks = seq.chars().filter(|c| *c == 'B').count();
+                let comments = seq.chars().filter(|c| *c == 'C').count();
+                if blanks <= 2 && comments <= 2 && !seq.contains("BB") {
+                    out.push(seq);
+                }
+            }
+        }
+        out
+    }
+
+    fn source(arrangement: &str) -> String {
+        let mut lines = vec![
+            "target_sources(t".to_string(),
+            "\tPRIVATE".to_string(),
+            format!("\t\t{}", FIRST),
+        ];
+        let mut nth = 0;
+        for token in arrangement.chars() {
+            if token == 'B' {
+                lines.push(String::new());
+            } else {
+                nth += 1;
+                lines.push(format!("\t\t# c{}", nth));
+            }
+        }
+        lines.push(format!("\t\t{}", LAST));
+        lines.push(")".to_string());
+        lines.join("\n") + "\n"
+    }
+
+    /// The arrangement the output holds between the two arguments.
+    fn read_back(text: &str) -> String {
+        let lines: Vec<&str> = text.lines().collect();
+        let first = lines.iter().position(|l| l.contains(FIRST));
+        let last = lines.iter().position(|l| l.contains(LAST));
+        let (Some(first), Some(last)) = (first, last) else {
+            return "MISSING".to_string();
+        };
+        assert!(first < last, "the arguments were reordered:\n{}", text);
+        lines[first + 1..last]
+            .iter()
+            .map(|line| match line.trim() {
+                "" => 'B',
+                trimmed if trimmed.starts_with('#') => 'C',
+                _ => '?',
+            })
+            .collect()
+    }
+
+    let arrangements = arrangements();
+    assert_eq!(arrangements.len(), 13, "{:?}", arrangements);
+
+    for arrangement in arrangements {
+        let output = format_text(&source(&arrangement), &default_config());
+        assert_eq!(
+            read_back(&output),
+            arrangement,
+            "written as {:?}, came back as:\n{}",
+            arrangement,
+            output
+        );
+        assert_eq!(
+            output,
+            format_text(&output, &default_config()),
+            "not a fixed point for {:?}",
+            arrangement
+        );
+    }
+}

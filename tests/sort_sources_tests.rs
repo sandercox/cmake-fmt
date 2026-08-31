@@ -1526,3 +1526,61 @@ fn test_a_flag_before_the_mode_keyword_does_not_open_the_overflow_run() {
         "a leading mode keyword should still open the overflow run"
     );
 }
+
+/// Sorting and grouping together, which nothing else in the suite exercises —
+/// and which is where the two encodings of a gap could drift apart.
+///
+/// A note with a blank line under it heads the run. Sorting used to carry that
+/// note off to whichever argument it had been written above, leaving the blank
+/// behind still flagged "this blank comes after the comments" at a position with
+/// no comments. Nothing could observe that while it was true, so the faithfulness
+/// assertion skipped it — and then grouping moved a note back onto the position
+/// and the flag was live again, disagreeing with the ordered list about which
+/// came first. The section rendered one way on the first pass and the other way
+/// on the second.
+#[test]
+fn test_sorting_and_grouping_together_keep_a_note_above_its_blank_line() {
+    let input = "target_sources(app\n\tPRIVATE\n\t\t# the platform layer\n\n\t\twin32_window.cpp\n\t\tx11_window.cpp\n\t\twin32_window.h\n)";
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+
+    let once = format_text(input, &config);
+
+    assert!(
+        once.contains("# the platform layer\n\n\t\twin32_window.h win32_window.cpp"),
+        "the note should stay above the blank line that separates it from the files:\n{}",
+        once
+    );
+    assert_eq!(
+        once,
+        format_text(&once, &config),
+        "and the first pass has to be a fixed point:\n--- pass 1\n{}\n--- pass 2\n{}",
+        once,
+        format_text(&once, &config)
+    );
+}
+
+/// The same shape with only one of the two settings on, since the defect above
+/// needed both and a test for either alone would have missed it.
+#[test]
+fn test_sorting_alone_keeps_a_note_above_its_blank_line() {
+    let input = "target_sources(app\n\tPRIVATE\n\t\t# the platform layer\n\n\t\tz_window.cpp\n\t\ta_window.cpp\n)";
+    let config = FormatConfig {
+        sort_sources: SortSources::Alphabetical,
+        max_line_length: 100,
+        ..Default::default()
+    };
+
+    let once = format_text(input, &config);
+
+    assert!(
+        once.contains("# the platform layer\n\n\t\ta_window.cpp\n\t\tz_window.cpp"),
+        "the note heads the run and the files sort under it:\n{}",
+        once
+    );
+    assert_eq!(once, format_text(&once, &config));
+}
