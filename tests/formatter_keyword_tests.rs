@@ -4050,14 +4050,46 @@ fn test_the_inline_twin_keeps_a_single_values_comment_too() {
         "list(APPEND V\n\t# note\n\ta.cpp\n)\n",
         "the own-line comment moved the mode keyword off its line"
     );
-    // A blank line still disqualifies the shortcut — it has nowhere to put one —
-    // so the keyword drops to its own line. Byte-identical to the previous
-    // release, which is the point: the guard was narrowed to comments only.
+    // A blank line does not disqualify it either. It used to: the blank demoted
+    // the keyword here and then nothing wrote it, so the next pass saw no blank
+    // and put the keyword back — `--check` rejecting what `-i` had just written.
+    // `blank_line_between_sections` writes it now, on both paths.
     assert_eq!(
         format_text("list(APPEND V\n\n\ta.cpp\n)\n", &inline),
-        "list(APPEND\n\tV\n\ta.cpp\n)\n",
-        "a blank line should still disqualify the shortcut"
+        "list(APPEND V\n\n\ta.cpp\n)\n",
+        "the blank line moved the mode keyword off its line"
     );
+    // The blank is what made this unstable, so pin the fixed point rather than
+    // only the shape: every assertion above must survive a second pass.
+    for source in [
+        "list(APPEND V # note\n\ta.cpp\n)\n",
+        "list(APPEND V\n\t# note\n\ta.cpp\n)\n",
+        "list(APPEND V\n\n\ta.cpp\n)\n",
+    ] {
+        let once = format_text(source, &inline);
+        assert_eq!(
+            once,
+            format_text(&once, &inline),
+            "not a fixed point:\n{}",
+            once
+        );
+    }
+    // The setting places the keyword; it does not change what is written around
+    // it. `list()` puts its mode keyword on the opening line either way, so the
+    // two paths have to agree here — the twin demoted on all three of these
+    // while the general path did not.
+    for source in [
+        "list(APPEND V\n\n\ta.cpp\n)\n",
+        "list(APPEND V\n\n\t# note\n\ta.cpp\n)\n",
+        "list(APPEND V\n\t# note\n\n\ta.cpp\n)\n",
+    ] {
+        assert_eq!(
+            format_text(source, &inline),
+            format_text(source, &FormatConfig::default()),
+            "the two render paths disagree on:\n{}",
+            source
+        );
+    }
 }
 
 #[test]

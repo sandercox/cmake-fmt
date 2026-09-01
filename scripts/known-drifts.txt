@@ -1,7 +1,5 @@
-# Known non-fixed-point shapes: formatting the output again changes it.
-# Each line is a style and the shape's text with newlines escaped.
-# Regenerate with: scripts/check-shapes.py <binary> --update-baseline
-inline_single_keyword=true	list(APPEND V\n\n		a.cpp\n		b.cpp\n)\n
-inline_single_keyword=true	list(APPEND V\n\n\n		a.cpp\n		b.cpp\n)\n
-inline_single_keyword=true,sort_sources=alphabetical	list(APPEND V\n\n		a.cpp\n		b.cpp\n)\n
-inline_single_keyword=true,sort_sources=alphabetical	list(APPEND V\n\n\n		a.cpp\n		b.cpp\n)\n
+# Shapes that are known not to be a fixed point: formatting the output again
+# changes it. Each line is a style setting and the shape's text, newlines
+# escaped. check-shapes.py fails on a drift that is not listed here.
+#
+# Regenerate: scripts/check-shapes.py <binary> --update-baseline

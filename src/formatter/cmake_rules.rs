@@ -596,6 +596,35 @@ fn push_valueless_section_comments(
     }
 }
 
+/// Whether a blank line the author left at the end of the previous section has
+/// still to be written here.
+///
+/// A blank recorded at a section's own `args.len()` sits between that section
+/// and this one, and no arm emits it: the arms walk `annotations.at(arg_idx)`
+/// for each argument they render, and there is no argument at that index. So
+/// it is written here, before the next section opens.
+///
+/// The exception is a section whose own-line comments live at that same
+/// position. Every arm emits those, and the blank goes with them, so writing it
+/// again turned one blank line in the source into two.
+///
+/// Both render paths ask this. Only the general one used to, and the
+/// `inline_single_keyword` twin paid for it with its first-pass fixed point on
+/// `list(APPEND V)` with a blank before the elements: the blank demoted the
+/// mode keyword off the opening line and was then dropped, so the next pass,
+/// seeing no blank, put the keyword back.
+fn blank_line_between_sections(sections: &[KeywordSection], index: usize) -> bool {
+    if index == 0 {
+        return false;
+    }
+    let previous = &sections[index - 1];
+    let previous_already_wrote_it = previous
+        .annotations
+        .comments()
+        .any(|(position, _)| position == previous.args.len());
+    !previous_already_wrote_it && previous.annotations.has_blank_at(previous.args.len())
+}
+
 /// Emit what the author wrote before an argument: their own-line comments and
 /// the blank lines around them, in the order they wrote them.
 ///
@@ -1759,29 +1788,8 @@ pub fn format_keyword_aware_args(
     let mut is_first_arg = true;
 
     for (i, section) in sections.iter().enumerate() {
-        // Check if previous section had a trailing blank line (blank line between sections)
-        if i > 0 && signals.force_multiline {
-            let prev_section = &sections[i - 1];
-            // Every arm emits a section's own-line comments at
-            // `blank_lines[args.len()]` when it has one there, so that blank has
-            // already been written and this rule wrote it a second time — one
-            // blank line in the source came back as two. The precondition is
-            // "the previous section holds an own-line comment at its own end",
-            // of which a comments-only section is just the `args.is_empty()`
-            // case; guarding on that alone left two of the three spellings
-            // doubling.
-            let previous_already_wrote_it = prev_section
-                .annotations
-                .comments()
-                .any(|(position, _)| position == prev_section.args.len());
-            if !previous_already_wrote_it
-                && prev_section
-                    .annotations
-                    .has_blank_at(prev_section.args.len())
-            {
-                // Extra blank line between sections
-                docs.push(RcDoc::hardline());
-            }
+        if signals.force_multiline && blank_line_between_sections(&sections, i) {
+            docs.push(RcDoc::hardline());
         }
 
         if let Some(keyword) = &section.keyword {
@@ -2538,6 +2546,10 @@ fn format_keyword_aware_args_inline_single(
     let mut is_first_arg = true;
 
     for (i, section) in sections.iter().enumerate() {
+        if signals.force_multiline && blank_line_between_sections(sections, i) {
+            docs.push(RcDoc::hardline());
+        }
+
         if let Some(keyword) = &section.keyword {
             // There is exactly one keyword section — emit keyword INLINE with preceding args.
             // Separator: space (flat and broken both use space here)
@@ -2579,12 +2591,15 @@ fn format_keyword_aware_args_inline_single(
             // parser gives a comment written after this keyword's value to *this*
             // section while the run's elements live in the next, so sorting the
             // commented element to the front moved the comment into that slot and
-            // the following pass laid the command out differently. A blank line
-            // still disqualifies it, because the shortcut has nowhere to put one.
-            let is_single_value_with_one_arg = section.keyword_type
-                == Some(KeywordType::SingleValue)
-                && section.args.len() == 1
-                && section.annotations.blank_positions().is_empty();
+            // the following pass laid the command out differently.
+            //
+            // A blank line does not disqualify it either, now that
+            // `blank_line_between_sections` writes one left at the end of a
+            // section. While nothing wrote it, the blank demoted the keyword
+            // here and was then dropped, so the next pass put the keyword back
+            // and `--check` rejected what `-i` had written.
+            let is_single_value_with_one_arg =
+                section.keyword_type == Some(KeywordType::SingleValue) && section.args.len() == 1;
 
             let is_pair_value = section.keyword_type == Some(KeywordType::PairValue);
 
