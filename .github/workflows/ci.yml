@@ -63,10 +63,8 @@ jobs:
       - name: cargo fmt
         run: cargo fmt --check
 
-      # Not -D warnings yet: the crate carries 2 pre-existing clippy warnings.
-      # Fix those and this can start failing the build.
       - name: cargo clippy
-        run: cargo clippy --all-targets
+        run: cargo clippy --all-targets -- -D warnings
 
   shapes:
     name: Formatter invariants

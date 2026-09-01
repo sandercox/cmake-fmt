@@ -198,7 +198,7 @@ pub fn group_source_pairs(
                     }
                     SourceGrouping::SourcesFirst => {
                         // Higher priority numbers first (sources before headers)
-                        group_files.sort_by(|(_, a), (_, b)| ext_priority(b).cmp(&ext_priority(a)));
+                        group_files.sort_by_key(|(_, file)| std::cmp::Reverse(ext_priority(file)));
                     }
                     SourceGrouping::None => unreachable!(),
                 }
