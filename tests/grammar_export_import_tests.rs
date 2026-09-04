@@ -135,11 +135,14 @@ VALUE1 = "SingleValue"
 "#;
     fs::write(&grammar_path, grammar_content).expect("Failed to write grammar file");
 
-    // Create a config that references it
+    // Create a config that references it. The path goes in a TOML *literal*
+    // string: a basic string processes backslash escapes, so a Windows path
+    // like `C:\Users\RUNNER~1\AppData\...` is read as `\U`, `\A`, `\T`
+    // and the parse fails with "invalid unicode 8-digit hex code".
     let config_content = format!(
         r#"
 indent_width = 2
-grammar_files = ["{}"]
+grammar_files = ['{}']
 "#,
         grammar_path.display()
     );
