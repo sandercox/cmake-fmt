@@ -4050,14 +4050,46 @@ fn test_the_inline_twin_keeps_a_single_values_comment_too() {
         "list(APPEND V\n\t# note\n\ta.cpp\n)\n",
         "the own-line comment moved the mode keyword off its line"
     );
-    // A blank line still disqualifies the shortcut — it has nowhere to put one —
-    // so the keyword drops to its own line. Byte-identical to the previous
-    // release, which is the point: the guard was narrowed to comments only.
+    // A blank line does not disqualify it either. It used to: the blank demoted
+    // the keyword here and then nothing wrote it, so the next pass saw no blank
+    // and put the keyword back — `--check` rejecting what `-i` had just written.
+    // `blank_line_between_sections` writes it now, on both paths.
     assert_eq!(
         format_text("list(APPEND V\n\n\ta.cpp\n)\n", &inline),
-        "list(APPEND\n\tV\n\ta.cpp\n)\n",
-        "a blank line should still disqualify the shortcut"
+        "list(APPEND V\n\n\ta.cpp\n)\n",
+        "the blank line moved the mode keyword off its line"
     );
+    // The blank is what made this unstable, so pin the fixed point rather than
+    // only the shape: every assertion above must survive a second pass.
+    for source in [
+        "list(APPEND V # note\n\ta.cpp\n)\n",
+        "list(APPEND V\n\t# note\n\ta.cpp\n)\n",
+        "list(APPEND V\n\n\ta.cpp\n)\n",
+    ] {
+        let once = format_text(source, &inline);
+        assert_eq!(
+            once,
+            format_text(&once, &inline),
+            "not a fixed point:\n{}",
+            once
+        );
+    }
+    // The setting places the keyword; it does not change what is written around
+    // it. `list()` puts its mode keyword on the opening line either way, so the
+    // two paths have to agree here — the twin demoted on all three of these
+    // while the general path did not.
+    for source in [
+        "list(APPEND V\n\n\ta.cpp\n)\n",
+        "list(APPEND V\n\n\t# note\n\ta.cpp\n)\n",
+        "list(APPEND V\n\t# note\n\n\ta.cpp\n)\n",
+    ] {
+        assert_eq!(
+            format_text(source, &inline),
+            format_text(source, &FormatConfig::default()),
+            "the two render paths disagree on:\n{}",
+            source
+        );
+    }
 }
 
 #[test]
@@ -4584,4 +4616,231 @@ fn test_a_blank_between_comment_groups_names_the_right_comment() {
             "a real sort never settles"
         );
     }
+}
+
+/// A blank line the author left *after* the last comment in a section came back
+/// out *before* it, so the comment let go of the argument it followed and
+/// attached itself to the closing paren. Four arms emitted the end of a section
+/// and none of them asked which way round the author had written it.
+#[test]
+fn test_blank_after_the_last_comment_stays_after_it() {
+    let input = "target_sources(t\n\tPRIVATE\n\t\ta.cpp\n\t\t# note\n\n)";
+
+    let output = format_text(input, &default_config());
+
+    assert!(
+        output.contains("a.cpp\n\t\t# note\n\n)"),
+        "the comment should stay with a.cpp and the blank stay before the paren:\n{}",
+        output
+    );
+    assert_eq!(
+        output,
+        format_text(&output, &default_config()),
+        "and the result has to be a fixed point"
+    );
+}
+
+/// The other way round still works, which is what the arms did unconditionally.
+#[test]
+fn test_blank_before_the_last_comment_stays_before_it() {
+    let input = "target_sources(t\n\tPRIVATE\n\t\ta.cpp\n\n\t\t# note\n)";
+
+    let output = format_text(input, &default_config());
+
+    assert!(
+        output.contains("a.cpp\n\n\t\t# note\n)"),
+        "the blank should stay above the comment:\n{}",
+        output
+    );
+    assert_eq!(output, format_text(&output, &default_config()));
+}
+
+/// And a blank with no comment after it is still dropped: nothing follows it in
+/// the section, so writing it back only put a blank line in front of the paren.
+///
+/// Long enough to force the section onto several lines — a section that collapses
+/// to one line has nowhere to put a blank either way, so a short input cannot
+/// tell the two behaviours apart.
+#[test]
+fn test_blank_at_the_end_of_a_section_with_no_comment_is_dropped() {
+    let input = "target_sources(t\n\tPRIVATE\n\t\taaaaaaaaaaaaaaaaaaaaaaaaa.cpp\n\t\tbbbbbbbbbbbbbbbbbbbbbbbbb.cpp\n\n)";
+
+    let output = format_text(input, &default_config());
+
+    assert!(
+        output.contains("bbbbbbbbbbbbbbbbbbbbbbbbb.cpp\n)"),
+        "no blank line should be left in front of the closing paren:\n{}",
+        output
+    );
+    assert_eq!(output, format_text(&output, &default_config()));
+}
+
+/// Every way up to two comments and two blank lines can be arranged in one gap
+/// between two arguments, written back as given — except the three where a note
+/// is fenced by a blank line on each side, which keep only the one above.
+///
+/// Four of the thirteen used to come back changed, one of them by dropping a
+/// blank line outright:
+///
+/// | as written | was written back as |
+/// |---|---|
+/// | `BCB`  | `BC`  — the blank after the comment was dropped |
+/// | `CBC`  | `CCB` — the blank between the comments slid below both |
+/// | `BCCB` | `BCC` — dropped |
+/// | `CBCB` | `CCB` — both |
+///
+/// Three arrays described this gap: a set of blank positions, one saying "the
+/// blank at this position comes *after* the comments", and one saying "a blank
+/// precedes comment number k". Between them they could put a blank before the
+/// comments, after them, or between two groups — but only one of the three at a
+/// time, and the third only when a second blank was there to carry it. The
+/// arrangements above need two at once.
+#[test]
+fn test_every_comment_and_blank_arrangement_is_written_back_or_collapsed() {
+    // Long enough that the section cannot collapse onto one line, where a blank
+    // has nowhere to go either way.
+    const FIRST: &str = "aaaaaaaaaaaaaaaaa.cpp";
+    const LAST: &str = "bbbbbbbbbbbbbbbbb.cpp";
+
+    /// Up to two blanks (`B`) and two comments (`C`), never two blanks in a row
+    /// — `max_blank_lines` collapses those, so they are not a distinct input.
+    fn arrangements() -> Vec<String> {
+        let mut out = Vec::new();
+        for length in 0..=4 {
+            for bits in 0..(1u32 << length) {
+                let seq: String = (0..length)
+                    .map(|i| if bits >> i & 1 == 0 { 'B' } else { 'C' })
+                    .collect();
+                let blanks = seq.chars().filter(|c| *c == 'B').count();
+                let comments = seq.chars().filter(|c| *c == 'C').count();
+                if blanks <= 2 && comments <= 2 && !seq.contains("BB") {
+                    out.push(seq);
+                }
+            }
+        }
+        out
+    }
+
+    fn source(arrangement: &str) -> String {
+        let mut lines = vec![
+            "target_sources(t".to_string(),
+            "\tPRIVATE".to_string(),
+            format!("\t\t{}", FIRST),
+        ];
+        let mut nth = 0;
+        for token in arrangement.chars() {
+            if token == 'B' {
+                lines.push(String::new());
+            } else {
+                nth += 1;
+                lines.push(format!("\t\t# c{}", nth));
+            }
+        }
+        lines.push(format!("\t\t{}", LAST));
+        lines.push(")".to_string());
+        lines.join("\n") + "\n"
+    }
+
+    /// The arrangement the output holds between the two arguments.
+    fn read_back(text: &str) -> String {
+        let lines: Vec<&str> = text.lines().collect();
+        let first = lines.iter().position(|l| l.contains(FIRST));
+        let last = lines.iter().position(|l| l.contains(LAST));
+        let (Some(first), Some(last)) = (first, last) else {
+            return "MISSING".to_string();
+        };
+        assert!(first < last, "the arguments were reordered:\n{}", text);
+        lines[first + 1..last]
+            .iter()
+            .map(|line| match line.trim() {
+                "" => 'B',
+                trimmed if trimmed.starts_with('#') => 'C',
+                _ => '?',
+            })
+            .collect()
+    }
+
+    // The three the formatter deliberately does not write back as given. A note
+    // describes what follows it, so the blank above it is the one separating it
+    // from what came before; the one below only pushes it away from the argument
+    // it is about. Stated as a rule: a gap never ends with a blank line when it
+    // already holds one.
+    let collapses = [("BCB", "BC"), ("BCCB", "BCC"), ("CBCB", "CBC")];
+
+    let arrangements = arrangements();
+    assert_eq!(arrangements.len(), 13, "{:?}", arrangements);
+
+    for arrangement in arrangements {
+        let expected = collapses
+            .iter()
+            .find(|(written, _)| *written == arrangement)
+            .map(|(_, collapsed)| collapsed.to_string())
+            .unwrap_or_else(|| arrangement.clone());
+
+        let output = format_text(&source(&arrangement), &default_config());
+        assert_eq!(
+            read_back(&output),
+            expected,
+            "written as {:?}, expected {:?}, came back as:\n{}",
+            arrangement,
+            expected,
+            output
+        );
+        assert_eq!(
+            output,
+            format_text(&output, &default_config()),
+            "not a fixed point for {:?}",
+            arrangement
+        );
+    }
+}
+
+/// The rule on its own, on the code a person would actually write: a note set
+/// apart from the file above it does not also need setting apart from the file
+/// below, which is the one it is about.
+#[test]
+fn test_a_note_fenced_by_blank_lines_keeps_only_the_one_above_it() {
+    let input = "target_sources(renderer\n\tPRIVATE\n\t\tcompositor.cpp\n\n\t\t# goes with the 3.0 ABI\n\n\t\tlegacy_shim.cpp\n)";
+
+    let output = format_text(input, &default_config());
+
+    assert!(
+        output.contains("compositor.cpp\n\n\t\t# goes with the 3.0 ABI\n\t\tlegacy_shim.cpp"),
+        "the blank above the note should be kept and the one below dropped:\n{}",
+        output
+    );
+    assert_eq!(output, format_text(&output, &default_config()));
+}
+
+/// But a blank line with nothing above it is the author separating the note from
+/// what comes next on purpose, and it stays — the same arrangement this branch
+/// fixed at the end of a section.
+#[test]
+fn test_a_lone_blank_line_below_a_note_is_kept() {
+    let input = "target_sources(renderer\n\tPRIVATE\n\t\tpipeline.cpp\n\t\t# everything below is Vulkan-only\n\n\t\tvk_device.cpp\n)";
+
+    let output = format_text(input, &default_config());
+
+    assert!(
+        output.contains("# everything below is Vulkan-only\n\n\t\tvk_device.cpp"),
+        "the only blank line in the gap should be kept:\n{}",
+        output
+    );
+    assert_eq!(output, format_text(&output, &default_config()));
+}
+
+/// And a blank line between two notes is not a fence around either of them: it
+/// separates two groups, and both keep their place.
+#[test]
+fn test_a_blank_line_between_two_notes_is_not_a_fence() {
+    let input = "set(CORE_SOURCES\n\tclip_engine.cpp\n\t# the playback side\n\n\t# and the mixer it feeds\n\tmixer.cpp\n)";
+
+    let output = format_text(input, &default_config());
+
+    assert!(
+        output.contains("# the playback side\n\n\t# and the mixer it feeds\n\tmixer.cpp"),
+        "the blank between the two notes should stay between them:\n{}",
+        output
+    );
+    assert_eq!(output, format_text(&output, &default_config()));
 }

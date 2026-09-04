@@ -67,14 +67,11 @@ pub fn parse_directive(comment: &str) -> Option<Directive> {
     // Strip leading '#' and trim
     let content = comment.strip_prefix('#')?.trim();
 
-    // Check for directive prefix
-    let after_prefix = if let Some(rest) = content.strip_prefix("cmake-fmt:") {
-        rest.trim()
-    } else if let Some(rest) = content.strip_prefix("cmake-fmt :") {
-        rest.trim()
-    } else {
-        return None;
-    };
+    // Check for directive prefix, in both the compact and the spaced spelling
+    let after_prefix = content
+        .strip_prefix("cmake-fmt:")
+        .or_else(|| content.strip_prefix("cmake-fmt :"))?
+        .trim();
 
     // Match directive type
     match after_prefix {
@@ -243,6 +240,31 @@ mod tests {
             parse_directive("# cmake-fmt:no-sort"),
             Some(Directive::NoSort)
         );
+    }
+
+    #[test]
+    fn test_parse_directive_space_before_colon() {
+        // The `cmake-fmt :` spelling is a separate arm from `cmake-fmt:`, and
+        // every other test here uses the latter. Without this, dropping the
+        // arm leaves the suite green while every spaced directive silently
+        // stops being a directive and formats as an ordinary comment.
+        assert_eq!(parse_directive("# cmake-fmt : off"), Some(Directive::Off));
+        assert_eq!(parse_directive("# cmake-fmt : on"), Some(Directive::On));
+        assert_eq!(parse_directive("# cmake-fmt : skip"), Some(Directive::Skip));
+        assert_eq!(
+            parse_directive("# cmake-fmt : no-sort"),
+            Some(Directive::NoSort)
+        );
+        assert_eq!(
+            parse_directive("# cmake-fmt :indent_width=4"),
+            Some(Directive::Style {
+                key: "indent_width".to_string(),
+                value: "4".to_string(),
+            })
+        );
+        // Only one space is accepted, and only before the colon.
+        assert_eq!(parse_directive("# cmake-fmt  : off"), None);
+        assert_eq!(parse_directive("# cmake -fmt: off"), None);
     }
 
     #[test]

@@ -1,0 +1,5 @@
+# Shapes that are known not to be a fixed point: formatting the output again
+# changes it. Each line is a style setting and the shape's text, newlines
+# escaped. check-shapes.py fails on a drift that is not listed here.
+#
+# Regenerate: scripts/check-shapes.py <binary> --update-baseline

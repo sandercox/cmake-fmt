@@ -198,7 +198,7 @@ pub fn group_source_pairs(
                     }
                     SourceGrouping::SourcesFirst => {
                         // Higher priority numbers first (sources before headers)
-                        group_files.sort_by(|(_, a), (_, b)| ext_priority(b).cmp(&ext_priority(a)));
+                        group_files.sort_by_key(|(_, file)| std::cmp::Reverse(ext_priority(file)));
                     }
                     SourceGrouping::None => unreachable!(),
                 }
@@ -244,23 +244,267 @@ fn grouped_section(
     grouping: super::config::SourceGrouping,
 ) -> GroupedSection {
     if grouping != super::config::SourceGrouping::None && section.trailing_comments.is_empty() {
-        group_source_pairs_preserving_blanks(
-            &section.args,
-            section.sort_from,
-            &section.blank_lines,
-            &section.comments,
-            &section.post_comment_blanks,
-            &section.comment_blank_indices,
-            grouping,
-        )
+        group_source_pairs_preserving_blanks(section, grouping)
     } else {
-        (
-            section.args.clone(),
-            section.blank_lines.clone(),
-            section.comments.clone(),
-            section.post_comment_blanks.clone(),
-            section.comment_blank_indices.clone(),
-        )
+        GroupedSection {
+            args: section.args.clone(),
+            annotations: section.annotations.clone(),
+        }
+    }
+}
+
+/// One thing the author wrote between a section's arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Annotation {
+    /// A comment on a line of its own.
+    Comment(String),
+    /// A blank line.
+    Blank,
+}
+
+/// Everything written between a section's arguments, in source order.
+///
+/// One ordered list, each item keyed by the argument position it precedes. This
+/// replaces a position-keyed *set* of blank lines plus two further arrays whose
+/// only job was to re-encode the ordering that set had thrown away:
+/// `post_comment_blanks` ("the blank at this position comes after the comments,
+/// not before") and `comment_blank_indices` ("a blank precedes comment number
+/// k"). Both were unrepresentable states waiting to be reached, and both were
+/// reached — a blank written twice because two rules matched one entry, and an
+/// index naming a comment that sorting had since moved, or that never arrived.
+///
+/// Here the order *is* the order, so there is nothing to keep in step.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Annotations {
+    items: Vec<(usize, Annotation)>,
+}
+
+impl Annotations {
+    // The two questions the arms ask before they open a comment block at all —
+    // `use_per_line`, `has_annotations`. They still ask them of `comments` and
+    // `blank_lines`, which is the last thing left to move before those four
+    // fields can go.
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    pub fn push_comment(&mut self, position: usize, text: String) {
+        self.items.push((position, Annotation::Comment(text)));
+    }
+
+    pub fn push_blank(&mut self, position: usize) {
+        self.items.push((position, Annotation::Blank));
+    }
+
+    /// The own-line comments, as `(position, text)` in source order.
+    pub fn comments(&self) -> impl Iterator<Item = (usize, &str)> + '_ {
+        self.items.iter().filter_map(|(position, item)| match item {
+            Annotation::Comment(text) => Some((*position, text.as_str())),
+            Annotation::Blank => None,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn has_comments(&self) -> bool {
+        self.comments().next().is_some()
+    }
+
+    /// Everything the author wrote before argument `index`, in the order they
+    /// wrote it.
+    ///
+    /// This is the whole of what a render arm needs. The five rules it used to
+    /// apply — a blank before the comments here, unless this position is in
+    /// `post_comment_blanks`, in which case after them; a blank before comment
+    /// number `k`; the comment itself; the argument — were five ways of asking
+    /// what order the author wrote things in, from three arrays that had thrown
+    /// that order away.
+    pub fn at(&self, index: usize) -> impl Iterator<Item = &Annotation> + '_ {
+        self.items
+            .iter()
+            .filter(move |(position, _)| *position == index)
+            .map(|(_, item)| item)
+    }
+
+    /// The positions that carry at least one blank line, deduplicated and in
+    /// order — the old `blank_lines`.
+    ///
+    /// This and the two views below say what the four arrays say. They began as
+    /// the faithfulness assertion's instruments; `sort_source_args` now derives
+    /// the arrays through them rather than maintaining a second copy by hand,
+    /// which is what stopped the two encodings drifting apart under a
+    /// permutation. They go when the arrays do.
+    pub fn blank_positions(&self) -> Vec<usize> {
+        let mut out: Vec<usize> = Vec::new();
+        for (position, item) in &self.items {
+            if matches!(item, Annotation::Blank) && !out.contains(position) {
+                out.push(*position);
+            }
+        }
+        out
+    }
+
+    /// Whether a blank line was written before argument `position`.
+    pub fn has_blank_at(&self, position: usize) -> bool {
+        self.items
+            .iter()
+            .any(|(at, item)| *at == position && matches!(item, Annotation::Blank))
+    }
+
+    /// Whether the blank at `position` was written *after* the comments there
+    /// rather than before them — the old `post_comment_blanks`.
+    pub fn blank_follows_comments_at(&self, position: usize) -> bool {
+        let mut seen_comment = false;
+        for (item_position, item) in &self.items {
+            if *item_position != position {
+                continue;
+            }
+            match item {
+                Annotation::Comment(_) => seen_comment = true,
+                Annotation::Blank => return seen_comment,
+            }
+        }
+        false
+    }
+
+    /// Move every item to a new position, keeping source order.
+    ///
+    /// Source order, not position order: grouping's mapping is not monotonic —
+    /// `[a.h, b.cpp, a.cpp]` pairs indices 0 and 2 into one line, so index 2
+    /// maps *behind* index 1. [`Annotations::settle_crossed`] puts them back
+    /// afterwards, and rebuilds rather than sorts, because a comment that
+    /// crossed another has to lose the blank line that used to sit between
+    /// them.
+    pub fn remap(&mut self, mut position_of: impl FnMut(usize) -> usize) {
+        for (position, _) in &mut self.items {
+            *position = position_of(*position);
+        }
+    }
+
+    /// The items written before argument `index` up to and including the last
+    /// blank line there — what stays put when sorting moves the argument.
+    ///
+    /// A blank line is a segment boundary: sorting permutes arguments *within*
+    /// the runs it delimits, so it has to stay at the index it is at or the next
+    /// pass segments the list differently. Anything the author wrote above that
+    /// blank is held there by it, so it stays too.
+    pub fn pinned_prefix(&self, index: usize) -> impl Iterator<Item = &Annotation> + '_ {
+        let items: Vec<&Annotation> = self.at(index).collect();
+        let last_blank = items
+            .iter()
+            .rposition(|item| matches!(item, Annotation::Blank));
+        let keep = last_blank.map_or(0, |at| at + 1);
+        items.into_iter().take(keep)
+    }
+
+    /// The comments written after the last blank line before argument `index` —
+    /// what travels with the argument when sorting moves it.
+    ///
+    /// These are the ones written directly above the argument, with nothing
+    /// between, so they are about it and follow it.
+    pub fn comments_after_last_blank(&self, index: usize) -> impl Iterator<Item = &str> + '_ {
+        let items: Vec<&Annotation> = self.at(index).collect();
+        let last_blank = items
+            .iter()
+            .rposition(|item| matches!(item, Annotation::Blank));
+        let from = last_blank.map_or(0, |at| at + 1);
+        items.into_iter().skip(from).filter_map(|item| match item {
+            Annotation::Comment(text) => Some(text.as_str()),
+            Annotation::Blank => None,
+        })
+    }
+
+    /// Put a comment back in front of the argument it was written for.
+    ///
+    /// Grouping moves an argument backwards when it pairs with an earlier one, and
+    /// the comment written in front of it moves with it — past any comment in
+    /// between, so that comment's position now runs backwards. Every render arm
+    /// walks the comment list forwards, matching each position as it reaches it, so
+    /// a position that runs backwards is never matched again: the comment fell out
+    /// at the end of the section, in front of the closing paren, describing nothing.
+    ///
+    /// ```text
+    /// target_sources(t PRIVATE      # with source_grouping=headers_first
+    ///   a.h                             a.h a.cpp
+    ///   # about b               ->      # about b
+    ///   b.cpp                           b.cpp
+    ///   # about a.cpp                   # about a.cpp
+    ///   a.cpp                       )
+    /// )
+    /// ```
+    ///
+    /// A stable fixed point, and no corpus file or generated shape reaches it, which
+    /// is why twelve rounds of review did not either. Found by asking what the
+    /// ordered list would render for a crossed position, and answering that the
+    /// arrays render this.
+    ///
+    /// Sorting by position restores the pairing. It also renames every
+    /// `comment_blank_indices` entry, so the rule `sort_source_args` applies when it
+    /// permutes the same list applies here: an entry means "the author left a blank
+    /// between these two comment groups", and reordering has dissolved the groups.
+    pub fn settle_crossed(&mut self) {
+        let mut previous = None;
+        let mut crossed = false;
+        for (position, _) in self.comments() {
+            if previous.is_some_and(|before| before > position) {
+                crossed = true;
+                break;
+            }
+            previous = Some(position);
+        }
+        if !crossed {
+            return;
+        }
+
+        let mut comments: Vec<(usize, String)> = self
+            .comments()
+            .map(|(position, text)| (position, text.to_string()))
+            .collect();
+        comments.sort_by_key(|(position, _)| *position);
+        let blanks = self.blank_positions();
+        let after_comments: Vec<usize> = blanks
+            .iter()
+            .copied()
+            .filter(|position| self.blank_follows_comments_at(*position))
+            .collect();
+
+        *self = Self::rebuilt_for_permuted_comments(&comments, &blanks, |position| {
+            after_comments.contains(&position)
+        });
+    }
+
+    /// Rebuild from a permutation that has already moved the comments.
+    ///
+    /// Sorting reorders the arguments within each blank-line segment, so it
+    /// cannot be expressed as a position rewrite: two comments can swap places
+    /// in the list. The blanks are the segment boundaries and so are fixed
+    /// points; `comments` arrives already remapped — each entry is the comment
+    /// and the argument position it now sits in front of, in its new order.
+    fn rebuilt_for_permuted_comments(
+        comments: &[(usize, String)],
+        blank_positions: &[usize],
+        blank_follows_comments: impl Fn(usize) -> bool,
+    ) -> Self {
+        let mut positions: Vec<usize> = comments.iter().map(|(position, _)| *position).collect();
+        positions.extend_from_slice(blank_positions);
+        positions.sort_unstable();
+        positions.dedup();
+
+        let mut rebuilt = Self::default();
+        for position in positions {
+            let carries_blank = blank_positions.contains(&position);
+            let blank_last = carries_blank && blank_follows_comments(position);
+            if carries_blank && !blank_last {
+                rebuilt.push_blank(position);
+            }
+            for (_, text) in comments.iter().filter(|(at, _)| *at == position) {
+                rebuilt.push_comment(position, text.clone());
+            }
+            if blank_last {
+                rebuilt.push_blank(position);
+            }
+        }
+        rebuilt
     }
 }
 
@@ -280,7 +524,7 @@ fn previous_section_ended_in_a_comment(sections: &[KeywordSection], index: usize
         .checked_sub(1)
         .and_then(|previous| sections.get(previous))
         .is_some_and(|previous| {
-            !previous.comments.is_empty() || !previous.trailing_comments.is_empty()
+            previous.annotations.has_comments() || !previous.trailing_comments.is_empty()
         })
 }
 
@@ -342,14 +586,189 @@ fn groups_with_the_leading_flag(
 
 fn push_valueless_section_comments(
     docs: &mut Vec<RcDoc<'static, ()>>,
-    comments: &[(usize, String)],
+    annotations: &Annotations,
     indent: &str,
 ) {
-    for (_, comment) in comments {
+    for (_, comment) in annotations.comments() {
         docs.push(RcDoc::hardline());
         docs.push(RcDoc::text(indent.to_string()));
-        docs.push(RcDoc::text(comment.clone()));
+        docs.push(RcDoc::text(comment.to_string()));
     }
+}
+
+/// Whether a blank line the author left at the end of the previous section has
+/// still to be written here.
+///
+/// A blank recorded at a section's own `args.len()` sits between that section
+/// and this one, and no arm emits it: the arms walk `annotations.at(arg_idx)`
+/// for each argument they render, and there is no argument at that index. So
+/// it is written here, before the next section opens.
+///
+/// The exception is a section whose own-line comments live at that same
+/// position. Every arm emits those, and the blank goes with them, so writing it
+/// again turned one blank line in the source into two.
+///
+/// Both render paths ask this. Only the general one used to, and the
+/// `inline_single_keyword` twin paid for it with its first-pass fixed point on
+/// `list(APPEND V)` with a blank before the elements: the blank demoted the
+/// mode keyword off the opening line and was then dropped, so the next pass,
+/// seeing no blank, put the keyword back.
+fn blank_line_between_sections(sections: &[KeywordSection], index: usize) -> bool {
+    if index == 0 {
+        return false;
+    }
+    let previous = &sections[index - 1];
+    let previous_already_wrote_it = previous
+        .annotations
+        .comments()
+        .any(|(position, _)| position == previous.args.len());
+    !previous_already_wrote_it && previous.annotations.has_blank_at(previous.args.len())
+}
+
+/// Emit what the author wrote before an argument: their own-line comments and
+/// the blank lines around them, in the order they wrote them.
+///
+/// Seven arms had a copy of the five rules this replaces, and the rules could
+/// not express every order the author can write. Enumerating the thirteen ways
+/// to arrange up to two comments and two blank lines in one gap, four came back
+/// changed:
+///
+/// ```text
+///   as written    was written back as
+///   ----------    -------------------
+///   BCB           BC     the blank after the comment was dropped outright
+///   CBC           CCB    the blank between the comments slid below both
+///   BCCB          BCC    dropped
+///   CBCB          CCB    both
+/// ```
+///
+/// `post_comment_blanks` says "the blank at this position comes after the
+/// comments" and `comment_blank_indices` says "a blank precedes comment number
+/// k" — between them they can place a blank before the comments, after them, or
+/// between two groups, but only ever one of the three, and only when a *second*
+/// blank at that position is there to carry the third case. An ordered walk has
+/// no such gap: it emits what is there.
+///
+/// One rule of its own lives here, now that there is one place to put it: a gap
+/// never ends with a blank line when it already holds one — see below.
+///
+/// Returns whether anything was emitted, which is what tells a caller to stop
+/// treating the next thing as the section's first argument.
+fn push_annotations_before_argument(
+    docs: &mut Vec<RcDoc<'static, ()>>,
+    annotations: &Annotations,
+    index: usize,
+    indent: &str,
+    force_multiline: bool,
+) -> bool {
+    let items: Vec<&Annotation> = annotations.at(index).collect();
+
+    // Air on both sides of the same note is one blank line too many. A note
+    // describes what comes after it, so the blank above is the one doing the
+    // separating and the one below only pushes the note away from what it is
+    // about:
+    //
+    //     compositor.cpp            compositor.cpp
+    //                           ->
+    //     # goes with the 3.0 ABI   # goes with the 3.0 ABI
+    //                               legacy_shim.cpp
+    //     legacy_shim.cpp
+    //
+    // Stated as "a gap never ends with a blank line when it already holds one",
+    // which also covers the note-blank-note-blank case, and leaves a gap whose
+    // only blank is the trailing one alone — there the author put the blank
+    // between the note and the closing paren deliberately, and nothing above it
+    // is separating anything.
+    //
+    // Two blanks in a row do reach here, so "already holds one" is meant
+    // literally and not as "holds one with a note under it". A run of blank
+    // lines in the source collapses to a single one whatever `max_blank_lines`
+    // says, but an argument the parser drops between two of them — `()`, say —
+    // leaves the pair adjacent. Dropping the second is right there too.
+    let surplus_trailing_blank = matches!(items.last(), Some(Annotation::Blank))
+        && items[..items.len() - 1]
+            .iter()
+            .any(|item| matches!(item, Annotation::Blank));
+    let items = if surplus_trailing_blank {
+        &items[..items.len() - 1]
+    } else {
+        &items[..]
+    };
+
+    let mut emitted = false;
+
+    for item in items {
+        match item {
+            Annotation::Blank => {
+                // Nothing to separate when the whole command is going on one
+                // line, and a hardline there would force it apart.
+                if force_multiline {
+                    docs.push(RcDoc::hardline());
+                    emitted = true;
+                }
+            }
+            Annotation::Comment(text) => {
+                if force_multiline {
+                    docs.push(RcDoc::hardline());
+                    docs.push(RcDoc::text(indent.to_string()));
+                } else {
+                    docs.push(RcDoc::flat_alt(
+                        RcDoc::hardline().append(RcDoc::text(indent.to_string())),
+                        RcDoc::space(),
+                    ));
+                }
+                docs.push(RcDoc::text(text.clone()));
+                emitted = true;
+            }
+        }
+    }
+
+    emitted
+}
+
+/// Emit the comments written after a section's last argument.
+///
+/// Four arms had a copy of this and none of them consulted
+/// `post_comment_blanks`, so a blank line the author left *after* the last
+/// comment came back out *before* it. The comment let go of the argument it
+/// followed and attached itself to the closing paren instead:
+///
+/// ```text
+/// target_sources(t              target_sources(t
+///   PRIVATE                         PRIVATE
+///     a.cpp              ->             a.cpp
+///     # note                            <blank>
+///     <blank>                           # note
+/// )                             )
+/// ```
+///
+/// One place now, for the reason the other two hoisted questions live in one
+/// place: four consecutive defects in this function were each one arm over from
+/// the last fix, and the questions that got hoisted are the ones that stopped
+/// recurring.
+///
+/// A blank with no comment after it stays dropped. Nothing follows it in the
+/// section, so emitting it only put a blank line in front of the closing paren —
+/// which is the one thing this cannot delegate to
+/// [`push_annotations_before_argument`], since there is no argument coming.
+///
+/// Returns whether anything was emitted, which is all one caller needs in order
+/// to stop treating the next thing as the section's first argument.
+fn push_end_of_section_comments(
+    docs: &mut Vec<RcDoc<'static, ()>>,
+    annotations: &Annotations,
+    args_len: usize,
+    indent: &str,
+    force_multiline: bool,
+) -> bool {
+    if !annotations
+        .at(args_len)
+        .any(|item| matches!(item, Annotation::Comment(_)))
+    {
+        return false;
+    }
+
+    push_annotations_before_argument(docs, annotations, args_len, indent, force_multiline)
 }
 
 /// Group only the runs the sorting pass is allowed to permute: from `sort_from`
@@ -382,99 +801,72 @@ fn group_sortable_runs(
     (out, old_to_new)
 }
 
-/// A section after grouping: the arguments, the blank-line positions, the
-/// comments with their new positions, the post-comment blanks, and the indices
-/// of comments that carry a blank line.
-type GroupedSection = (
-    Vec<String>,
-    Vec<usize>,
-    Vec<(usize, String)>,
-    Vec<usize>,
-    Vec<usize>,
-);
+/// A section after grouping: the arguments, and everything the author wrote
+/// between them, at the positions grouping has moved them to.
+struct GroupedSection {
+    args: Vec<String>,
+    annotations: Annotations,
+}
 
-/// Group within each blank-line segment independently, adjusting the blank-line
-/// and comment positions to the shorter grouped segments.
+/// Group within each blank-line segment independently, moving what the author
+/// wrote between the arguments to the positions the shorter segments give them.
 fn group_source_pairs_preserving_blanks(
-    args: &[String],
-    sort_from: Option<usize>,
-    blank_lines: &[usize],
-    comments: &[(usize, String)],
-    post_comment_blanks: &[usize],
-    comment_blank_indices: &[usize],
+    section: &KeywordSection,
     grouping: super::config::SourceGrouping,
 ) -> GroupedSection {
+    let args = &section.args;
+    let blank_lines = section.annotations.blank_positions();
+
     // A section with no sortable run groups nothing, so `None` pins everything
-    let sort_from = sort_from.unwrap_or(usize::MAX);
+    let sort_from = section.sort_from.unwrap_or(usize::MAX);
 
     if blank_lines.is_empty() {
         let (grouped_args, old_to_new) = group_sortable_runs(args, sort_from, grouping);
-        // Remap comment positions using the index mapping
-        let new_comments = comments
-            .iter()
-            .map(|(pos, text)| {
-                let new_pos = if *pos < old_to_new.len() {
-                    old_to_new[*pos]
-                } else {
-                    // Comment after last arg - map to new length
-                    grouped_args.len()
-                };
-                (new_pos, text.clone())
-            })
-            .collect();
-        return (
-            grouped_args,
-            Vec::new(),
-            new_comments,
-            Vec::new(),
-            comment_blank_indices.to_vec(),
-        );
+        let mut annotations = section.annotations.clone();
+        annotations.remap(|position| {
+            old_to_new
+                .get(position)
+                .copied()
+                .unwrap_or(grouped_args.len())
+        });
+        annotations.settle_crossed();
+        return GroupedSection {
+            args: grouped_args,
+            annotations,
+        };
     }
 
     // Split args into segments at blank line boundaries
     let mut segments: Vec<&[String]> = Vec::new();
     let mut start = 0;
 
-    for &bl_pos in blank_lines {
+    for &bl_pos in &blank_lines {
         let end = bl_pos.min(args.len());
         segments.push(&args[start..end]);
         start = end;
     }
     // Final segment, always — even when empty.
     //
-    // Blanks are re-emitted at segment boundaries (`if i > 0`), so
-    // `segments.len()` has to be `blank_lines.len() + 1` or a blank at the end
-    // has no boundary to be written at and is dropped, while
-    // `comment_blank_indices` passes through unchanged. The next parse then read
-    // the survivor as a different kind of entry and laid the section out
-    // differently — no first-pass fixed point.
+    // Blanks are re-emitted at segment boundaries, so `segments.len()` has to be
+    // one more than the number of blanks or a blank at the end has no boundary
+    // to be written at and is dropped. The next parse then read the survivor as
+    // a different kind of entry and laid the section out differently — no
+    // first-pass fixed point.
     segments.push(&args[start.min(args.len())..]);
 
-    // Group each segment independently and track new blank line positions
+    // Group each segment independently, tracking where each argument ends up
     let mut result = Vec::new();
-    let mut new_blank_lines = Vec::new();
-    let mut new_post_comment_blanks = Vec::new();
     let mut global_old_to_new = vec![0; args.len()];
 
     let mut segment_start = 0;
-    for (i, segment) in segments.iter().enumerate() {
-        if i > 0 {
-            let new_bl_pos = result.len();
-            new_blank_lines.push(new_bl_pos);
-            // Check if the original blank_line at this boundary was post-comment
-            if i - 1 < blank_lines.len() && post_comment_blanks.contains(&blank_lines[i - 1]) {
-                new_post_comment_blanks.push(new_bl_pos);
-            }
-        }
+    for segment in &segments {
         let (grouped, segment_old_to_new) =
             group_sortable_runs(segment, sort_from.saturating_sub(segment_start), grouping);
 
-        // Map segment-local indices to global indices
-        for (local_idx, &local_new) in segment_old_to_new.iter().enumerate() {
-            let global_idx = segment_start + local_idx;
-            let global_new = result.len() + local_new;
-            if global_idx < global_old_to_new.len() {
-                global_old_to_new[global_idx] = global_new;
+        for (local_index, &local_new) in segment_old_to_new.iter().enumerate() {
+            let global_index = segment_start + local_index;
+            if global_index < global_old_to_new.len() {
+                global_old_to_new[global_index] = result.len() + local_new;
             }
         }
 
@@ -482,27 +874,24 @@ fn group_source_pairs_preserving_blanks(
         segment_start += segment.len();
     }
 
-    // Remap comment positions using the global index mapping
-    let new_comments = comments
-        .iter()
-        .map(|(pos, text)| {
-            let new_pos = if *pos < global_old_to_new.len() {
-                global_old_to_new[*pos]
-            } else {
-                // Comment after last arg - map to new length
-                result.len()
-            };
-            (new_pos, text.clone())
-        })
-        .collect();
+    // One mapping for comments and blanks alike. A blank sits at a segment
+    // boundary, and `group_sortable_runs` always maps a segment's first argument
+    // to the start of that segment's grouped output — `group_source_pairs` emits
+    // each group at its earliest member's index, and index 0 is its own
+    // earliest — so the boundary and that argument still share a position.
+    let mut annotations = section.annotations.clone();
+    annotations.remap(|position| {
+        global_old_to_new
+            .get(position)
+            .copied()
+            .unwrap_or(result.len())
+    });
+    annotations.settle_crossed();
 
-    (
-        result,
-        new_blank_lines,
-        new_comments,
-        new_post_comment_blanks,
-        comment_blank_indices.to_vec(),
-    )
+    GroupedSection {
+        args: result,
+        annotations,
+    }
 }
 
 /// Check if a command name requires keyword-aware formatting
@@ -580,20 +969,12 @@ pub struct KeywordSection {
     pub keyword: Option<String>,
     /// Arguments belonging to this section
     pub args: Vec<String>,
-    /// Comments with their positions: (position_after_arg_index, comment_text)
-    /// position_after_arg_index = 0 means before first arg, 1 means after first arg, etc.
-    pub comments: Vec<(usize, String)>,
     /// Trailing inline comments: (arg_index, comment_text) - comment on same line after arg
     pub trailing_comments: Vec<(usize, String)>,
-    /// Blank line positions: indices after which a blank line appears
-    pub blank_lines: Vec<usize>,
-    /// Blank line positions where the blank line appears AFTER comments at the same position
-    /// (as opposed to the default where blank lines come before comments)
-    pub post_comment_blanks: Vec<usize>,
-    /// Indices into the `comments` vector where a blank line should appear BEFORE this comment.
-    /// Tracks blank lines between comment groups at the same arg position, which blank_lines
-    /// cannot represent (since blank_lines is position-based and deduplicates).
-    pub comment_blank_indices: Vec<usize>,
+    /// Everything the author wrote between this section's arguments — their
+    /// own-line comments and the blank lines around them — in the order they
+    /// wrote it.
+    pub annotations: Annotations,
     /// The type of the keyword (if known from grammar)
     pub keyword_type: Option<KeywordType>,
     /// `Some(n)` when this section's arguments are an unordered list that
@@ -619,11 +1000,8 @@ pub fn parse_keyword_sections_with_grammar(
     let mut current_section = KeywordSection {
         keyword: None,
         args: Vec::new(),
-        comments: Vec::new(),
         trailing_comments: Vec::new(),
-        blank_lines: Vec::new(),
-        post_comment_blanks: Vec::new(),
-        comment_blank_indices: Vec::new(),
+        annotations: Annotations::default(),
         keyword_type: None,
         // Leading positional run: index 0 is the variable or target name
         sort_from: grammar.is_some_and(|g| g.sortable_positional).then_some(1),
@@ -701,18 +1079,15 @@ pub fn parse_keyword_sections_with_grammar(
                         // holds an argument, so the first disjunct covers it.
                         if !current_section.args.is_empty()
                             || current_section.keyword.is_some()
-                            || !current_section.comments.is_empty()
+                            || current_section.annotations.has_comments()
                         {
                             sections.push(current_section);
                         }
                         current_section = KeywordSection {
                             keyword: Some(text),
                             args: Vec::new(),
-                            comments: Vec::new(),
                             trailing_comments: Vec::new(),
-                            blank_lines: Vec::new(),
-                            post_comment_blanks: Vec::new(),
-                            comment_blank_indices: Vec::new(),
+                            annotations: Annotations::default(),
                             keyword_type: kw_type,
                             sort_from: kw_sort_from,
                             values_on_new_line: false,
@@ -758,11 +1133,8 @@ pub fn parse_keyword_sections_with_grammar(
                             current_section = KeywordSection {
                                 keyword: None,
                                 args: vec![text],
-                                comments: Vec::new(),
                                 trailing_comments: Vec::new(),
-                                blank_lines: Vec::new(),
-                                post_comment_blanks: Vec::new(),
-                                comment_blank_indices: Vec::new(),
+                                annotations: Annotations::default(),
                                 keyword_type: None,
                                 sort_from: overflow_sortable.then_some(0),
                                 values_on_new_line: false,
@@ -775,19 +1147,6 @@ pub fn parse_keyword_sections_with_grammar(
                             {
                                 current_section.values_on_new_line = true;
                             }
-                            // A `comment_blank_indices` entry promises "a blank
-                            // line before the *next* comment at this argument
-                            // position". An argument arriving instead means that
-                            // comment never came, and the entry would otherwise
-                            // go on to name whatever comment lands at that index
-                            // later in the section — where `blank_lines` already
-                            // carries a blank of its own, so both fired and one
-                            // blank line came back as two. Dropping the unkept
-                            // promise is the whole fix.
-                            let comments_so_far = current_section.comments.len();
-                            current_section
-                                .comment_blank_indices
-                                .retain(|index| *index < comments_so_far);
                             // Add as argument to current section
                             current_section.args.push(text);
                         }
@@ -810,7 +1169,7 @@ pub fn parse_keyword_sections_with_grammar(
                     } else {
                         // Own line (leading comment before next arg)
                         let position = current_section.args.len();
-                        current_section.comments.push((position, text));
+                        current_section.annotations.push_comment(position, text);
                     }
                     consecutive_newlines = 0;
                 }
@@ -830,23 +1189,7 @@ pub fn parse_keyword_sections_with_grammar(
                     if consecutive_newlines == 2 {
                         // Blank line detected - record position after last arg
                         let position = current_section.args.len();
-                        if !current_section.blank_lines.contains(&position) {
-                            current_section.blank_lines.push(position);
-                            // Check if comments already exist at this position
-                            // If so, the blank line comes AFTER those comments in the source
-                            if current_section
-                                .comments
-                                .iter()
-                                .any(|(pos, _)| *pos == position)
-                            {
-                                current_section.post_comment_blanks.push(position);
-                            }
-                        } else {
-                            // Already have a blank line at this position -- this is a blank line
-                            // between comment groups. Track which comment index gets a blank before it.
-                            let next_comment_idx = current_section.comments.len();
-                            current_section.comment_blank_indices.push(next_comment_idx);
-                        }
+                        current_section.annotations.push_blank(position);
                     }
                 }
                 // Whitespace doesn't reset newline counter but marks separation
@@ -1152,7 +1495,7 @@ pub fn sort_source_args(section: &mut KeywordSection) {
     // Split into segments by blank lines, but only for the sortable range
     let mut segments: Vec<std::ops::Range<usize>> = Vec::new();
     let mut seg_start = sort_start;
-    for &bl in &section.blank_lines {
+    for bl in section.annotations.blank_positions() {
         if bl > seg_start && bl <= section.args.len() {
             segments.push(seg_start..bl);
             seg_start = bl;
@@ -1172,21 +1515,17 @@ pub fn sort_source_args(section: &mut KeywordSection) {
     // For each segment, build sortable entries (arg + associated comments)
     // then sort and reassemble
     let mut new_args: Vec<String> = Vec::with_capacity(section.args.len());
-    let mut new_comments: Vec<(usize, String)> = Vec::new();
     let mut new_trailing_comments: Vec<(usize, String)> = Vec::new();
+
+    // Which argument ends up at each position. The comments written directly
+    // above an argument follow it; everything else in the gap stays where the
+    // author put it, so this is all the rebuild below needs.
+    let mut origin_of: Vec<usize> = Vec::with_capacity(section.args.len());
 
     // First, preserve args before sort_start (e.g., target name in add_executable)
     for idx in 0..sort_start {
-        let comments_at_pos: Vec<String> = section
-            .comments
-            .iter()
-            .filter(|(pos, _)| *pos == idx)
-            .map(|(_, text)| text.clone())
-            .collect();
-        for comment in comments_at_pos {
-            new_comments.push((new_args.len(), comment));
-        }
         new_args.push(section.args[idx].clone());
+        origin_of.push(idx);
         // Preserve trailing comments for this arg
         for (tc_idx, tc_text) in &section.trailing_comments {
             if *tc_idx == idx {
@@ -1201,21 +1540,13 @@ pub fn sort_source_args(section: &mut KeywordSection) {
         struct SortEntry {
             sort_key: String,
             arg: String,
-            comments: Vec<String>, // comments positioned before this arg
+            origin: usize, // where this argument was, so its comments can follow it
             trailing_comment: Option<String>, // trailing comment on same line as this arg
         }
 
         let mut entries: Vec<SortEntry> = Vec::new();
 
         for idx in seg.clone() {
-            // Collect comments at this position (positioned before this arg)
-            let comments_at_pos: Vec<String> = section
-                .comments
-                .iter()
-                .filter(|(pos, _)| *pos == idx)
-                .map(|(_, text)| text.clone())
-                .collect();
-
             // Collect trailing comment at this arg index
             let trailing_comment = section
                 .trailing_comments
@@ -1239,7 +1570,7 @@ pub fn sort_source_args(section: &mut KeywordSection) {
             entries.push(SortEntry {
                 sort_key,
                 arg: arg.clone(),
-                comments: comments_at_pos,
+                origin: idx,
                 trailing_comment,
             });
         }
@@ -1250,44 +1581,50 @@ pub fn sort_source_args(section: &mut KeywordSection) {
         // Sort entries by sort key (stable sort preserves order of equal keys)
         entries.sort_by(|a, b| a.sort_key.cmp(&b.sort_key));
 
-        // Reassemble into new_args, new_comments, and new_trailing_comments
-        let base = new_args.len();
-        for (i, entry) in entries.iter().enumerate() {
-            let pos = base + i;
-            for comment in &entry.comments {
-                new_comments.push((pos, comment.clone()));
-            }
+        // Reassemble into new_args and new_trailing_comments
+        for entry in &entries {
             new_args.push(entry.arg.clone());
+            origin_of.push(entry.origin);
             if let Some(trailing) = &entry.trailing_comment {
-                new_trailing_comments.push((pos, trailing.clone()));
+                new_trailing_comments.push((new_args.len() - 1, trailing.clone()));
             }
         }
     }
 
-    // Handle trailing comments (comments at position == args.len())
-    for (pos, text) in &section.comments {
-        if *pos == section.args.len() {
-            new_comments.push((new_args.len(), text.clone()));
+    // Rebuild what is written between the arguments, in one pass over the new
+    // order. Each gap is what the author left at that index and still holds —
+    // the blank line that bounds the segment, and anything above it — followed
+    // by the comments belonging to whichever argument landed there.
+    //
+    // The previous rebuild moved *every* comment with its argument and then
+    // asked `post_comment_blanks` where the blank went. When sorting carried the
+    // last comment off a position, that left the array claiming a blank was
+    // "after the comments" at a position with no comments: unobservable at the
+    // time, so the assertion skipped it, and live again as soon as grouping
+    // moved a comment back. The list and the arrays then disagreed about which
+    // came first, and the section rendered differently on the second pass.
+    let mut annotations = Annotations::default();
+    let push = |annotations: &mut Annotations, position: usize, item: &Annotation| match item {
+        Annotation::Comment(text) => annotations.push_comment(position, text.clone()),
+        Annotation::Blank => annotations.push_blank(position),
+    };
+
+    for (position, &origin) in origin_of.iter().enumerate() {
+        for item in section.annotations.pinned_prefix(position) {
+            push(&mut annotations, position, item);
+        }
+        for text in section.annotations.comments_after_last_blank(origin) {
+            annotations.push_comment(position, text.to_string());
         }
     }
 
-    // `comment_blank_indices` indexes into `comments`, and if the comments have
-    // been rebuilt in a *different* order then every entry now names a different
-    // comment than it did. Kept, it put a blank line in front of whichever
-    // comment landed at that index — and the next parse recorded a different
-    // index again, so the section never reached a fixed point. There is no
-    // correct remapping: the entry means "the author left a blank between these
-    // two comment groups", and sorting has dissolved the groups.
-    //
-    // Only when the order actually changed, though. A sort that is the identity
-    // — an already-alphabetical list — rebuilds the same sequence, every index
-    // stays valid, and clearing regardless deleted a blank line the previous
-    // release kept.
-    if section.comments != new_comments {
-        section.comment_blank_indices.clear();
+    // Nothing lands after the last argument, so that gap is untouched.
+    for item in section.annotations.at(new_args.len()) {
+        push(&mut annotations, new_args.len(), item);
     }
+
+    section.annotations = annotations;
     section.args = new_args;
-    section.comments = new_comments;
     section.trailing_comments = new_trailing_comments;
 }
 
@@ -1428,7 +1765,7 @@ pub fn format_keyword_aware_args(
             let keyword_len = keyword_section.keyword.as_ref().unwrap().len();
             let total = prefix_len + pre_args_len + 1 + keyword_len; // +1 for space before keyword
             // Also reject if pre-keyword section has comments (they force line breaks)
-            pre_section.comments.is_empty() && total <= config.max_line_length
+            !pre_section.annotations.has_comments() && total <= config.max_line_length
         } else {
             true // No pre-keyword args — keyword is first thing, always OK to inline
         };
@@ -1451,27 +1788,8 @@ pub fn format_keyword_aware_args(
     let mut is_first_arg = true;
 
     for (i, section) in sections.iter().enumerate() {
-        // Check if previous section had a trailing blank line (blank line between sections)
-        if i > 0 && signals.force_multiline {
-            let prev_section = &sections[i - 1];
-            // Every arm emits a section's own-line comments at
-            // `blank_lines[args.len()]` when it has one there, so that blank has
-            // already been written and this rule wrote it a second time — one
-            // blank line in the source came back as two. The precondition is
-            // "the previous section holds an own-line comment at its own end",
-            // of which a comments-only section is just the `args.is_empty()`
-            // case; guarding on that alone left two of the three spellings
-            // doubling.
-            let previous_already_wrote_it = prev_section
-                .comments
-                .iter()
-                .any(|(position, _)| *position == prev_section.args.len());
-            if !previous_already_wrote_it
-                && prev_section.blank_lines.contains(&prev_section.args.len())
-            {
-                // Extra blank line between sections
-                docs.push(RcDoc::hardline());
-            }
+        if signals.force_multiline && blank_line_between_sections(&sections, i) {
+            docs.push(RcDoc::hardline());
         }
 
         if let Some(keyword) = &section.keyword {
@@ -1485,13 +1803,10 @@ pub fn format_keyword_aware_args(
                     // already reorders that run, so skipping `source_grouping`
                     // made the two passes disagree about a list the allowlist
                     // owns.
-                    let (
-                        flag_args,
-                        flag_blank_lines,
-                        flag_comments,
-                        _flag_post_comment_blanks,
-                        flag_comment_blank_indices,
-                    ) = grouped_section(section, config.source_grouping);
+                    let GroupedSection {
+                        args: flag_args,
+                        annotations: flag_annotations,
+                    } = grouped_section(section, config.source_grouping);
                     // Flags typically have no values, but flag_args may contain
                     // non-keyword arguments that follow before the next keyword
                     // Add separator before the flag keyword
@@ -1552,11 +1867,11 @@ pub fn format_keyword_aware_args(
                     // one — a line comment runs to end of line, and collapsing
                     // put the next keyword inside it.
                     if flag_args.is_empty() {
-                        for (_, comment) in &flag_comments {
-                            docs.push(RcDoc::hardline());
-                            docs.push(RcDoc::text(keyword_indent.clone()));
-                            docs.push(RcDoc::text(comment.clone()));
-                        }
+                        push_valueless_section_comments(
+                            &mut docs,
+                            &flag_annotations,
+                            &keyword_indent,
+                        );
                     }
 
                     // Output any trailing non-keyword arguments in this section
@@ -1564,43 +1879,19 @@ pub fn format_keyword_aware_args(
                         // Use per-line when values were explicitly on new lines,
                         // or when there are comments/blank lines that can't go inline
                         let use_per_line = section.values_on_new_line
-                            || !flag_comments.is_empty()
-                            || !section.trailing_comments.is_empty()
-                            || !flag_blank_lines.is_empty();
+                            || !flag_annotations.is_empty()
+                            || !section.trailing_comments.is_empty();
 
                         if use_per_line {
-                            let mut comment_iter = flag_comments.iter().peekable();
-                            let mut comment_index = 0usize;
                             for (arg_idx, arg) in flag_args.iter().enumerate() {
-                                // Blank line before comments to preserve ordering
-                                if flag_blank_lines.contains(&arg_idx) && signals.force_multiline {
-                                    docs.push(RcDoc::hardline());
-                                }
-                                while let Some((pos, comment)) = comment_iter.peek() {
-                                    if *pos == arg_idx {
-                                        // Blank line between comment groups at same position
-                                        if flag_comment_blank_indices.contains(&comment_index)
-                                            && signals.force_multiline
-                                        {
-                                            docs.push(RcDoc::hardline());
-                                        }
-                                        if signals.force_multiline {
-                                            docs.push(RcDoc::hardline());
-                                            docs.push(RcDoc::text(keyword_indent.clone()));
-                                        } else {
-                                            docs.push(RcDoc::flat_alt(
-                                                RcDoc::hardline()
-                                                    .append(RcDoc::text(keyword_indent.clone())),
-                                                RcDoc::space(),
-                                            ));
-                                        }
-                                        docs.push(RcDoc::text(comment.clone()));
-                                        comment_iter.next();
-                                        comment_index += 1;
-                                    } else {
-                                        break;
-                                    }
-                                }
+                                // What the author wrote before this argument, in their order
+                                push_annotations_before_argument(
+                                    &mut docs,
+                                    &flag_annotations,
+                                    arg_idx,
+                                    &keyword_indent,
+                                    signals.force_multiline,
+                                );
                                 if signals.force_multiline {
                                     docs.push(RcDoc::hardline());
                                     docs.push(RcDoc::text(keyword_indent.clone()));
@@ -1619,33 +1910,15 @@ pub fn format_keyword_aware_args(
                                     }
                                 }
                             }
-                            // Blank line before trailing comments at end of section
-                            if comment_iter.peek().is_some()
-                                && flag_blank_lines.contains(&flag_args.len())
-                                && signals.force_multiline
-                            {
-                                docs.push(RcDoc::hardline());
-                            }
-                            for (_, comment) in comment_iter {
-                                // Blank line between comment groups at same position
-                                if flag_comment_blank_indices.contains(&comment_index)
-                                    && signals.force_multiline
-                                {
-                                    docs.push(RcDoc::hardline());
-                                }
-                                if signals.force_multiline {
-                                    docs.push(RcDoc::hardline());
-                                    docs.push(RcDoc::text(keyword_indent.clone()));
-                                } else {
-                                    docs.push(RcDoc::flat_alt(
-                                        RcDoc::hardline()
-                                            .append(RcDoc::text(keyword_indent.clone())),
-                                        RcDoc::space(),
-                                    ));
-                                }
-                                docs.push(RcDoc::text(comment.clone()));
-                                comment_index += 1;
-                            }
+                            // The comments after the last argument, and the blank line the author
+                            // left around them.
+                            push_end_of_section_comments(
+                                &mut docs,
+                                &flag_annotations,
+                                flag_args.len(),
+                                &keyword_indent,
+                                signals.force_multiline,
+                            );
                         } else {
                             // Values on same line as keyword: flat_alt inherits from outer group
                             for (arg_idx, arg) in flag_args.iter().enumerate() {
@@ -1719,7 +1992,11 @@ pub fn format_keyword_aware_args(
                     for (_, comment) in &section.trailing_comments {
                         docs.push(RcDoc::text(format!(" {}", comment)));
                     }
-                    push_valueless_section_comments(&mut docs, &section.comments, &keyword_indent);
+                    push_valueless_section_comments(
+                        &mut docs,
+                        &section.annotations,
+                        &keyword_indent,
+                    );
                 }
 
                 // PairValue keywords: format as key-value pairs
@@ -1752,19 +2029,18 @@ pub fn format_keyword_aware_args(
                     if section.args.is_empty() {
                         push_valueless_section_comments(
                             &mut docs,
-                            &section.comments,
+                            &section.annotations,
                             &keyword_indent,
                         );
                     }
                     if !section.args.is_empty() {
                         let pairs: Vec<_> = section.args.chunks(2).collect();
                         let use_per_line = section.values_on_new_line
-                            || !section.comments.is_empty()
-                            || !section.trailing_comments.is_empty()
-                            || !section.blank_lines.is_empty();
+                            || !section.annotations.is_empty()
+                            || !section.trailing_comments.is_empty();
 
                         if pairs.len() == 1
-                            && section.comments.is_empty()
+                            && !section.annotations.has_comments()
                             && section.trailing_comments.is_empty()
                         {
                             // Single pair: keep inline with keyword (e.g., PROPERTIES KEY VALUE).
@@ -1783,7 +2059,13 @@ pub fn format_keyword_aware_args(
                             // this branch — `use_per_line` is set by them — and
                             // they were then never emitted, so a `PROPERTIES`
                             // run with comments lost every one of them.
-                            let mut comment_iter = section.comments.iter().peekable();
+                            // Still the array here: this arm keys its comments
+                            // to a *pair*, not to an argument, and it has never
+                            // emitted a blank line at all. Moving it onto the
+                            // ordered list would give it blank lines it does not
+                            // have today, which is a behaviour change and not
+                            // this commit's.
+                            let mut comment_iter = section.annotations.comments().peekable();
                             for (pair_idx, chunk) in pairs.iter().enumerate() {
                                 let key_index = pair_idx * 2;
 
@@ -1794,7 +2076,7 @@ pub fn format_keyword_aware_args(
                                     }
                                     docs.push(RcDoc::hardline());
                                     docs.push(RcDoc::text(value_indent.clone()));
-                                    docs.push(RcDoc::text((*comment).clone()));
+                                    docs.push(RcDoc::text(comment.to_string()));
                                     comment_iter.next();
                                 }
 
@@ -1833,7 +2115,7 @@ pub fn format_keyword_aware_args(
                             for (_, comment) in comment_iter {
                                 docs.push(RcDoc::hardline());
                                 docs.push(RcDoc::text(value_indent.clone()));
-                                docs.push(RcDoc::text(comment.clone()));
+                                docs.push(RcDoc::text(comment.to_string()));
                             }
                         } else {
                             // Auto-layout: flat_alt pairs inherit from outer group
@@ -1862,7 +2144,7 @@ pub fn format_keyword_aware_args(
                 // equivalent shortcut this way; the general path did not.
                 Some(KeywordType::MultiValue)
                     if section.args.len() == 1
-                        && section.comments.is_empty()
+                        && !section.annotations.has_comments()
                         && section.trailing_comments.is_empty() =>
                 {
                     // Add separator before the keyword
@@ -1918,64 +2200,26 @@ pub fn format_keyword_aware_args(
                     if section.args.is_empty() {
                         push_valueless_section_comments(
                             &mut docs,
-                            &section.comments,
+                            &section.annotations,
                             &keyword_indent,
                         );
                     }
                     if !section.args.is_empty() {
-                        let has_annotations = !section.comments.is_empty()
-                            || !section.trailing_comments.is_empty()
-                            || !section.blank_lines.is_empty();
+                        let has_annotations = !section.annotations.is_empty()
+                            || !section.trailing_comments.is_empty();
 
                         if has_annotations {
                             // Path A: per-line with full comment support (same pattern as MultiValue use_per_line)
-                            let mut comment_iter = section.comments.iter().peekable();
-                            let mut comment_index = 0usize;
 
                             for (arg_idx, arg) in section.args.iter().enumerate() {
-                                // Blank line BEFORE comments (unless this is a post-comment blank line)
-                                let is_post_comment =
-                                    section.post_comment_blanks.contains(&arg_idx);
-                                if !is_post_comment
-                                    && section.blank_lines.contains(&arg_idx)
-                                    && signals.force_multiline
-                                {
-                                    docs.push(RcDoc::hardline());
-                                }
-
-                                while let Some((pos, comment)) = comment_iter.peek() {
-                                    if *pos == arg_idx {
-                                        // Blank line between comment groups at same position
-                                        if section.comment_blank_indices.contains(&comment_index)
-                                            && signals.force_multiline
-                                        {
-                                            docs.push(RcDoc::hardline());
-                                        }
-                                        if signals.force_multiline {
-                                            docs.push(RcDoc::hardline());
-                                            docs.push(RcDoc::text(value_indent.clone()));
-                                        } else {
-                                            docs.push(RcDoc::flat_alt(
-                                                RcDoc::hardline()
-                                                    .append(RcDoc::text(value_indent.clone())),
-                                                RcDoc::space(),
-                                            ));
-                                        }
-                                        docs.push(RcDoc::text(comment.clone()));
-                                        comment_iter.next();
-                                        comment_index += 1;
-                                    } else {
-                                        break;
-                                    }
-                                }
-
-                                // Blank line AFTER comments (when comments preceded the blank line in source)
-                                if is_post_comment
-                                    && section.blank_lines.contains(&arg_idx)
-                                    && signals.force_multiline
-                                {
-                                    docs.push(RcDoc::hardline());
-                                }
+                                // What the author wrote before this argument, in their order
+                                push_annotations_before_argument(
+                                    &mut docs,
+                                    &section.annotations,
+                                    arg_idx,
+                                    &value_indent,
+                                    signals.force_multiline,
+                                );
 
                                 if signals.force_multiline {
                                     docs.push(RcDoc::hardline());
@@ -1995,32 +2239,15 @@ pub fn format_keyword_aware_args(
                                 }
                             }
 
-                            // Trailing comments at end of section
-                            if comment_iter.peek().is_some()
-                                && section.blank_lines.contains(&section.args.len())
-                                && signals.force_multiline
-                            {
-                                docs.push(RcDoc::hardline());
-                            }
-                            for (_, comment) in comment_iter {
-                                // Blank line between comment groups at same position
-                                if section.comment_blank_indices.contains(&comment_index)
-                                    && signals.force_multiline
-                                {
-                                    docs.push(RcDoc::hardline());
-                                }
-                                if signals.force_multiline {
-                                    docs.push(RcDoc::hardline());
-                                    docs.push(RcDoc::text(value_indent.clone()));
-                                } else {
-                                    docs.push(RcDoc::flat_alt(
-                                        RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
-                                        RcDoc::space(),
-                                    ));
-                                }
-                                docs.push(RcDoc::text(comment.clone()));
-                                comment_index += 1;
-                            }
+                            // The comments after the last argument, and the blank line the author
+                            // left around them.
+                            push_end_of_section_comments(
+                                &mut docs,
+                                &section.annotations,
+                                section.args.len(),
+                                &value_indent,
+                                signals.force_multiline,
+                            );
                         } else if signals.force_multiline {
                             // Path B: manual bin-packing with width tracking
                             // The pretty printer's group(flat_alt(...)) doesn't break inner groups
@@ -2087,7 +2314,7 @@ pub fn format_keyword_aware_args(
                     if section.args.is_empty() {
                         push_valueless_section_comments(
                             &mut docs,
-                            &section.comments,
+                            &section.annotations,
                             &keyword_indent,
                         );
                     }
@@ -2097,9 +2324,8 @@ pub fn format_keyword_aware_args(
                         // Only apply when: section has sub_keywords, no interleaved comments/blank lines
                         let grouped_collection = if let Some(sub_kws) = sub_keywords {
                             if !sub_kws.is_empty()
-                                && section.comments.is_empty()
+                                && section.annotations.is_empty()
                                 && section.trailing_comments.is_empty()
-                                && section.blank_lines.is_empty()
                                 && section.args.iter().any(|a| sub_kws.contains(a.as_str()))
                             {
                                 Some(group_sub_keyword_args(&section.args, sub_kws))
@@ -2139,69 +2365,28 @@ pub fn format_keyword_aware_args(
                         // Disable grouping only when trailing comments are present (can't merge inline comments)
                         // Leading comments can be remapped to their new positions
                         // Blank lines are preserved as segment boundaries
-                        let (
-                            effective_args,
-                            effective_blank_lines,
-                            effective_comments,
-                            effective_post_comment_blanks,
-                            effective_comment_blank_indices,
-                        ) = grouped_section(section, config.source_grouping);
+                        let GroupedSection {
+                            args: effective_args,
+                            annotations: effective_annotations,
+                        } = grouped_section(section, config.source_grouping);
 
                         // Use per-line when values were explicitly on new lines,
                         // or when there are comments/blank lines that can't go inline
-                        let use_per_line = section.values_on_new_line
-                            || !effective_comments.is_empty()
-                            || !effective_blank_lines.is_empty();
+                        let use_per_line =
+                            section.values_on_new_line || !effective_annotations.is_empty();
 
                         if use_per_line {
                             // Values on separate lines or has comments: keep per-line behavior
-                            let mut comment_iter = effective_comments.iter().peekable();
-                            let mut comment_index = 0usize;
 
                             for (arg_idx, arg) in effective_args.iter().enumerate() {
-                                // Blank line BEFORE comments (unless this is a post-comment blank line)
-                                let is_post_comment =
-                                    effective_post_comment_blanks.contains(&arg_idx);
-                                if !is_post_comment
-                                    && effective_blank_lines.contains(&arg_idx)
-                                    && signals.force_multiline
-                                {
-                                    docs.push(RcDoc::hardline());
-                                }
-
-                                while let Some((pos, comment)) = comment_iter.peek() {
-                                    if *pos == arg_idx {
-                                        // Blank line between comment groups at same position
-                                        if effective_comment_blank_indices.contains(&comment_index)
-                                            && signals.force_multiline
-                                        {
-                                            docs.push(RcDoc::hardline());
-                                        }
-                                        if signals.force_multiline {
-                                            docs.push(RcDoc::hardline());
-                                            docs.push(RcDoc::text(value_indent.clone()));
-                                        } else {
-                                            docs.push(RcDoc::flat_alt(
-                                                RcDoc::hardline()
-                                                    .append(RcDoc::text(value_indent.clone())),
-                                                RcDoc::space(),
-                                            ));
-                                        }
-                                        docs.push(RcDoc::text(comment.clone()));
-                                        comment_iter.next();
-                                        comment_index += 1;
-                                    } else {
-                                        break;
-                                    }
-                                }
-
-                                // Blank line AFTER comments (when comments preceded the blank line in source)
-                                if is_post_comment
-                                    && effective_blank_lines.contains(&arg_idx)
-                                    && signals.force_multiline
-                                {
-                                    docs.push(RcDoc::hardline());
-                                }
+                                // What the author wrote before this argument, in their order
+                                push_annotations_before_argument(
+                                    &mut docs,
+                                    &effective_annotations,
+                                    arg_idx,
+                                    &value_indent,
+                                    signals.force_multiline,
+                                );
 
                                 if signals.force_multiline {
                                     docs.push(RcDoc::hardline());
@@ -2221,32 +2406,15 @@ pub fn format_keyword_aware_args(
                                 }
                             }
 
-                            // Blank line before trailing comments at end of section
-                            if comment_iter.peek().is_some()
-                                && effective_blank_lines.contains(&effective_args.len())
-                                && signals.force_multiline
-                            {
-                                docs.push(RcDoc::hardline());
-                            }
-                            for (_, comment) in comment_iter {
-                                // Blank line between comment groups at same position
-                                if effective_comment_blank_indices.contains(&comment_index)
-                                    && signals.force_multiline
-                                {
-                                    docs.push(RcDoc::hardline());
-                                }
-                                if signals.force_multiline {
-                                    docs.push(RcDoc::hardline());
-                                    docs.push(RcDoc::text(value_indent.clone()));
-                                } else {
-                                    docs.push(RcDoc::flat_alt(
-                                        RcDoc::hardline().append(RcDoc::text(value_indent.clone())),
-                                        RcDoc::space(),
-                                    ));
-                                }
-                                docs.push(RcDoc::text(comment.clone()));
-                                comment_index += 1;
-                            }
+                            // The comments after the last argument, and the blank line the author
+                            // left around them.
+                            push_end_of_section_comments(
+                                &mut docs,
+                                &effective_annotations,
+                                effective_args.len(),
+                                &value_indent,
+                                signals.force_multiline,
+                            );
                         } else {
                             // Values on same line as keyword: flat_alt inherits from outer group
                             for (arg_idx, arg) in effective_args.iter().enumerate() {
@@ -2276,62 +2444,22 @@ pub fn format_keyword_aware_args(
             // Disable grouping only when trailing comments are present (can't merge inline comments)
             // Leading comments can be remapped to their new positions
             // Blank lines are preserved as segment boundaries
-            let (
-                effective_args,
-                effective_blank_lines,
-                effective_comments,
-                effective_post_comment_blanks,
-                effective_comment_blank_indices,
-            ) = grouped_section(section, config.source_grouping);
+            let GroupedSection {
+                args: effective_args,
+                annotations: effective_annotations,
+            } = grouped_section(section, config.source_grouping);
 
             let is_list = effective_args.len() > 1 || force_args_on_new_line;
-            let mut comment_iter = effective_comments.iter().peekable();
-            let mut comment_index = 0usize;
 
             for (arg_idx, arg) in effective_args.iter().enumerate() {
-                // Blank line BEFORE comments (unless this is a post-comment blank line)
-                let is_post_comment = effective_post_comment_blanks.contains(&arg_idx);
-                if !is_post_comment
-                    && effective_blank_lines.contains(&arg_idx)
-                    && signals.force_multiline
-                {
-                    docs.push(RcDoc::hardline());
-                    is_first_arg = false;
-                }
-
-                // Emit comments before this argument
-                while let Some((pos, comment)) = comment_iter.peek() {
-                    if *pos == arg_idx {
-                        // Blank line between comment groups at same position
-                        if effective_comment_blank_indices.contains(&comment_index)
-                            && signals.force_multiline
-                        {
-                            docs.push(RcDoc::hardline());
-                        }
-                        if signals.force_multiline {
-                            docs.push(RcDoc::hardline());
-                            docs.push(RcDoc::text(keyword_indent.clone()));
-                        } else {
-                            docs.push(RcDoc::flat_alt(
-                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
-                                RcDoc::space(),
-                            ));
-                        }
-                        docs.push(RcDoc::text(comment.clone()));
-                        comment_iter.next();
-                        comment_index += 1;
-                        is_first_arg = false;
-                    } else {
-                        break;
-                    }
-                }
-
-                // Blank line AFTER comments (when comments preceded the blank line in source)
-                if is_post_comment
-                    && effective_blank_lines.contains(&arg_idx)
-                    && signals.force_multiline
-                {
-                    docs.push(RcDoc::hardline());
+                // What the author wrote before this argument, in their order
+                if push_annotations_before_argument(
+                    &mut docs,
+                    &effective_annotations,
+                    arg_idx,
+                    &keyword_indent,
+                    signals.force_multiline,
+                ) {
                     is_first_arg = false;
                 }
 
@@ -2371,33 +2499,15 @@ pub fn format_keyword_aware_args(
                 }
             }
 
-            // Blank line before trailing comments at end of section
-            if comment_iter.peek().is_some()
-                && effective_blank_lines.contains(&effective_args.len())
-                && signals.force_multiline
-            {
-                docs.push(RcDoc::hardline());
-            }
-            // Emit trailing comments (after last argument)
-            for (_, comment) in comment_iter {
-                // Blank line between comment groups at same position
-                if effective_comment_blank_indices.contains(&comment_index)
-                    && signals.force_multiline
-                {
-                    docs.push(RcDoc::hardline());
-                }
-                if signals.force_multiline {
-                    docs.push(RcDoc::hardline());
-                    docs.push(RcDoc::text(keyword_indent.clone()));
-                } else {
-                    docs.push(RcDoc::flat_alt(
-                        RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
-                        RcDoc::space(),
-                    ));
-                }
-                docs.push(RcDoc::text(comment.clone()));
-                comment_index += 1;
-            }
+            // The comments after the last argument, and the blank line the author
+            // left around them.
+            push_end_of_section_comments(
+                &mut docs,
+                &effective_annotations,
+                effective_args.len(),
+                &keyword_indent,
+                signals.force_multiline,
+            );
         }
     }
 
@@ -2436,6 +2546,10 @@ fn format_keyword_aware_args_inline_single(
     let mut is_first_arg = true;
 
     for (i, section) in sections.iter().enumerate() {
+        if signals.force_multiline && blank_line_between_sections(sections, i) {
+            docs.push(RcDoc::hardline());
+        }
+
         if let Some(keyword) = &section.keyword {
             // There is exactly one keyword section — emit keyword INLINE with preceding args.
             // Separator: space (flat and broken both use space here)
@@ -2477,12 +2591,15 @@ fn format_keyword_aware_args_inline_single(
             // parser gives a comment written after this keyword's value to *this*
             // section while the run's elements live in the next, so sorting the
             // commented element to the front moved the comment into that slot and
-            // the following pass laid the command out differently. A blank line
-            // still disqualifies it, because the shortcut has nowhere to put one.
-            let is_single_value_with_one_arg = section.keyword_type
-                == Some(KeywordType::SingleValue)
-                && section.args.len() == 1
-                && section.blank_lines.is_empty();
+            // the following pass laid the command out differently.
+            //
+            // A blank line does not disqualify it either, now that
+            // `blank_line_between_sections` writes one left at the end of a
+            // section. While nothing wrote it, the blank demoted the keyword
+            // here and was then dropped, so the next pass put the keyword back
+            // and `--check` rejected what `-i` had written.
+            let is_single_value_with_one_arg =
+                section.keyword_type == Some(KeywordType::SingleValue) && section.args.len() == 1;
 
             let is_pair_value = section.keyword_type == Some(KeywordType::PairValue);
 
@@ -2495,18 +2612,17 @@ fn format_keyword_aware_args_inline_single(
                 for (_, comment) in &section.trailing_comments {
                     docs.push(RcDoc::text(format!(" {}", comment)));
                 }
-                push_valueless_section_comments(&mut docs, &section.comments, keyword_indent);
+                push_valueless_section_comments(&mut docs, &section.annotations, keyword_indent);
             } else if is_pair_value && !section.args.is_empty() {
                 // PairValue keywords (e.g., PROPERTIES): format as key-value pairs
                 // Use keyword_indent (single indent) since the keyword is inlined on the command line
                 let pairs: Vec<_> = section.args.chunks(2).collect();
                 let use_per_line = section.values_on_new_line
-                    || !section.comments.is_empty()
-                    || !section.trailing_comments.is_empty()
-                    || !section.blank_lines.is_empty();
+                    || !section.annotations.is_empty()
+                    || !section.trailing_comments.is_empty();
 
                 if pairs.len() == 1
-                    && section.comments.is_empty()
+                    && !section.annotations.has_comments()
                     && section.trailing_comments.is_empty()
                 {
                     // Single pair: keep inline with keyword. Same guard as the
@@ -2518,9 +2634,9 @@ fn format_keyword_aware_args_inline_single(
                         docs.push(RcDoc::text(pairs[0][1].clone()));
                     }
                 } else if use_per_line || signals.force_multiline {
-                    let mut pair_comments = section.comments.iter().peekable();
+                    let mut pair_comments = section.annotations.comments().peekable();
                     for (pair_idx, chunk) in pairs.iter().enumerate() {
-                        if section.blank_lines.contains(&(pair_idx * 2)) && signals.force_multiline
+                        if section.annotations.has_blank_at(pair_idx * 2) && signals.force_multiline
                         {
                             docs.push(RcDoc::hardline());
                         }
@@ -2533,7 +2649,7 @@ fn format_keyword_aware_args_inline_single(
                             }
                             docs.push(RcDoc::hardline());
                             docs.push(RcDoc::text(keyword_indent.to_string()));
-                            docs.push(RcDoc::text((*comment).clone()));
+                            docs.push(RcDoc::text(comment.to_string()));
                             pair_comments.next();
                         }
                         if signals.force_multiline {
@@ -2562,7 +2678,7 @@ fn format_keyword_aware_args_inline_single(
                     for (_, comment) in pair_comments {
                         docs.push(RcDoc::hardline());
                         docs.push(RcDoc::text(keyword_indent.to_string()));
-                        docs.push(RcDoc::text(comment.clone()));
+                        docs.push(RcDoc::text(comment.to_string()));
                     }
                 } else {
                     for chunk in pairs {
@@ -2578,54 +2694,29 @@ fn format_keyword_aware_args_inline_single(
                     }
                 }
             } else if section.args.is_empty() {
-                push_valueless_section_comments(&mut docs, &section.comments, keyword_indent);
+                push_valueless_section_comments(&mut docs, &section.annotations, keyword_indent);
             } else {
                 // Apply source grouping to keyword section args (e.g., source files after PUBLIC)
-                let (
-                    effective_args,
-                    effective_blank_lines,
-                    effective_comments,
-                    _effective_post_comment_blanks,
-                    effective_comment_blank_indices,
-                ) = grouped_section(section, config.source_grouping);
+                let GroupedSection {
+                    args: effective_args,
+                    annotations: effective_annotations,
+                } = grouped_section(section, config.source_grouping);
 
                 // Values are indented at keyword_indent level (single indent, not double)
                 let use_per_line = section.values_on_new_line
-                    || !effective_comments.is_empty()
-                    || !section.trailing_comments.is_empty()
-                    || !effective_blank_lines.is_empty();
+                    || !effective_annotations.is_empty()
+                    || !section.trailing_comments.is_empty();
 
                 if use_per_line {
-                    let mut comment_iter = effective_comments.iter().peekable();
-                    let mut comment_index = 0usize;
                     for (arg_idx, arg) in effective_args.iter().enumerate() {
-                        if effective_blank_lines.contains(&arg_idx) && signals.force_multiline {
-                            docs.push(RcDoc::hardline());
-                        }
-                        while let Some((pos, comment)) = comment_iter.peek() {
-                            if *pos == arg_idx {
-                                if effective_comment_blank_indices.contains(&comment_index)
-                                    && signals.force_multiline
-                                {
-                                    docs.push(RcDoc::hardline());
-                                }
-                                if signals.force_multiline {
-                                    docs.push(RcDoc::hardline());
-                                    docs.push(RcDoc::text(keyword_indent.to_string()));
-                                } else {
-                                    docs.push(RcDoc::flat_alt(
-                                        RcDoc::hardline()
-                                            .append(RcDoc::text(keyword_indent.to_string())),
-                                        RcDoc::space(),
-                                    ));
-                                }
-                                docs.push(RcDoc::text(comment.clone()));
-                                comment_iter.next();
-                                comment_index += 1;
-                            } else {
-                                break;
-                            }
-                        }
+                        // What the author wrote before this argument, in their order
+                        push_annotations_before_argument(
+                            &mut docs,
+                            &effective_annotations,
+                            arg_idx,
+                            keyword_indent,
+                            signals.force_multiline,
+                        );
                         if signals.force_multiline {
                             docs.push(RcDoc::hardline());
                             docs.push(RcDoc::text(keyword_indent.to_string()));
@@ -2642,30 +2733,15 @@ fn format_keyword_aware_args_inline_single(
                             }
                         }
                     }
-                    if comment_iter.peek().is_some()
-                        && effective_blank_lines.contains(&effective_args.len())
-                        && signals.force_multiline
-                    {
-                        docs.push(RcDoc::hardline());
-                    }
-                    for (_, comment) in comment_iter {
-                        if effective_comment_blank_indices.contains(&comment_index)
-                            && signals.force_multiline
-                        {
-                            docs.push(RcDoc::hardline());
-                        }
-                        if signals.force_multiline {
-                            docs.push(RcDoc::hardline());
-                            docs.push(RcDoc::text(keyword_indent.to_string()));
-                        } else {
-                            docs.push(RcDoc::flat_alt(
-                                RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
-                                RcDoc::space(),
-                            ));
-                        }
-                        docs.push(RcDoc::text(comment.clone()));
-                        comment_index += 1;
-                    }
+                    // The comments after the last argument, and the blank line the author
+                    // left around them.
+                    push_end_of_section_comments(
+                        &mut docs,
+                        &effective_annotations,
+                        effective_args.len(),
+                        keyword_indent,
+                        signals.force_multiline,
+                    );
                 } else {
                     // Flat layout: values go on new lines below keyword (single indent) when broken
                     for (arg_idx, arg) in effective_args.iter().enumerate() {
@@ -2684,58 +2760,22 @@ fn format_keyword_aware_args_inline_single(
             }
         } else {
             // Pre-keyword section: same as the main loop's pre-keyword handling
-            let (
-                effective_args,
-                effective_blank_lines,
-                effective_comments,
-                effective_post_comment_blanks,
-                effective_comment_blank_indices,
-            ) = grouped_section(section, config.source_grouping);
+            let GroupedSection {
+                args: effective_args,
+                annotations: effective_annotations,
+            } = grouped_section(section, config.source_grouping);
 
             let is_list = effective_args.len() > 1;
-            let mut comment_iter = effective_comments.iter().peekable();
-            let mut comment_index = 0usize;
 
             for (arg_idx, arg) in effective_args.iter().enumerate() {
-                let is_post_comment = effective_post_comment_blanks.contains(&arg_idx);
-                if !is_post_comment
-                    && effective_blank_lines.contains(&arg_idx)
-                    && signals.force_multiline
-                {
-                    docs.push(RcDoc::hardline());
-                    is_first_arg = false;
-                }
-
-                while let Some((pos, comment)) = comment_iter.peek() {
-                    if *pos == arg_idx {
-                        if effective_comment_blank_indices.contains(&comment_index)
-                            && signals.force_multiline
-                        {
-                            docs.push(RcDoc::hardline());
-                        }
-                        if signals.force_multiline {
-                            docs.push(RcDoc::hardline());
-                            docs.push(RcDoc::text(keyword_indent.to_string()));
-                        } else {
-                            docs.push(RcDoc::flat_alt(
-                                RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
-                                RcDoc::space(),
-                            ));
-                        }
-                        docs.push(RcDoc::text(comment.clone()));
-                        comment_iter.next();
-                        comment_index += 1;
-                        is_first_arg = false;
-                    } else {
-                        break;
-                    }
-                }
-
-                if is_post_comment
-                    && effective_blank_lines.contains(&arg_idx)
-                    && signals.force_multiline
-                {
-                    docs.push(RcDoc::hardline());
+                // What the author wrote before this argument, in their order
+                if push_annotations_before_argument(
+                    &mut docs,
+                    &effective_annotations,
+                    arg_idx,
+                    keyword_indent,
+                    signals.force_multiline,
+                ) {
                     is_first_arg = false;
                 }
 
@@ -2769,30 +2809,15 @@ fn format_keyword_aware_args_inline_single(
                 }
             }
 
-            if comment_iter.peek().is_some()
-                && effective_blank_lines.contains(&effective_args.len())
-                && signals.force_multiline
-            {
-                docs.push(RcDoc::hardline());
-            }
-            for (_, comment) in comment_iter {
-                if effective_comment_blank_indices.contains(&comment_index)
-                    && signals.force_multiline
-                {
-                    docs.push(RcDoc::hardline());
-                }
-                if signals.force_multiline {
-                    docs.push(RcDoc::hardline());
-                    docs.push(RcDoc::text(keyword_indent.to_string()));
-                } else {
-                    docs.push(RcDoc::flat_alt(
-                        RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
-                        RcDoc::space(),
-                    ));
-                }
-                docs.push(RcDoc::text(comment.clone()));
-                comment_index += 1;
-            }
+            // The comments after the last argument, and the blank line the author
+            // left around them.
+            push_end_of_section_comments(
+                &mut docs,
+                &effective_annotations,
+                effective_args.len(),
+                keyword_indent,
+                signals.force_multiline,
+            );
         }
     }
 
@@ -2869,53 +2894,20 @@ fn format_simple_args(
         // Disable grouping only when trailing comments are present (can't merge inline comments)
         // Leading comments can be remapped to their new positions
         // Blank lines are preserved as segment boundaries
-        let (
-            effective_args,
-            effective_blank_lines,
-            effective_comments,
-            effective_post_comment_blanks,
-            effective_comment_blank_indices,
-        ) = grouped_section(section, config.source_grouping);
-
-        let mut comment_iter = effective_comments.iter().peekable();
-        let mut comment_index = 0usize;
+        let GroupedSection {
+            args: effective_args,
+            annotations: effective_annotations,
+        } = grouped_section(section, config.source_grouping);
 
         for (arg_idx, arg) in effective_args.iter().enumerate() {
-            // Blank line BEFORE comments (unless this is a post-comment blank line)
-            let is_post_comment = effective_post_comment_blanks.contains(&arg_idx);
-            if !is_post_comment && effective_blank_lines.contains(&arg_idx) && force_multiline {
-                docs.push(RcDoc::hardline());
-                is_first_arg = false;
-            }
-
-            // Emit comments before this argument
-            while let Some((pos, comment)) = comment_iter.peek() {
-                if *pos == arg_idx {
-                    // Blank line between comment groups at same position
-                    if effective_comment_blank_indices.contains(&comment_index) && force_multiline {
-                        docs.push(RcDoc::hardline());
-                    }
-                    if force_multiline {
-                        docs.push(RcDoc::hardline());
-                        docs.push(RcDoc::text(inner_indent.clone()));
-                    } else {
-                        docs.push(RcDoc::flat_alt(
-                            RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
-                            RcDoc::space(),
-                        ));
-                    }
-                    docs.push(RcDoc::text(comment.clone()));
-                    comment_iter.next();
-                    comment_index += 1;
-                    is_first_arg = false;
-                } else {
-                    break;
-                }
-            }
-
-            // Blank line AFTER comments (when comments preceded the blank line in source)
-            if is_post_comment && effective_blank_lines.contains(&arg_idx) && force_multiline {
-                docs.push(RcDoc::hardline());
+            // What the author wrote before this argument, in their order
+            if push_annotations_before_argument(
+                &mut docs,
+                &effective_annotations,
+                arg_idx,
+                &inner_indent,
+                force_multiline,
+            ) {
                 is_first_arg = false;
             }
 
@@ -2948,30 +2940,15 @@ fn format_simple_args(
             is_first_arg = false;
         }
 
-        // Blank line before trailing comments at end of section
-        if comment_iter.peek().is_some()
-            && effective_blank_lines.contains(&effective_args.len())
-            && force_multiline
-        {
-            docs.push(RcDoc::hardline());
-        }
-        // Emit trailing comments (after last argument)
-        for (_, comment) in comment_iter {
-            // Blank line between comment groups at same position
-            if effective_comment_blank_indices.contains(&comment_index) && force_multiline {
-                docs.push(RcDoc::hardline());
-            }
-            if force_multiline {
-                docs.push(RcDoc::hardline());
-                docs.push(RcDoc::text(inner_indent.clone()));
-            } else {
-                docs.push(RcDoc::flat_alt(
-                    RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
-                    RcDoc::space(),
-                ));
-            }
-            docs.push(RcDoc::text(comment.clone()));
-            comment_index += 1;
+        // The comments after the last argument, and the blank line the author
+        // left around them.
+        if push_end_of_section_comments(
+            &mut docs,
+            &effective_annotations,
+            effective_args.len(),
+            &inner_indent,
+            force_multiline,
+        ) {
             is_first_arg = false;
         }
     }
@@ -2989,5 +2966,217 @@ fn format_simple_args(
         combined
     } else {
         combined.group()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::formatter::config::SourceGrouping;
+
+    /// A section holding nothing but what the author wrote between its
+    /// arguments, which is now the whole of it.
+    fn section(
+        args: &[&str],
+        annotations: Annotations,
+        sort_from: Option<usize>,
+    ) -> KeywordSection {
+        KeywordSection {
+            keyword: None,
+            args: args.iter().map(|arg| arg.to_string()).collect(),
+            trailing_comments: Vec::new(),
+            annotations,
+            keyword_type: None,
+            sort_from,
+            values_on_new_line: false,
+        }
+    }
+
+    /// The comments a section holds, as `(position, text)`.
+    fn comments_of(annotations: &Annotations) -> Vec<(usize, String)> {
+        annotations
+            .comments()
+            .map(|(position, text)| (position, text.to_string()))
+            .collect()
+    }
+
+    fn comment_at(position: usize, text: &str) -> (usize, Annotation) {
+        (position, Annotation::Comment(text.to_string()))
+    }
+
+    fn list(items: &[(usize, Annotation)]) -> Annotations {
+        let mut annotations = Annotations::default();
+        for (position, item) in items {
+            match item {
+                Annotation::Comment(text) => annotations.push_comment(*position, text.clone()),
+                Annotation::Blank => annotations.push_blank(*position),
+            }
+        }
+        annotations
+    }
+
+    /// Sorting carries a comment along with the argument it sits in front of, so
+    /// the ordered list has to be rebuilt rather than repositioned — two
+    /// comments can swap places, which no position rewrite expresses.
+    #[test]
+    fn sorting_moves_the_ordered_list_with_the_comments() {
+        let mut section = section(
+            &["c.cpp", "b.cpp", "a.cpp"],
+            list(&[comment_at(0, "# about c")]),
+            Some(0),
+        );
+
+        sort_source_args(&mut section);
+
+        assert_eq!(section.args, ["a.cpp", "b.cpp", "c.cpp"]);
+        assert_eq!(
+            comments_of(&section.annotations),
+            [(2, "# about c".to_string())]
+        );
+    }
+
+    /// A blank line holds everything above it in place when sorting moves the
+    /// arguments. Only the note written directly above an argument, with nothing
+    /// between, is about that argument and travels with it.
+    #[test]
+    fn sorting_leaves_what_a_blank_line_holds_where_it_is() {
+        let mut section = section(
+            &["c.cpp", "b.cpp", "a.cpp"],
+            list(&[
+                (0, Annotation::Blank),
+                comment_at(0, "# one"),
+                (0, Annotation::Blank),
+                comment_at(0, "# two"),
+            ]),
+            Some(0),
+        );
+
+        sort_source_args(&mut section);
+
+        assert_eq!(section.args, ["a.cpp", "b.cpp", "c.cpp"]);
+        assert_eq!(
+            comments_of(&section.annotations),
+            [(0, "# one".to_string()), (2, "# two".to_string())],
+            "`# two` was written directly above c.cpp, so it follows it; `# one` \
+             is held above the blank line and stays"
+        );
+        assert_eq!(
+            section.annotations.blank_positions(),
+            [0],
+            "the segment boundary holds"
+        );
+    }
+
+    /// Grouping's mapping runs backwards: `a.h` and `a.cpp` pair onto one line
+    /// at the earlier index, so `a.cpp` lands *before* the `b.cpp` between them,
+    /// and the comment it carries crosses the comment about `b.cpp`. Both
+    /// encodings come out of grouping back in position order, so every arm — all
+    /// of which walk forwards — still meets each comment at its argument.
+    #[test]
+    fn grouping_puts_a_crossed_comment_back_in_front_of_its_argument() {
+        let section = section(
+            &["a.h", "b.cpp", "a.cpp"],
+            list(&[comment_at(1, "# about b"), comment_at(2, "# about a.cpp")]),
+            Some(0),
+        );
+
+        let grouped = grouped_section(&section, SourceGrouping::HeadersFirst);
+
+        assert_eq!(grouped.args, ["a.h a.cpp", "b.cpp"]);
+        assert_eq!(
+            comments_of(&grouped.annotations),
+            [
+                (0, "# about a.cpp".to_string()),
+                (1, "# about b".to_string()),
+            ],
+            "the comment follows the argument grouping moved"
+        );
+    }
+
+    /// A blank line is a segment boundary, and grouping shortens the segments it
+    /// bounds. The boundary and the argument that opens the segment still share
+    /// a position afterwards — which is why one mapping serves both — and a
+    /// blank the author wrote *after* the comments there stays after them.
+    #[test]
+    fn grouping_keeps_a_blank_with_the_argument_that_opens_its_segment() {
+        let section = section(
+            &["x.cpp", "a.h", "b.cpp", "a.cpp"],
+            list(&[comment_at(1, "# next group"), (1, Annotation::Blank)]),
+            Some(0),
+        );
+        assert!(section.annotations.blank_follows_comments_at(1));
+
+        let grouped = grouped_section(&section, SourceGrouping::HeadersFirst);
+
+        assert_eq!(grouped.args, ["x.cpp", "a.h a.cpp", "b.cpp"]);
+        assert_eq!(grouped.annotations.blank_positions(), [1]);
+        assert_eq!(
+            comments_of(&grouped.annotations),
+            [(1, "# next group".to_string())]
+        );
+        assert!(grouped.annotations.blank_follows_comments_at(1));
+    }
+
+    /// A comment written after the last argument has no argument to be mapped
+    /// through, and grouping has just made the list shorter, so it has to be
+    /// pulled back to the new end.
+    #[test]
+    fn grouping_pulls_a_trailing_comment_back_to_the_shortened_end() {
+        let section = section(
+            &["a.h", "a.cpp"],
+            list(&[comment_at(2, "# after them all")]),
+            Some(0),
+        );
+
+        let grouped = grouped_section(&section, SourceGrouping::HeadersFirst);
+
+        assert_eq!(grouped.args, ["a.h a.cpp"]);
+        assert_eq!(
+            comments_of(&grouped.annotations),
+            [(1, "# after them all".to_string())]
+        );
+    }
+
+    /// The same pull-back, on the segmented path — a section with a blank line
+    /// takes a different route through grouping, and the two routes each carry
+    /// their own end-of-list fallback.
+    #[test]
+    fn grouping_pulls_a_trailing_comment_back_across_segments_too() {
+        let section = section(
+            &["x.cpp", "a.h", "b.cpp", "a.cpp"],
+            list(&[(1, Annotation::Blank), comment_at(4, "# after them all")]),
+            Some(0),
+        );
+
+        let grouped = grouped_section(&section, SourceGrouping::HeadersFirst);
+
+        assert_eq!(grouped.args, ["x.cpp", "a.h a.cpp", "b.cpp"]);
+        assert_eq!(grouped.annotations.blank_positions(), [1]);
+        assert_eq!(
+            comments_of(&grouped.annotations),
+            [(3, "# after them all".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_rebuilt_blank_sits_where_it_was_written() {
+        let comments = [(1, "# note".to_string())];
+
+        let before = Annotations::rebuilt_for_permuted_comments(&comments, &[1], |_| false);
+        assert!(!before.blank_follows_comments_at(1));
+
+        let after = Annotations::rebuilt_for_permuted_comments(&comments, &[1], |_| true);
+        assert!(after.blank_follows_comments_at(1));
+
+        for rebuilt in [before, after] {
+            assert_eq!(rebuilt.blank_positions(), [1]);
+            assert_eq!(
+                rebuilt
+                    .at(1)
+                    .filter(|item| matches!(item, Annotation::Blank))
+                    .count(),
+                1
+            );
+        }
     }
 }

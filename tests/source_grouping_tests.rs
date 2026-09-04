@@ -685,3 +685,63 @@ fn test_source_grouping_blank_line_before_comment_preserved() {
         output, pass2
     );
 }
+
+/// Grouping moves `a.cpp` up onto its header's line, and the comment written in
+/// front of it has to move too — past the comment about `b.cpp`, which it was
+/// written after. Before this was fixed the crossed comment fell out at the end
+/// of the section, in front of the closing paren, describing nothing: every
+/// render arm walks the comment list forwards and matches each position as it
+/// reaches it, so a position that had moved backwards was never matched again.
+#[test]
+fn test_source_grouping_keeps_a_comment_with_the_file_it_moves() {
+    let input = "target_sources(t\n\tPRIVATE\n\t\ta.h\n\t\t# about b\n\t\tb.cpp\n\t\t# about a.cpp\n\t\ta.cpp\n)";
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 40,
+        ..Default::default()
+    };
+
+    let output = format_text(input, &config);
+
+    assert!(
+        output.contains("# about a.cpp\n\t\ta.h a.cpp"),
+        "the comment should sit in front of the line its file moved to:\n{}",
+        output
+    );
+    assert!(
+        output.contains("# about b\n\t\tb.cpp"),
+        "the comment it crossed should still sit in front of b.cpp:\n{}",
+        output
+    );
+    assert_eq!(
+        output,
+        format_text(&output, &config),
+        "and the result has to be a fixed point"
+    );
+}
+
+/// A blank line between two notes is not a fence around either of them, and
+/// grouping must not close them up — the case `settle_crossed_comments` returns
+/// early for when nothing crossed.
+///
+/// Without that early return, grouping rebuilds the list from the position-sorted
+/// comment array, which puts both notes together and the blank line below them.
+/// Nothing in the suite noticed, so this is here to notice.
+#[test]
+fn test_source_grouping_keeps_a_blank_line_between_two_notes() {
+    let input = "target_sources(t\n\tPRIVATE\n\t\tz.cpp\n\t\t# the playback side\n\n\t\t# and the mixer it feeds\n\t\ta.cpp\n)";
+    let config = FormatConfig {
+        source_grouping: SourceGrouping::HeadersFirst,
+        max_line_length: 100,
+        ..Default::default()
+    };
+
+    let output = format_text(input, &config);
+
+    assert!(
+        output.contains("# the playback side\n\n\t\t# and the mixer it feeds\n\t\ta.cpp"),
+        "the blank should stay between the two notes:\n{}",
+        output
+    );
+    assert_eq!(output, format_text(&output, &config));
+}

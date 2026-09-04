@@ -240,6 +240,26 @@ fn test_assume_filename_check_mode() {
     );
 }
 
+/// Whether a unified-diff header line names `/tmp/test.cmake`.
+///
+/// `--assume-filename` is given a root-relative path, and how that resolves is
+/// the platform's business: on Unix it stays `/tmp/test.cmake`, while on Windows
+/// a path with no drive resolves against the current one, so the header reads
+/// `a/D:/tmp/test.cmake`. The tool is right either way, so the drive and the
+/// leading slash are both optional here rather than each spelling being listed.
+fn header_names_the_assumed_file(line: &str, prefix: &str) -> bool {
+    let Some(rest) = line.strip_prefix(prefix) else {
+        return false;
+    };
+    let rest = rest.strip_prefix('/').unwrap_or(rest);
+    // Drop a leading drive letter, e.g. the "D:" of "D:/tmp/test.cmake".
+    let rest = match rest.as_bytes() {
+        [drive, b':', ..] if drive.is_ascii_alphabetic() => &rest[2..],
+        _ => rest,
+    };
+    rest.strip_prefix('/').unwrap_or(rest) == "tmp/test.cmake"
+}
+
 #[test]
 fn test_assume_filename_diff_mode() {
     let input = "set(FOO   bar)\n";
@@ -273,12 +293,16 @@ fn test_assume_filename_diff_mode() {
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout_str.contains("--- a/tmp/test.cmake") || stdout_str.contains("--- a//tmp/test.cmake"),
+        stdout_str
+            .lines()
+            .any(|line| header_names_the_assumed_file(line, "--- a/")),
         "Diff should contain the assumed filename in header, got: {}",
         stdout_str
     );
     assert!(
-        stdout_str.contains("+++ b/tmp/test.cmake") || stdout_str.contains("+++ b//tmp/test.cmake"),
+        stdout_str
+            .lines()
+            .any(|line| header_names_the_assumed_file(line, "+++ b/")),
         "Diff should contain the assumed filename in header, got: {}",
         stdout_str
     );
