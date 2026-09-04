@@ -1028,3 +1028,45 @@ fn test_config_grammar_cannot_make_pair_value_sortable() {
         );
     }
 }
+
+#[test]
+fn test_user_grammar_cannot_hijack_a_condition() {
+    // `if` is a language construct, not a command a project defines. A user
+    // grammar naming it used to route conditions to the keyword-aware path,
+    // restoring the one-argument-per-line layout the clause layout exists to
+    // remove — and, with sortable_keywords, letting the reordering passes move
+    // condition operands, which changes what the condition means.
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "if".to_string(),
+        CommandGrammarConfig {
+            multi_value_keywords: vec!["AND".to_string(), "OR".to_string()],
+            sortable_keywords: Some(vec!["AND".to_string()]),
+            ..Default::default()
+        },
+    );
+
+    let config = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        command_grammars,
+        ..Default::default()
+    };
+
+    let input = concat!(
+        "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\" ",
+        "AND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\")\n",
+        "endif()\n"
+    );
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        concat!(
+            "if(NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"BATCH\"\n",
+            "\tAND NOT WICKHOPPER_JUMBO_BUILD_MODE STREQUAL \"GROUP\"\n",
+            ")\n",
+            "endif()\n"
+        ),
+        "a user grammar on `if` should not change how a condition is laid out"
+    );
+}

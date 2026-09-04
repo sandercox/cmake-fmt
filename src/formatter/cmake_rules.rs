@@ -27,6 +27,57 @@ fn is_source_file(name: &str) -> bool {
         .is_some_and(|ext| SOURCE_EXTS.contains(&ext))
 }
 
+/// Every line of `text` with its trailing whitespace removed.
+///
+/// `post_process_rendered_output` strips trailing whitespace from every line of
+/// the finished output, so a token that carries some — a bracket comment or a
+/// quoted argument spanning lines — is written narrower than it was measured.
+/// Both width models then decide against a line the file will not hold, and the
+/// result has no fixed point: the layout breaks, the strip makes the pieces fit,
+/// and the next pass joins them again.
+///
+/// So the bytes are trimmed here, as they enter the doc, and the emitter, the
+/// width model and `pretty` all read one string. `trim_end` is not enough — it
+/// reaches the end of the *token*, while the strip reaches the end of every
+/// *line*, and the whitespace that matters sits before an interior newline.
+pub fn trim_line_ends(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text
+        .split('\n')
+        .any(|line| line.ends_with(' ') || line.ends_with('\t'))
+    {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        out.push_str(line.trim_end());
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// Render a comment the way the emitter writes it after a command.
+///
+/// Anything starting `#[` — a bracket comment, or a line comment the lexer
+/// produced from a non-bracket `#[` — is written verbatim; everything else has
+/// the whitespace after its `#` normalized. The width model has to call this
+/// too: normalizing unconditionally made it measure `# [[X]]` for a `#[[X]]`
+/// that is written as-is, one column wider than the truth, and a line at
+/// exactly the limit was wrapped for ever.
+pub fn render_trailing_comment(comment: &str, style: super::config::CommentStyle) -> String {
+    let rendered = if comment.starts_with("#[") {
+        comment.to_string()
+    } else {
+        normalize_comment_whitespace(comment, style)
+    };
+    // Trimmed here, at the one site all three readers share, so that none of
+    // them measures bytes the file will not contain — see `trim_line_ends`,
+    // which is per line rather than per token because the strip that removes
+    // them is.
+    trim_line_ends(&rendered).into_owned()
+}
+
 /// Normalize whitespace in line comments according to the specified style.
 /// Only affects line comments (not bracket comments).
 /// Multi-hash comments (##, ###, etc.) are always preserved as-is.
