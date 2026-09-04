@@ -35,11 +35,14 @@ jobs:
       # Release is how this project normally runs its tests. Debug is run too
       # because debug_assert! compiles out of release, so an assertion that
       # only fires in a debug build is invisible to a release-only run.
+      # --no-fail-fast: without it cargo stops at the first failing test binary,
+      # so one platform-specific failure hides every later one and each push
+      # reveals only the next.
       - name: Run tests (release)
-        run: cargo test --release
+        run: cargo test --release --no-fail-fast
 
       - name: Run tests (debug)
-        run: cargo test
+        run: cargo test --no-fail-fast
 
   lint:
     name: Format and lint
