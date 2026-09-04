@@ -100,75 +100,120 @@ fn print_style_help() {
     );
     println!();
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "Setting", "Type", "Default", "Values"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "-------", "----", "-------", "------"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "disable_format", "boolean", "false", "true, false — skip formatting entirely"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "indent_width", "integer", "4", "Number of spaces per indent level"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "max_line_length", "integer", "80", "Max line length (0 = unlimited)"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "use_tabs", "boolean", "true", "true, false"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "command_case", "enum", "lowercase", "lowercase, uppercase, preserve"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "user_command_case", "enum", "infer", "lowercase, uppercase, preserve, infer"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "max_blank_lines", "integer", "1", "Maximum consecutive blank lines allowed"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "line_ending", "enum", "auto", "auto, lf, crlf"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "closing_style", "enum", "remove", "preserve, remove, force"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "force_break_keywords", "boolean", "false", "true, false"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
-        "final_newline", "enum", "force", "preserve, remove, force (also accepts true/false)"
+        "  {:<31} {:<15} {:<15} {}",
+        "final_newline", "enum", "preserve", "preserve, remove, force (also accepts true/false)"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "comment_style", "enum", "hash_space", "preserve, hash_space, hash_no_space"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "source_grouping", "enum", "none", "none, headers_first, sources_first"
     );
     println!(
-        "  {:<25} {:<15} {:<15} {}",
+        "  {:<31} {:<15} {:<15} {}",
         "sort_sources", "enum", "none", "none, alphabetical"
+    );
+    println!(
+        "  {:<31} {:<15} {:<15} {}",
+        "space_between_command_parens",
+        "boolean",
+        "false",
+        "true, false — `set( A b )` rather than `set(A b)`"
+    );
+    println!(
+        "  {:<31} {:<15} {:<15} {}",
+        "control_flow_space_before_paren",
+        "boolean",
+        "false",
+        "true, false — `if (A)` rather than `if(A)`"
+    );
+    println!(
+        "  {:<31} {:<15} {:<15} {}",
+        "indent_closing_paren",
+        "boolean",
+        "false",
+        "true, false — indent a `)` that sits on its own line"
+    );
+    println!(
+        "  {:<31} {:<15} {:<15} {}",
+        "collapse_empty_flags",
+        "boolean",
+        "true",
+        "true, false — keep a no-argument flag on the previous line"
+    );
+    println!(
+        "  {:<31} {:<15} {:<15} {}",
+        "inline_single_keyword",
+        "boolean",
+        "false",
+        "true, false — keep a lone keyword on the opening line"
     );
     println!();
     println!("CLI usage:  cmake-fmt --style \"indent_width=4,max_line_length=120\" <file>");
     println!();
     println!("Config file only (not available via --style):");
+    // Same column widths as the table above, so the two blocks line up
     println!(
-        "  command_grammars        map            {{}}              Custom command grammar definitions"
+        "  {:<31} {:<15} {:<15} {}",
+        "command_grammars", "map", "{}", "Custom command grammar definitions"
+    );
+    println!(
+        "  {:<31} {:<15} {:<15} {}",
+        "grammar_files", "list", "[]", "Grammar files to import"
+    );
+    println!(
+        "  {:<31} {:<15} {:<15} {}",
+        "root", "boolean", "false", "Stop searching for config above this directory"
     );
     println!();
     println!("Example .cmake-fmt.toml:");
@@ -196,6 +241,8 @@ fn print_grammar_help() {
     println!("        SOURCES: MultiValue");
     println!("        COMMAND: BinPack");
     println!("        PROPERTIES: PairValue");
+    println!("      sortable_keywords: [SOURCES]");
+    println!("      sortable_positional: false");
     println!();
     println!("Keyword types:");
     println!();
@@ -222,9 +269,35 @@ fn print_grammar_help() {
         "PairValue", "Consumes alternating key/value pairs (e.g., PROPERTIES CXX_STANDARD 17)"
     );
     println!();
+    println!("Reordering:");
+    println!("  sort_sources and source_grouping only reorder keywords listed in");
+    println!("  'sortable_keywords', plus the keyword-less arguments when");
+    println!("  'sortable_positional: true'. That reaches two runs: the leading");
+    println!("  one, whose first argument is pinned because it names the list or");
+    println!("  the target, and the run overflowing a leading single-value");
+    println!("  keyword, with nothing pinned because the keyword consumed the");
+    println!("  name — which is what sorts list(APPEND SRCS ...), and applies to");
+    println!("  your own grammar too. Do not set it on a command whose tail after");
+    println!("  such a keyword is order-significant.");
+    println!("  Argument order usually carries meaning, so nothing is sortable");
+    println!("  until something says it is.");
+    println!("  In a grammar file that is the whole rule: a keyword is sortable");
+    println!("  only if it is listed, and there is no fallback. A .cmake-fmt");
+    println!("  config entry has one — omitting 'sortable_keywords' falls back to");
+    println!("  keywords named SOURCES, SRCS or FILES, and writing it as an empty");
+    println!("  list says nothing in that command is sortable.");
+    println!("  BinPack and PairValue keywords are never reordered, and a");
+    println!("  positional run additionally requires every value to look like a");
+    println!("  source file, so flag and library lists are left alone.");
+    println!();
     println!("Multi-mode commands:");
+    println!("  NOT YET SUPPORTED ON IMPORT. --export-all-grammar writes these entries,");
+    println!("  and --grammar-file skips every one of them with a warning, so the export");
+    println!("  does not round-trip. The shape is documented because that is what the");
+    println!("  export writes:");
+    println!();
     println!("  For commands like install() that have different keyword sets per sub-command,");
-    println!("  add a 'mode' field to each grammar entry:");
+    println!("  a 'mode' field distinguishes the entries:");
     println!();
     println!("    - command: install");
     println!("      mode: TARGETS");

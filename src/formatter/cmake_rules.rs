@@ -231,26 +231,184 @@ pub fn group_source_pairs(
     (result, old_to_new)
 }
 
-/// Apply source grouping while preserving blank line boundaries.
-/// Groups files within segments (between blank lines) independently,
-/// then adjusts blank line positions and comment positions for the shorter grouped segments.
-#[allow(clippy::type_complexity)]
-fn group_source_pairs_preserving_blanks(
-    args: &[String],
-    blank_lines: &[usize],
-    comments: &[(usize, String)],
-    post_comment_blanks: &[usize],
-    comment_blank_indices: &[usize],
+/// A section's arguments as they should be emitted, grouped when
+/// `source_grouping` is on and the section's own allowlist entry permits it.
+///
+/// Every place that renders a section's arguments goes through this. Five copies
+/// of the decision meant the `Flag` arm — which carries the positional run after
+/// a flag, as in `add_library(l STATIC a.cpp a.h)` — never grouped at all, so
+/// the two reordering passes disagreed about a list the allowlist owns; and
+/// three of the five copies had no test.
+fn grouped_section(
+    section: &KeywordSection,
     grouping: super::config::SourceGrouping,
-) -> (
+) -> GroupedSection {
+    if grouping != super::config::SourceGrouping::None && section.trailing_comments.is_empty() {
+        group_source_pairs_preserving_blanks(
+            &section.args,
+            section.sort_from,
+            &section.blank_lines,
+            &section.comments,
+            &section.post_comment_blanks,
+            &section.comment_blank_indices,
+            grouping,
+        )
+    } else {
+        (
+            section.args.clone(),
+            section.blank_lines.clone(),
+            section.comments.clone(),
+            section.post_comment_blanks.clone(),
+            section.comment_blank_indices.clone(),
+        )
+    }
+}
+
+/// Whether the section before `index` has already put a comment on its line.
+///
+/// A line comment runs to the end of its line, so nothing may follow that
+/// section on the same line. Every separator that collapses a keyword onto the
+/// previous line has to ask this first: collapsing regardless put the keyword
+/// *inside* the comment — `# note QUIET` — and the keyword was gone from the
+/// file, permanently, at a stable fixed point and exit 0.
+///
+/// Three arms have made that same mistake in three consecutive rounds, each time
+/// one arm over from the last fix, so the question lives in one place and every
+/// separator consults it.
+fn previous_section_ended_in_a_comment(sections: &[KeywordSection], index: usize) -> bool {
+    index
+        .checked_sub(1)
+        .and_then(|previous| sections.get(previous))
+        .is_some_and(|previous| {
+            !previous.comments.is_empty() || !previous.trailing_comments.is_empty()
+        })
+}
+
+/// Emit the comments of a keyword section that has no values.
+///
+/// Every arm that renders a section used to guard its comment machinery on the
+/// section having arguments, so a comment attached to a keyword with no values
+/// had nowhere to go and was deleted outright — `target_sources(t\n\tPRIVATE # note)`
+/// lost `# note`, and so did the `PairValue`, `BinPack` and inline equivalents.
+///
+/// They are always own-line comments: the section parser only records a trailing
+/// comment for a section that already holds an argument, so a comment written on
+/// the same line as a valueless keyword arrives at position 0 of `comments`.
+///
+/// At `keyword_indent`, not `value_indent`: there are no values for the comment
+/// to sit under, and the comment belongs to the keyword. Three of the five arms
+/// used the deeper level, so `find_package(Foo REQUIRED # n)` put its comment one
+/// tab in and `target_sources(t PRIVATE # n)` put an identical construct two.
+/// Whether this section's keyword is emitted on the opening line, beside the
+/// command name — `list(APPEND …)`, `define_property(TEST …)`.
+///
+/// Only a multi-mode command's first section qualifies, and not when a comment
+/// section precedes it: a line comment runs to the end of its line, so inlining
+/// put the mode keyword *inside* the comment.
+///
+/// Asked here rather than in each arm because "one arm over from the last fix"
+/// has been the shape of four consecutive defects in this function, and the two
+/// questions already hoisted — `previous_section_ended_in_a_comment` and the
+/// comment emission — are the two that stopped recurring. Note four of the six
+/// arms still never ask this one, which is why `file(CHMOD v)` breaks to its own
+/// line; making them ask is a behaviour change rather than a fix, so it is not
+/// done here.
+fn keyword_stays_on_the_opening_line(
+    sections: &[KeywordSection],
+    index: usize,
+    first_keyword_inline: bool,
+) -> bool {
+    first_keyword_inline && !previous_section_ended_in_a_comment(sections, index)
+}
+
+/// Whether this `SingleValue` section is grouped onto the line of the valueless
+/// `Flag` that opened a multi-mode command — the `PROPERTY name` of
+/// `define_property(TEST PROPERTY name)`.
+///
+/// Section index 1 only: anywhere later this is an ordinary keyword.
+fn groups_with_the_leading_flag(
+    sections: &[KeywordSection],
+    index: usize,
+    first_keyword_inline: bool,
+) -> bool {
+    first_keyword_inline
+        && index == 1
+        && matches!(
+            sections.first(),
+            Some(first) if first.keyword_type == Some(KeywordType::Flag) && first.args.is_empty()
+        )
+        && !previous_section_ended_in_a_comment(sections, index)
+}
+
+fn push_valueless_section_comments(
+    docs: &mut Vec<RcDoc<'static, ()>>,
+    comments: &[(usize, String)],
+    indent: &str,
+) {
+    for (_, comment) in comments {
+        docs.push(RcDoc::hardline());
+        docs.push(RcDoc::text(indent.to_string()));
+        docs.push(RcDoc::text(comment.clone()));
+    }
+}
+
+/// Group only the runs the sorting pass is allowed to permute: from `sort_from`
+/// onward, and never across a barrier.
+///
+/// `source_grouping` reorders on its own — it hoists a later header to its
+/// pair's index whether or not `sort_sources` is on — so without this it moved a
+/// file across a `${...}` that `sort_source_args` refuses to cross, and past the
+/// target name of an `add_library`. `set(SRCS b.cpp ${GENERATED} ${OTHER} b.h)`
+/// became `set(SRCS b.h b.cpp ${GENERATED} ${OTHER})`, which is a reorder of a
+/// list whose contents nobody can read.
+fn group_sortable_runs(
+    args: &[String],
+    sort_from: usize,
+    grouping: super::config::SourceGrouping,
+) -> (Vec<String>, Vec<usize>) {
+    // A section with no sortable range pins everything, so `min` here is what
+    // makes `sort_from = usize::MAX` mean "group nothing"
+    let pinned = sort_from.min(args.len());
+    let mut out: Vec<String> = args[..pinned].to_vec();
+    let mut old_to_new: Vec<usize> = (0..pinned).collect();
+
+    for run in split_at_barriers(args, pinned..args.len()) {
+        let base = out.len();
+        let (grouped, local) = group_source_pairs(&args[run.clone()], grouping);
+        out.extend(grouped);
+        old_to_new.extend(local.into_iter().map(|new| base + new));
+    }
+
+    (out, old_to_new)
+}
+
+/// A section after grouping: the arguments, the blank-line positions, the
+/// comments with their new positions, the post-comment blanks, and the indices
+/// of comments that carry a blank line.
+type GroupedSection = (
     Vec<String>,
     Vec<usize>,
     Vec<(usize, String)>,
     Vec<usize>,
     Vec<usize>,
-) {
+);
+
+/// Group within each blank-line segment independently, adjusting the blank-line
+/// and comment positions to the shorter grouped segments.
+fn group_source_pairs_preserving_blanks(
+    args: &[String],
+    sort_from: Option<usize>,
+    blank_lines: &[usize],
+    comments: &[(usize, String)],
+    post_comment_blanks: &[usize],
+    comment_blank_indices: &[usize],
+    grouping: super::config::SourceGrouping,
+) -> GroupedSection {
+    // A section with no sortable run groups nothing, so `None` pins everything
+    let sort_from = sort_from.unwrap_or(usize::MAX);
+
     if blank_lines.is_empty() {
-        let (grouped_args, old_to_new) = group_source_pairs(args, grouping);
+        let (grouped_args, old_to_new) = group_sortable_runs(args, sort_from, grouping);
         // Remap comment positions using the index mapping
         let new_comments = comments
             .iter()
@@ -282,10 +440,15 @@ fn group_source_pairs_preserving_blanks(
         segments.push(&args[start..end]);
         start = end;
     }
-    // Final segment
-    if start < args.len() {
-        segments.push(&args[start..]);
-    }
+    // Final segment, always — even when empty.
+    //
+    // Blanks are re-emitted at segment boundaries (`if i > 0`), so
+    // `segments.len()` has to be `blank_lines.len() + 1` or a blank at the end
+    // has no boundary to be written at and is dropped, while
+    // `comment_blank_indices` passes through unchanged. The next parse then read
+    // the survivor as a different kind of entry and laid the section out
+    // differently — no first-pass fixed point.
+    segments.push(&args[start.min(args.len())..]);
 
     // Group each segment independently and track new blank line positions
     let mut result = Vec::new();
@@ -303,7 +466,8 @@ fn group_source_pairs_preserving_blanks(
                 new_post_comment_blanks.push(new_bl_pos);
             }
         }
-        let (grouped, segment_old_to_new) = group_source_pairs(segment, grouping);
+        let (grouped, segment_old_to_new) =
+            group_sortable_runs(segment, sort_from.saturating_sub(segment_start), grouping);
 
         // Map segment-local indices to global indices
         for (local_idx, &local_new) in segment_old_to_new.iter().enumerate() {
@@ -432,6 +596,14 @@ pub struct KeywordSection {
     pub comment_blank_indices: Vec<usize>,
     /// The type of the keyword (if known from grammar)
     pub keyword_type: Option<KeywordType>,
+    /// `Some(n)` when this section's arguments are an unordered list that
+    /// `sort_sources` and `source_grouping` may reorder, starting at index `n`.
+    /// `None` means the order is meaningful and must be left alone.
+    ///
+    /// Decided by the grammar while sections are parsed — see
+    /// [`CommandGrammar::sortable_keywords`] and
+    /// [`CommandGrammar::sortable_positional`].
+    pub sort_from: Option<usize>,
     /// Whether a newline appeared between the keyword and its first value
     /// (i.e., values were written on separate lines from the keyword)
     pub values_on_new_line: bool,
@@ -453,12 +625,15 @@ pub fn parse_keyword_sections_with_grammar(
         post_comment_blanks: Vec::new(),
         comment_blank_indices: Vec::new(),
         keyword_type: None,
+        // Leading positional run: index 0 is the variable or target name
+        sort_from: grammar.is_some_and(|g| g.sortable_positional).then_some(1),
         values_on_new_line: false,
     };
 
     let mut consecutive_newlines = 0;
     let mut saw_separator = true; // tracks whitespace for adjacent token merging
-    let mut saw_newline_since_keyword = false; // tracks newlines between keyword and first value
+    // tracks newlines between a keyword and its first value
+    let mut saw_newline_since_keyword = false;
 
     // Iterate through all tokens in the argument list
     for child in arg_list.syntax().children_with_tokens() {
@@ -507,9 +682,27 @@ pub fn parse_keyword_sections_with_grammar(
                     if is_kw && !consumed_as_sub_keyword {
                         // Get the keyword type from grammar if available
                         let kw_type = grammar.and_then(|g| g.keyword_type(&text));
+                        // Whether this keyword's values are an unordered list
+                        let kw_sort_from = grammar
+                            .is_some_and(|g| g.is_sortable_keyword(&text))
+                            .then_some(0);
 
-                        // Start a new section
-                        if !current_section.args.is_empty() || current_section.keyword.is_some() {
+                        // Start a new section.
+                        //
+                        // A leading section holding *only* comments is pushed
+                        // too. Dropping it deleted every comment written before
+                        // a command's first argument when that argument is a
+                        // keyword — `install(\n\t# ship the headers\n\tFILES a.h\n\tDESTINATION inc)`
+                        // lost the comment, at a stable fixed point and exit 0.
+                        // The condition was "has anything worth emitting", and
+                        // comments are worth emitting.
+                        // `trailing_comments` is deliberately not asked: the
+                        // parser only records one for a section that already
+                        // holds an argument, so the first disjunct covers it.
+                        if !current_section.args.is_empty()
+                            || current_section.keyword.is_some()
+                            || !current_section.comments.is_empty()
+                        {
                             sections.push(current_section);
                         }
                         current_section = KeywordSection {
@@ -521,6 +714,7 @@ pub fn parse_keyword_sections_with_grammar(
                             post_comment_blanks: Vec::new(),
                             comment_blank_indices: Vec::new(),
                             keyword_type: kw_type,
+                            sort_from: kw_sort_from,
                             values_on_new_line: false,
                         };
                         saw_separator = true;
@@ -540,6 +734,26 @@ pub fn parse_keyword_sections_with_grammar(
                                 && !current_section.args.is_empty();
 
                         if at_capacity {
+                            // A leading mode keyword that consumed the list
+                            // variable opens an unordered run, as in
+                            // `list(APPEND var a b)`. Only the command's first
+                            // section qualifies: anywhere later, this is a stray
+                            // positional argument rather than the command's
+                            // argument list.
+                            //
+                            // "Nothing but comments so far", not "nothing so
+                            // far": a leading section holding only comments is
+                            // pushed too, so `sections.is_empty()` stopped
+                            // meaning what it said the moment that changed — and
+                            // a comment before the mode keyword switched this
+                            // branch's own feature off, silently, at exit 0.
+                            // `list(# note / APPEND V z.cpp a.cpp)` stopped
+                            // sorting, and so did every `sortable_positional`
+                            // grammar.
+                            let overflow_sortable = sections
+                                .iter()
+                                .all(|s| s.keyword.is_none() && s.args.is_empty())
+                                && grammar.is_some_and(|g| g.sortable_positional);
                             sections.push(current_section);
                             current_section = KeywordSection {
                                 keyword: None,
@@ -550,6 +764,7 @@ pub fn parse_keyword_sections_with_grammar(
                                 post_comment_blanks: Vec::new(),
                                 comment_blank_indices: Vec::new(),
                                 keyword_type: None,
+                                sort_from: overflow_sortable.then_some(0),
                                 values_on_new_line: false,
                             };
                         } else {
@@ -560,6 +775,19 @@ pub fn parse_keyword_sections_with_grammar(
                             {
                                 current_section.values_on_new_line = true;
                             }
+                            // A `comment_blank_indices` entry promises "a blank
+                            // line before the *next* comment at this argument
+                            // position". An argument arriving instead means that
+                            // comment never came, and the entry would otherwise
+                            // go on to name whatever comment lands at that index
+                            // later in the section — where `blank_lines` already
+                            // carries a blank of its own, so both fired and one
+                            // blank line came back as two. Dropping the unkept
+                            // promise is the whole fix.
+                            let comments_so_far = current_section.comments.len();
+                            current_section
+                                .comment_blank_indices
+                                .retain(|index| *index < comments_so_far);
                             // Add as argument to current section
                             current_section.args.push(text);
                         }
@@ -591,7 +819,15 @@ pub fn parse_keyword_sections_with_grammar(
                     saw_separator = true;
                     saw_newline_since_keyword = true;
                     consecutive_newlines += 1;
-                    if consecutive_newlines >= 2 {
+                    // Exactly 2, not 2-or-more. The third newline of one
+                    // blank run took the `else` branch below and recorded "a
+                    // blank line before comment index 0" for a comment that sits
+                    // at a later argument position — so the next pass wrote a
+                    // blank in front of that comment, and the output had no
+                    // first-pass fixed point. A blank line *between comment
+                    // groups* still reaches the `else`: the counter resets at
+                    // the comment and climbs back to exactly 2.
+                    if consecutive_newlines == 2 {
                         // Blank line detected - record position after last arg
                         let position = current_section.args.len();
                         if !current_section.blank_lines.contains(&position) {
@@ -625,12 +861,215 @@ pub fn parse_keyword_sections_with_grammar(
         }
     }
 
-    // Push the last section if it has content
+    // Push the last section if it has content.
+    //
+    // Deliberately *not* the same question the mid-loop push asks, and the
+    // asymmetry is not an oversight. Adding `|| !comments.is_empty()` here would
+    // keep the comments of an argument list that holds nothing else — but a line
+    // comment runs to the end of its line, so in `source_group(# why)` the
+    // comment token already contains the command's closing paren. Emitting it on
+    // its own line puts that paren inside the comment and the renderer writes a
+    // second one, inventing a character. Guarding on "a newline followed the
+    // comment" fixes the plain `f(# why)` spelling and not the grammar-aware
+    // one, so the whole shape stays as the previous release left it: the
+    // comments of an argument list holding nothing else are dropped.
+    //
+    // That is a real bug, it is older than this branch, and it is not reached by
+    // any keyword this branch adds — an unknown command loses such a comment
+    // too. Fixing it means teaching the emitter that a comment can own the
+    // closing paren, which is where `render_nested_group` had to go for the same
+    // reason.
     if !current_section.args.is_empty() || current_section.keyword.is_some() {
         sections.push(current_section);
     }
 
+    // `add_library`/`add_executable` name a target in their first positional,
+    // not the variable that governs the list
+    let first_positional_governs = owning_command_name(arg_list)
+        .map(|name| !matches!(name.as_str(), "add_library" | "add_executable"))
+        .unwrap_or(true);
+    unmark_unsortable_positional_runs(&mut sections, first_positional_governs);
+
     sections
+}
+
+/// Variables whose element order is a search precedence, not a set.
+///
+/// `list(APPEND CMAKE_MODULE_PATH cmake/overrides cmake/defaults)` resolves
+/// first match wins, so sorting it silently picks a different module. Only ever
+/// disables reordering, so a false positive costs a little tidiness and a false
+/// negative costs correctness.
+fn is_search_path_variable(name: &str) -> bool {
+    // Compared case-insensitively: CMake variable names are case-sensitive, and
+    // project-local lists are conventionally lowercase (`warning_flags`), so a
+    // byte comparison would miss most of them. Unquoted first, as every sibling
+    // predicate does — `"CMAKE_MODULE_PATH"` is as ordinary a spelling as the
+    // bare one, and only the `FLAGS` substring test survived the quotes.
+    let name = name.trim_matches('"').to_ascii_uppercase();
+
+    const EXACT: &[&str] = &[
+        "CMAKE_MODULE_PATH",
+        "CMAKE_PREFIX_PATH",
+        "CMAKE_FIND_ROOT_PATH",
+        "CMAKE_INCLUDE_PATH",
+        "CMAKE_LIBRARY_PATH",
+        "CMAKE_PROGRAM_PATH",
+    ];
+    const SUFFIXES: &[&str] = &[
+        "_PATH",
+        "_PATHS",
+        "_DIRS",
+        "_DIRECTORIES",
+        "_OPTIONS",
+        // Argument lists feeding a COMMAND: `list(APPEND ARGS -o out.png)` then
+        // `add_custom_command(COMMAND tool ${ARGS})` is an argv one level of
+        // indirection away
+        "_ARGS",
+        "_ARGUMENTS",
+        // Static archive link order is significant
+        "_LIBS",
+        "_LIBRARIES",
+        // Glob/regex lists are evaluated in order, and that order decides the
+        // order of what they match — see OCV_GLOB_PATTERNS in the OpenCV corpus
+        "_PATTERNS",
+    ];
+
+    if EXACT.contains(&name.as_str()) || SUFFIXES.iter().any(|suffix| name.ends_with(suffix)) {
+        return true;
+    }
+
+    // Compiler and linker flag lists, where the last flag usually wins.
+    // `contains` rather than `ends_with`, because the common spelling is
+    // `CMAKE_CXX_FLAGS_RELEASE` / `CMAKE_EXE_LINKER_FLAGS_DEBUG`, and because
+    // pkg-config names are `GTK_CFLAGS` / `MY_LDFLAGS` with no underscore.
+    name.contains("FLAGS")
+}
+
+/// True for a value that may be reordered inside a positional run.
+///
+/// A keyword names what its values are, so a keyword section trusts the grammar
+/// alone. A positional run has no such label — `set(VAR …)` holds sources in one
+/// project and compiler flags in the next — so its values have to look like
+/// source files before anything moves. This sits behind the grammar allowlist
+/// and only ever narrows it, so it cannot reopen the `CACHE`, `FILES_MATCHING`
+/// or `file(RENAME)` cases: the first two are keyword sections, and `file` is a
+/// recognised multi-mode command whose `RENAME` mode opts nothing in.
+fn is_sortable_positional_value(arg: &str) -> bool {
+    // Unquote first: a quoted flag is still a flag, and `"-I/usr/inc/a.h"`
+    // would otherwise pass the prefix test and then look like a header
+    let name = arg.trim_matches('"');
+
+    // Flags and options: -Wall, --input, /O2, /wd4100, -I/usr/include. This
+    // also rejects absolute POSIX paths, deliberately: protecting an MSVC flag
+    // list is worth more than sorting a list of literal /usr/src/… paths.
+    if name.starts_with('-') || name.starts_with('/') {
+        return false;
+    }
+    // Definitions and assignments: -DVERSION=1.0, A=1
+    if name.contains('=') {
+        return false;
+    }
+
+    let Some(extension) = name.rsplit('.').next().filter(|ext| *ext != name) else {
+        // No extension: a bare word like README or a target name. Sorting those
+        // is fine where a keyword vouches for them, but not here.
+        return false;
+    };
+
+    // A version number is not a file: `set(PYTHON_VERSIONS 3.9 3.12)` reads as
+    // extension "9", and version lists are usually precedence lists.
+    if extension.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+
+    // Libraries, where link order decides symbol resolution
+    const LINKABLE_EXTS: &[&str] = &["a", "so", "dylib", "lib", "dll", "o", "obj"];
+    !LINKABLE_EXTS.contains(&extension.to_ascii_lowercase().as_str())
+}
+
+/// The command this argument list belongs to, when the tree above it says so.
+///
+/// Whether the leading positional is a variable or a target name is a property
+/// of the command, and the section parser is otherwise given only the grammar,
+/// which does not carry it.
+fn owning_command_name(arg_list: &ArgumentList) -> Option<String> {
+    let invocation = arg_list.syntax().parent()?;
+    if invocation.kind() != SyntaxKind::COMMAND_INVOCATION {
+        return None;
+    }
+    invocation
+        .children_with_tokens()
+        .filter_map(|child| child.into_token())
+        .find(|token| token.kind() == SyntaxKind::COMMAND_NAME)
+        .map(|token| token.text().to_lowercase())
+}
+
+/// Clear `sort_from` on positional runs that must not be reordered after all.
+///
+/// A positional run is opted in by the command's grammar, which cannot know what
+/// the list actually holds. Two things disqualify one:
+///
+/// - its governing variable names a search path, flag list or argv — the name is
+///   the run's own first argument (`set(VAR …)`) or the value of the preceding
+///   single-value mode keyword (`list(APPEND VAR …)`);
+/// - any of its values does not look like a source file.
+///
+/// `first_positional_governs` says whether the leading run's own first argument
+/// is that variable. It is not for `add_library`/`add_executable`, where it
+/// names a target: reading a target name as a variable name stopped
+/// `add_library(my_libs z.cpp a.cpp)` sorting, because the name ends in `_LIBS`.
+fn unmark_unsortable_positional_runs(
+    sections: &mut [KeywordSection],
+    first_positional_governs: bool,
+) {
+    for idx in 0..sections.len() {
+        let Some(sort_from) = sections[idx].sort_from else {
+            continue;
+        };
+        if sections[idx].keyword.is_some() {
+            continue;
+        }
+
+        // At index 0 the first argument names the thing being defined — a
+        // variable for `set`, but a *target* for add_library/add_executable.
+        //
+        // Which of the two is still decided by builtin command name, inside a
+        // path that is otherwise grammar-driven, so a user wrapper cannot say
+        // "my first positional is a target" and gets the conservative answer:
+        // `my_add_library(my_LIBS z.cpp a.cpp)` holds where `add_library` sorts.
+        // Saying it needs a third grammar field; until there is one, a wrapper
+        // declines to sort where the builtin would, which is the safe direction.
+        // A later run is opened by a mode keyword that already consumed the
+        // list variable, so there the name provably governs the list.
+        let (governing, governs_the_list) = if idx == 0 {
+            (sections[idx].args.first(), first_positional_governs)
+        } else {
+            let previous = &sections[idx - 1];
+            let name = previous
+                .keyword
+                .is_some()
+                .then(|| previous.args.first())
+                .flatten();
+            (name, true)
+        };
+
+        // A list variable we cannot read is one we cannot vet — but only when
+        // the whole token is a reference. `${PREFIX}_SOURCES` has a readable
+        // suffix, and a dynamic *target* name says nothing about its sources.
+        let blocked_by_name = governing.is_some_and(|name| {
+            governs_the_list && (is_whole_variable_reference(name) || is_search_path_variable(name))
+        });
+
+        let blocked_by_value = sections[idx]
+            .args
+            .iter()
+            .skip(sort_from)
+            .any(|arg| !is_variable_like(arg) && !is_sortable_positional_value(arg));
+
+        if blocked_by_name || blocked_by_value {
+            sections[idx].sort_from = None;
+        }
+    }
 }
 
 /// Parse an argument list into keyword sections (backward compatibility wrapper)
@@ -639,80 +1078,76 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
     parse_keyword_sections_with_grammar(arg_list, None, super::config::CommentStyle::HashSpace)
 }
 
-/// Check if a string looks like a filename (has extension or path separator)
-fn looks_like_filename(s: &str) -> bool {
-    // Must contain a dot with extension, or path separators
-    // Exclude CMake variables like ${VAR}, generator expressions $<...>
-    if s.starts_with("${")
-        || s.starts_with("$<")
-        || s.starts_with("$ENV{")
-        || s.starts_with("$CACHE{")
-    {
-        return false;
+/// Split `seg` into runs of adjacent sortable args, with each variable-like arg
+/// becoming its own single-element run — a barrier that can neither move nor let
+/// its neighbours move across it.
+fn split_at_barriers(args: &[String], seg: std::ops::Range<usize>) -> Vec<std::ops::Range<usize>> {
+    let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut run_start = seg.start;
+
+    for (offset, arg) in args[seg.start..seg.end].iter().enumerate() {
+        let idx = seg.start + offset;
+        if is_variable_like(arg) {
+            if run_start < idx {
+                runs.push(run_start..idx);
+            }
+            runs.push(idx..idx + 1);
+            run_start = idx + 1;
+        }
     }
-    // Check for file extension (dot followed by at least 1 char, not at start)
-    if let Some(dot_pos) = s.rfind('.')
-        && dot_pos > 0
-        && dot_pos < s.len() - 1
-    {
-        return true;
+
+    if run_start < seg.end {
+        runs.push(run_start..seg.end);
     }
-    // Check for path separators
-    s.contains('/') || s.contains('\\')
+
+    runs
 }
 
-/// Sort source file arguments within a section, respecting blank line boundaries
-/// and keeping comments in sync with their associated filenames.
+/// True for arguments that expand to something unknown at format time, so their
+/// position may be meaningful even inside a list that is otherwise unordered.
+///
+/// A leading quote is stripped first: `"${GENERATED}"` is as common as the bare
+/// spelling, and it would otherwise sort ahead of everything because `"` (0x22)
+/// precedes every letter.
+fn is_variable_like(s: &str) -> bool {
+    let s = s.trim_start_matches('"');
+    s.starts_with("${") || s.starts_with("$<") || s.starts_with("$ENV{") || s.starts_with("$CACHE{")
+}
+
+/// True when the whole token is a single variable reference, so nothing about
+/// the name can be read. `${PREFIX}_SOURCES` is not one: its suffix is readable
+/// and can be vetted against the search-path list.
+fn is_whole_variable_reference(s: &str) -> bool {
+    let s = s.trim_matches('"');
+    ((s.starts_with("${") || s.starts_with("$ENV{") || s.starts_with("$CACHE{"))
+        && s.ends_with('}'))
+        || (s.starts_with("$<") && s.ends_with('>'))
+}
+
+/// Sort the arguments of a section the grammar marked as an unordered list,
+/// respecting blank line boundaries and keeping comments with their arguments.
 ///
 /// Rules:
-/// - Only sort items that look like filenames (have extensions or path separators)
+/// - Only sections with `sort_from` set are touched; whether a list may be
+///   reordered is the grammar's decision, not a guess from the argument text
+/// - Arguments before `sort_from` are pinned (the variable or target name)
+/// - Variable references and generator expressions hold their index and keep
+///   arguments from moving across them
 /// - Blank lines create separate sortable segments
-/// - Comments at position N are associated with the filename at position N
+/// - Comments at position N are associated with the argument at position N
 ///   (i.e., comment before a filename moves with that filename)
 /// - Paired entries from source_grouping (e.g., "foo.h foo.cpp") sort as a unit
 ///   using their first component as sort key
 /// - Case-insensitive sort
 pub fn sort_source_args(section: &mut KeywordSection) {
-    if section.args.is_empty() {
+    let Some(sort_start) = section.sort_from else {
+        return;
+    };
+
+    if section.args.len() <= sort_start + 1 {
+        // Nothing to reorder
         return;
     }
-
-    // Determine the range of args to sort
-    // For keyword sections (keyword is Some), sort all args
-    // For pre-keyword sections (keyword is None):
-    //   - If all args are filenames, sort all
-    //   - If first arg is not a filename but rest are (e.g., add_executable(target src1 src2)),
-    //     sort starting from index 1 (preserve target name)
-    //   - Otherwise, skip sorting
-    let (sort_start, _all_filenames) = if section.keyword.is_some() {
-        // Keyword section: sort all if any are filenames
-        let has_filenames = section.args.iter().any(|a| looks_like_filename(a));
-        if !has_filenames {
-            return;
-        }
-        (0, true)
-    } else {
-        // Pre-keyword section: check if we should sort
-        let all_filenames = section.args.iter().all(|a| looks_like_filename(a));
-        if all_filenames {
-            // All are filenames, sort all
-            (0, true)
-        } else if section.args.len() > 1 {
-            // Check if first is not a filename but rest are (common pattern: target_name + sources)
-            let first_not_filename = !looks_like_filename(&section.args[0]);
-            let rest_are_filenames = section.args[1..].iter().all(|a| looks_like_filename(a));
-            if first_not_filename && rest_are_filenames {
-                // Sort starting from index 1 (preserve first arg as target name)
-                (1, false)
-            } else {
-                // Mixed content, skip sorting
-                return;
-            }
-        } else {
-            // Only one arg, nothing to sort
-            return;
-        }
-    };
 
     // Split into segments by blank lines, but only for the sortable range
     let mut segments: Vec<std::ops::Range<usize>> = Vec::new();
@@ -726,6 +1161,13 @@ pub fn sort_source_args(section: &mut KeywordSection) {
     if seg_start < section.args.len() {
         segments.push(seg_start..section.args.len());
     }
+
+    // Split each segment further at variable-like arguments, which hold their
+    // index and act as a barrier for the arguments around them
+    let segments: Vec<std::ops::Range<usize>> = segments
+        .into_iter()
+        .flat_map(|seg| split_at_barriers(&section.args, seg))
+        .collect();
 
     // For each segment, build sortable entries (arg + associated comments)
     // then sort and reassemble
@@ -829,6 +1271,21 @@ pub fn sort_source_args(section: &mut KeywordSection) {
         }
     }
 
+    // `comment_blank_indices` indexes into `comments`, and if the comments have
+    // been rebuilt in a *different* order then every entry now names a different
+    // comment than it did. Kept, it put a blank line in front of whichever
+    // comment landed at that index — and the next parse recorded a different
+    // index again, so the section never reached a fixed point. There is no
+    // correct remapping: the entry means "the author left a blank between these
+    // two comment groups", and sorting has dissolved the groups.
+    //
+    // Only when the order actually changed, though. A sort that is the identity
+    // — an already-alphabetical list — rebuilds the same sequence, every index
+    // stays valid, and clearing regardless deleted a blank line the previous
+    // release kept.
+    if section.comments != new_comments {
+        section.comment_blank_indices.clear();
+    }
     section.args = new_args;
     section.comments = new_comments;
     section.trailing_comments = new_trailing_comments;
@@ -997,7 +1454,21 @@ pub fn format_keyword_aware_args(
         // Check if previous section had a trailing blank line (blank line between sections)
         if i > 0 && signals.force_multiline {
             let prev_section = &sections[i - 1];
-            if prev_section.blank_lines.contains(&prev_section.args.len()) {
+            // Every arm emits a section's own-line comments at
+            // `blank_lines[args.len()]` when it has one there, so that blank has
+            // already been written and this rule wrote it a second time — one
+            // blank line in the source came back as two. The precondition is
+            // "the previous section holds an own-line comment at its own end",
+            // of which a comments-only section is just the `args.is_empty()`
+            // case; guarding on that alone left two of the three spellings
+            // doubling.
+            let previous_already_wrote_it = prev_section
+                .comments
+                .iter()
+                .any(|(position, _)| *position == prev_section.args.len());
+            if !previous_already_wrote_it
+                && prev_section.blank_lines.contains(&prev_section.args.len())
+            {
                 // Extra blank line between sections
                 docs.push(RcDoc::hardline());
             }
@@ -1008,14 +1479,26 @@ pub fn format_keyword_aware_args(
             match section.keyword_type {
                 // Flag keywords: group consecutive flags together
                 Some(KeywordType::Flag) => {
-                    // Flags typically have no values, but section.args may contain
+                    // Grouping applies here too. A `Flag` section carries the
+                    // positional run that follows the flag —
+                    // `add_library(l STATIC a.cpp a.h)` — and `sort_sources`
+                    // already reorders that run, so skipping `source_grouping`
+                    // made the two passes disagree about a list the allowlist
+                    // owns.
+                    let (
+                        flag_args,
+                        flag_blank_lines,
+                        flag_comments,
+                        _flag_post_comment_blanks,
+                        flag_comment_blank_indices,
+                    ) = grouped_section(section, config.source_grouping);
+                    // Flags typically have no values, but flag_args may contain
                     // non-keyword arguments that follow before the next keyword
                     // Add separator before the flag keyword
                     if is_first_arg {
                         is_first_arg = false;
-                        if first_keyword_inline {
-                            // Multi-mode: first keyword stays inline with command name
-                            // (no separator emitted)
+                        if keyword_stays_on_the_opening_line(&sections, i, first_keyword_inline) {
+                            // No separator: the keyword belongs on the opening line
                         } else if signals.force_multiline {
                             docs.push(RcDoc::hardline());
                             docs.push(RcDoc::text(keyword_indent.clone()));
@@ -1036,10 +1519,11 @@ pub fn format_keyword_aware_args(
                                 sections.get(i.saturating_sub(1)),
                                 Some(prev) if prev.keyword.is_none()
                             );
-                        let flag_has_trailing_args = !section.args.is_empty();
-                        if (prev_is_pre_keyword && flag_has_trailing_args)
-                            || ((prev_is_flag || prev_is_pre_keyword)
-                                && config.collapse_empty_flags)
+                        let flag_has_trailing_args = !flag_args.is_empty();
+                        if !previous_section_ended_in_a_comment(&sections, i)
+                            && ((prev_is_pre_keyword && flag_has_trailing_args)
+                                || ((prev_is_flag || prev_is_pre_keyword)
+                                    && config.collapse_empty_flags))
                         {
                             docs.push(RcDoc::space());
                         } else if signals.force_multiline {
@@ -1054,28 +1538,48 @@ pub fn format_keyword_aware_args(
                     }
                     docs.push(RcDoc::text(keyword.clone()));
 
+                    // A flag with no values still carries its comments — the
+                    // whole comment machinery below lives inside the
+                    // `!flag_args.is_empty()` arm, so `find_package(Foo REQUIRED
+                    // # note\n COMPONENTS ...)` lost `# note` outright.
+                    //
+                    // They are all own-line comments here whatever the author
+                    // wrote: the section parser only fills `trailing_comments`
+                    // for a section that already has an argument, so a comment on
+                    // the same line as a valueless flag arrives at position 0 of
+                    // `comments`. Each therefore takes its own line, and the
+                    // separator for the *next* section refuses to collapse after
+                    // one — a line comment runs to end of line, and collapsing
+                    // put the next keyword inside it.
+                    if flag_args.is_empty() {
+                        for (_, comment) in &flag_comments {
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.clone()));
+                            docs.push(RcDoc::text(comment.clone()));
+                        }
+                    }
+
                     // Output any trailing non-keyword arguments in this section
-                    if !section.args.is_empty() {
+                    if !flag_args.is_empty() {
                         // Use per-line when values were explicitly on new lines,
                         // or when there are comments/blank lines that can't go inline
                         let use_per_line = section.values_on_new_line
-                            || !section.comments.is_empty()
+                            || !flag_comments.is_empty()
                             || !section.trailing_comments.is_empty()
-                            || !section.blank_lines.is_empty();
+                            || !flag_blank_lines.is_empty();
 
                         if use_per_line {
-                            let mut comment_iter = section.comments.iter().peekable();
+                            let mut comment_iter = flag_comments.iter().peekable();
                             let mut comment_index = 0usize;
-                            for (arg_idx, arg) in section.args.iter().enumerate() {
+                            for (arg_idx, arg) in flag_args.iter().enumerate() {
                                 // Blank line before comments to preserve ordering
-                                if section.blank_lines.contains(&arg_idx) && signals.force_multiline
-                                {
+                                if flag_blank_lines.contains(&arg_idx) && signals.force_multiline {
                                     docs.push(RcDoc::hardline());
                                 }
                                 while let Some((pos, comment)) = comment_iter.peek() {
                                     if *pos == arg_idx {
                                         // Blank line between comment groups at same position
-                                        if section.comment_blank_indices.contains(&comment_index)
+                                        if flag_comment_blank_indices.contains(&comment_index)
                                             && signals.force_multiline
                                         {
                                             docs.push(RcDoc::hardline());
@@ -1117,14 +1621,14 @@ pub fn format_keyword_aware_args(
                             }
                             // Blank line before trailing comments at end of section
                             if comment_iter.peek().is_some()
-                                && section.blank_lines.contains(&section.args.len())
+                                && flag_blank_lines.contains(&flag_args.len())
                                 && signals.force_multiline
                             {
                                 docs.push(RcDoc::hardline());
                             }
                             for (_, comment) in comment_iter {
                                 // Blank line between comment groups at same position
-                                if section.comment_blank_indices.contains(&comment_index)
+                                if flag_comment_blank_indices.contains(&comment_index)
                                     && signals.force_multiline
                                 {
                                     docs.push(RcDoc::hardline());
@@ -1144,7 +1648,7 @@ pub fn format_keyword_aware_args(
                             }
                         } else {
                             // Values on same line as keyword: flat_alt inherits from outer group
-                            for (arg_idx, arg) in section.args.iter().enumerate() {
+                            for (arg_idx, arg) in flag_args.iter().enumerate() {
                                 docs.push(RcDoc::flat_alt(
                                     RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
                                     RcDoc::space(),
@@ -1161,13 +1665,28 @@ pub fn format_keyword_aware_args(
                     }
                 }
 
-                // SingleValue keywords: keep value inline (ignore force_multiline for idempotency)
+                // SingleValue keywords: keep value inline (ignore force_multiline for
+                // idempotency).
+                //
+                // A comment used to demote the whole section into the catch-all
+                // arm, which puts the keyword on its own line and its value one
+                // level deeper. That cost the fixed point as well as the layout:
+                // the parser gives a comment written after this keyword's one
+                // value to *this* section, while a `list(APPEND V …)` run's
+                // elements live in the following keyword-less section — so
+                // sorting the run to put the commented element first moved the
+                // comment into this slot, and the next pass laid the command out
+                // differently. `--check` then rejected freshly formatted output.
+                //
+                // The comments are emitted after the value instead, so the arm
+                // renders the same shape with them as without.
                 Some(KeywordType::SingleValue) if section.args.len() == 1 => {
                     // Add separator before the keyword
-                    if is_first_arg && first_keyword_inline {
+                    if is_first_arg
+                        && keyword_stays_on_the_opening_line(&sections, i, first_keyword_inline)
+                    {
                         is_first_arg = false;
-                        // Multi-mode command (e.g., list(APPEND <var>)):
-                        // keep inline like ARGL-03 for first positional arg
+                        // No separator: the keyword belongs on the opening line
                     } else if is_first_arg {
                         is_first_arg = false;
                         // Regular command: first keyword drops to next line when multiline
@@ -1181,16 +1700,7 @@ pub fn format_keyword_aware_args(
                             ));
                         }
                     } else {
-                        // In multi-mode commands with first_keyword_inline, group the first empty Flag
-                        // with the immediately following SingleValue (e.g., TEST PROPERTY name).
-                        // Only apply to section index 1 (right after first Flag at index 0).
-                        let prev_is_first_empty_flag = first_keyword_inline
-                            && i == 1
-                            && matches!(
-                                sections.first(),
-                                Some(first) if first.keyword_type == Some(KeywordType::Flag) && first.args.is_empty()
-                            );
-                        if prev_is_first_empty_flag {
+                        if groups_with_the_leading_flag(&sections, i, first_keyword_inline) {
                             docs.push(RcDoc::space());
                         } else {
                             docs.push(RcDoc::flat_alt(
@@ -1203,6 +1713,13 @@ pub fn format_keyword_aware_args(
                     // Add the single value inline
                     docs.push(RcDoc::space());
                     docs.push(RcDoc::text(section.args[0].clone()));
+                    // Then anything written about it, on its own line — a
+                    // comment runs to end of line, so it cannot precede the
+                    // value, and it must not be dropped
+                    for (_, comment) in &section.trailing_comments {
+                        docs.push(RcDoc::text(format!(" {}", comment)));
+                    }
+                    push_valueless_section_comments(&mut docs, &section.comments, &keyword_indent);
                 }
 
                 // PairValue keywords: format as key-value pairs
@@ -1232,6 +1749,13 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(keyword.clone()));
 
                     // Format values as key-value pairs
+                    if section.args.is_empty() {
+                        push_valueless_section_comments(
+                            &mut docs,
+                            &section.comments,
+                            &keyword_indent,
+                        );
+                    }
                     if !section.args.is_empty() {
                         let pairs: Vec<_> = section.args.chunks(2).collect();
                         let use_per_line = section.values_on_new_line
@@ -1239,8 +1763,15 @@ pub fn format_keyword_aware_args(
                             || !section.trailing_comments.is_empty()
                             || !section.blank_lines.is_empty();
 
-                        if pairs.len() == 1 {
-                            // Single pair: keep inline with keyword (e.g., PROPERTIES KEY VALUE)
+                        if pairs.len() == 1
+                            && section.comments.is_empty()
+                            && section.trailing_comments.is_empty()
+                        {
+                            // Single pair: keep inline with keyword (e.g., PROPERTIES KEY VALUE).
+                            // Guarded on comments like every other shortcut that
+                            // emits the keyword and its values and nothing else —
+                            // and this one is tested *before* `use_per_line`, so
+                            // the comments that set that flag never reached it.
                             docs.push(RcDoc::space());
                             docs.push(RcDoc::text(pairs[0][0].clone()));
                             if pairs[0].len() > 1 {
@@ -1248,8 +1779,25 @@ pub fn format_keyword_aware_args(
                                 docs.push(RcDoc::text(pairs[0][1].clone()));
                             }
                         } else if use_per_line || signals.force_multiline {
-                            // Per-line pairs
-                            for chunk in pairs {
+                            // Per-line pairs. The comments are what put us on
+                            // this branch — `use_per_line` is set by them — and
+                            // they were then never emitted, so a `PROPERTIES`
+                            // run with comments lost every one of them.
+                            let mut comment_iter = section.comments.iter().peekable();
+                            for (pair_idx, chunk) in pairs.iter().enumerate() {
+                                let key_index = pair_idx * 2;
+
+                                // Own-line comments written before this pair
+                                while let Some((position, comment)) = comment_iter.peek() {
+                                    if *position > key_index {
+                                        break;
+                                    }
+                                    docs.push(RcDoc::hardline());
+                                    docs.push(RcDoc::text(value_indent.clone()));
+                                    docs.push(RcDoc::text((*comment).clone()));
+                                    comment_iter.next();
+                                }
+
                                 if signals.force_multiline {
                                     docs.push(RcDoc::hardline());
                                     docs.push(RcDoc::text(value_indent.clone()));
@@ -1266,6 +1814,26 @@ pub fn format_keyword_aware_args(
                                     docs.push(RcDoc::space());
                                     docs.push(RcDoc::text(chunk[1].clone()));
                                 }
+                                // Both trailing comments come after the value. A comment runs to
+                                // the end of its line, so emitting the key's before the value put
+                                // the value *inside* the comment — `CXX_STANDARD # note 17` — and
+                                // the next pass swallowed the following key too, losing a token per
+                                // run. The inline_single_keyword twin has always emitted them in
+                                // this order.
+                                for (tc_index, tc_text) in &section.trailing_comments {
+                                    if *tc_index == key_index
+                                        || (chunk.len() > 1 && *tc_index == key_index + 1)
+                                    {
+                                        docs.push(RcDoc::text(format!(" {}", tc_text)));
+                                    }
+                                }
+                            }
+
+                            // Anything written after the last pair
+                            for (_, comment) in comment_iter {
+                                docs.push(RcDoc::hardline());
+                                docs.push(RcDoc::text(value_indent.clone()));
+                                docs.push(RcDoc::text(comment.clone()));
                             }
                         } else {
                             // Auto-layout: flat_alt pairs inherit from outer group
@@ -1285,7 +1853,18 @@ pub fn format_keyword_aware_args(
                 }
 
                 // MultiValue with exactly 1 arg: keep inline like SingleValue
-                Some(KeywordType::MultiValue) if section.args.len() == 1 => {
+                // A single value goes inline with its keyword — but only when
+                // there is nothing else to place. This arm emits the keyword and
+                // the value and nothing else, so a comment written on its own
+                // line inside the section was silently deleted:
+                // `target_sources(t PRIVATE\n\t# impl\n\tb.cpp)` lost `# impl`
+                // entirely. The `inline_single_keyword` path already guards its
+                // equivalent shortcut this way; the general path did not.
+                Some(KeywordType::MultiValue)
+                    if section.args.len() == 1
+                        && section.comments.is_empty()
+                        && section.trailing_comments.is_empty() =>
+                {
                     // Add separator before the keyword
                     if is_first_arg {
                         is_first_arg = false;
@@ -1336,6 +1915,13 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(keyword.clone()));
 
                     // Values: bin-pack using per-value groups
+                    if section.args.is_empty() {
+                        push_valueless_section_comments(
+                            &mut docs,
+                            &section.comments,
+                            &keyword_indent,
+                        );
+                    }
                     if !section.args.is_empty() {
                         let has_annotations = !section.comments.is_empty()
                             || !section.trailing_comments.is_empty()
@@ -1498,6 +2084,13 @@ pub fn format_keyword_aware_args(
                     docs.push(RcDoc::text(keyword.clone()));
 
                     // Values under the keyword with explicit indentation
+                    if section.args.is_empty() {
+                        push_valueless_section_comments(
+                            &mut docs,
+                            &section.comments,
+                            &keyword_indent,
+                        );
+                    }
                     if !section.args.is_empty() {
                         // Check if this is a collection keyword with sub_keyword grouping
                         // (e.g., FILES_MATCHING with PATTERN/REGEX/EXCLUDE sub-items)
@@ -1552,30 +2145,7 @@ pub fn format_keyword_aware_args(
                             effective_comments,
                             effective_post_comment_blanks,
                             effective_comment_blank_indices,
-                        ) = if config.source_grouping != super::config::SourceGrouping::None
-                            && matches!(
-                                section.keyword_type,
-                                Some(KeywordType::MultiValue) | Some(KeywordType::BinPack) | None
-                            )
-                            && section.trailing_comments.is_empty()
-                        {
-                            group_source_pairs_preserving_blanks(
-                                &section.args,
-                                &section.blank_lines,
-                                &section.comments,
-                                &section.post_comment_blanks,
-                                &section.comment_blank_indices,
-                                config.source_grouping,
-                            )
-                        } else {
-                            (
-                                section.args.clone(),
-                                section.blank_lines.clone(),
-                                section.comments.clone(),
-                                section.post_comment_blanks.clone(),
-                                section.comment_blank_indices.clone(),
-                            )
-                        };
+                        ) = grouped_section(section, config.source_grouping);
 
                         // Use per-line when values were explicitly on new lines,
                         // or when there are comments/blank lines that can't go inline
@@ -1712,26 +2282,7 @@ pub fn format_keyword_aware_args(
                 effective_comments,
                 effective_post_comment_blanks,
                 effective_comment_blank_indices,
-            ) = if config.source_grouping != super::config::SourceGrouping::None
-                && section.trailing_comments.is_empty()
-            {
-                group_source_pairs_preserving_blanks(
-                    &section.args,
-                    &section.blank_lines,
-                    &section.comments,
-                    &section.post_comment_blanks,
-                    &section.comment_blank_indices,
-                    config.source_grouping,
-                )
-            } else {
-                (
-                    section.args.clone(),
-                    section.blank_lines.clone(),
-                    section.comments.clone(),
-                    section.post_comment_blanks.clone(),
-                    section.comment_blank_indices.clone(),
-                )
-            };
+            ) = grouped_section(section, config.source_grouping);
 
             let is_list = effective_args.len() > 1 || force_args_on_new_line;
             let mut comment_iter = effective_comments.iter().peekable();
@@ -1884,7 +2435,7 @@ fn format_keyword_aware_args_inline_single(
     let mut docs = Vec::new();
     let mut is_first_arg = true;
 
-    for section in sections.iter() {
+    for (i, section) in sections.iter().enumerate() {
         if let Some(keyword) = &section.keyword {
             // There is exactly one keyword section — emit keyword INLINE with preceding args.
             // Separator: space (flat and broken both use space here)
@@ -1901,6 +2452,12 @@ fn format_keyword_aware_args_inline_single(
                     ));
                 }
                 // force_multiline=true: emit nothing — keyword stays on the opening line after '('
+            } else if previous_section_ended_in_a_comment(sections, i) {
+                // The pre-keyword args ended in a comment, so this keyword cannot
+                // share their line — it would become part of the comment.
+                is_first_arg = false;
+                docs.push(RcDoc::hardline());
+                docs.push(RcDoc::text(keyword_indent.to_string()));
             } else {
                 // Keyword follows pre-keyword args — stays on same line as the last pre-keyword arg.
                 // In flat mode this is already inline; in broken mode we want a space (not a newline).
@@ -1912,11 +2469,19 @@ fn format_keyword_aware_args_inline_single(
             // For SingleValue keywords with exactly one arg, render the value inline (same line as
             // the keyword) rather than indented below. This keeps "APPEND SOURCES" together on the
             // opening line when the overflow positional args follow in the next section.
+            //
+            // Comments do not disqualify it — they are emitted after the value
+            // below, exactly as the general path does. Requiring the section to
+            // carry none put the mode keyword on its own line as soon as anyone
+            // wrote one, and cost the first-pass fixed point under sorting: the
+            // parser gives a comment written after this keyword's value to *this*
+            // section while the run's elements live in the next, so sorting the
+            // commented element to the front moved the comment into that slot and
+            // the following pass laid the command out differently. A blank line
+            // still disqualifies it, because the shortcut has nowhere to put one.
             let is_single_value_with_one_arg = section.keyword_type
                 == Some(KeywordType::SingleValue)
                 && section.args.len() == 1
-                && section.comments.is_empty()
-                && section.trailing_comments.is_empty()
                 && section.blank_lines.is_empty();
 
             let is_pair_value = section.keyword_type == Some(KeywordType::PairValue);
@@ -1925,6 +2490,12 @@ fn format_keyword_aware_args_inline_single(
                 // Always emit inline with a space — even when force_multiline is true.
                 docs.push(RcDoc::space());
                 docs.push(RcDoc::text(section.args[0].clone()));
+                // Then anything written about it, on its own line — a comment
+                // runs to end of line, so it cannot precede the value
+                for (_, comment) in &section.trailing_comments {
+                    docs.push(RcDoc::text(format!(" {}", comment)));
+                }
+                push_valueless_section_comments(&mut docs, &section.comments, keyword_indent);
             } else if is_pair_value && !section.args.is_empty() {
                 // PairValue keywords (e.g., PROPERTIES): format as key-value pairs
                 // Use keyword_indent (single indent) since the keyword is inlined on the command line
@@ -1934,8 +2505,12 @@ fn format_keyword_aware_args_inline_single(
                     || !section.trailing_comments.is_empty()
                     || !section.blank_lines.is_empty();
 
-                if pairs.len() == 1 {
-                    // Single pair: keep inline with keyword
+                if pairs.len() == 1
+                    && section.comments.is_empty()
+                    && section.trailing_comments.is_empty()
+                {
+                    // Single pair: keep inline with keyword. Same guard as the
+                    // general path's twin, for the same reason.
                     docs.push(RcDoc::space());
                     docs.push(RcDoc::text(pairs[0][0].clone()));
                     if pairs[0].len() > 1 {
@@ -1943,10 +2518,23 @@ fn format_keyword_aware_args_inline_single(
                         docs.push(RcDoc::text(pairs[0][1].clone()));
                     }
                 } else if use_per_line || signals.force_multiline {
+                    let mut pair_comments = section.comments.iter().peekable();
                     for (pair_idx, chunk) in pairs.iter().enumerate() {
                         if section.blank_lines.contains(&(pair_idx * 2)) && signals.force_multiline
                         {
                             docs.push(RcDoc::hardline());
+                        }
+                        // Own-line comments written before this pair. This loop
+                        // was missing entirely, so the twin emitted only trailing
+                        // comments and deleted every own-line one.
+                        while let Some((position, comment)) = pair_comments.peek() {
+                            if *position > pair_idx * 2 {
+                                break;
+                            }
+                            docs.push(RcDoc::hardline());
+                            docs.push(RcDoc::text(keyword_indent.to_string()));
+                            docs.push(RcDoc::text((*comment).clone()));
+                            pair_comments.next();
                         }
                         if signals.force_multiline {
                             docs.push(RcDoc::hardline());
@@ -1970,6 +2558,12 @@ fn format_keyword_aware_args_inline_single(
                             }
                         }
                     }
+                    // Anything written after the last pair
+                    for (_, comment) in pair_comments {
+                        docs.push(RcDoc::hardline());
+                        docs.push(RcDoc::text(keyword_indent.to_string()));
+                        docs.push(RcDoc::text(comment.clone()));
+                    }
                 } else {
                     for chunk in pairs {
                         docs.push(RcDoc::flat_alt(
@@ -1983,7 +2577,9 @@ fn format_keyword_aware_args_inline_single(
                         }
                     }
                 }
-            } else if !section.args.is_empty() {
+            } else if section.args.is_empty() {
+                push_valueless_section_comments(&mut docs, &section.comments, keyword_indent);
+            } else {
                 // Apply source grouping to keyword section args (e.g., source files after PUBLIC)
                 let (
                     effective_args,
@@ -1991,26 +2587,7 @@ fn format_keyword_aware_args_inline_single(
                     effective_comments,
                     _effective_post_comment_blanks,
                     effective_comment_blank_indices,
-                ) = if config.source_grouping != super::config::SourceGrouping::None
-                    && section.trailing_comments.is_empty()
-                {
-                    group_source_pairs_preserving_blanks(
-                        &section.args,
-                        &section.blank_lines,
-                        &section.comments,
-                        &section.post_comment_blanks,
-                        &section.comment_blank_indices,
-                        config.source_grouping,
-                    )
-                } else {
-                    (
-                        section.args.clone(),
-                        section.blank_lines.clone(),
-                        section.comments.clone(),
-                        section.post_comment_blanks.clone(),
-                        section.comment_blank_indices.clone(),
-                    )
-                };
+                ) = grouped_section(section, config.source_grouping);
 
                 // Values are indented at keyword_indent level (single indent, not double)
                 let use_per_line = section.values_on_new_line
@@ -2113,26 +2690,7 @@ fn format_keyword_aware_args_inline_single(
                 effective_comments,
                 effective_post_comment_blanks,
                 effective_comment_blank_indices,
-            ) = if config.source_grouping != super::config::SourceGrouping::None
-                && section.trailing_comments.is_empty()
-            {
-                group_source_pairs_preserving_blanks(
-                    &section.args,
-                    &section.blank_lines,
-                    &section.comments,
-                    &section.post_comment_blanks,
-                    &section.comment_blank_indices,
-                    config.source_grouping,
-                )
-            } else {
-                (
-                    section.args.clone(),
-                    section.blank_lines.clone(),
-                    section.comments.clone(),
-                    section.post_comment_blanks.clone(),
-                    section.comment_blank_indices.clone(),
-                )
-            };
+            ) = grouped_section(section, config.source_grouping);
 
             let is_list = effective_args.len() > 1;
             let mut comment_iter = effective_comments.iter().peekable();
@@ -2317,26 +2875,7 @@ fn format_simple_args(
             effective_comments,
             effective_post_comment_blanks,
             effective_comment_blank_indices,
-        ) = if config.source_grouping != super::config::SourceGrouping::None
-            && section.trailing_comments.is_empty()
-        {
-            group_source_pairs_preserving_blanks(
-                &section.args,
-                &section.blank_lines,
-                &section.comments,
-                &section.post_comment_blanks,
-                &section.comment_blank_indices,
-                config.source_grouping,
-            )
-        } else {
-            (
-                section.args.clone(),
-                section.blank_lines.clone(),
-                section.comments.clone(),
-                section.post_comment_blanks.clone(),
-                section.comment_blank_indices.clone(),
-            )
-        };
+        ) = grouped_section(section, config.source_grouping);
 
         let mut comment_iter = effective_comments.iter().peekable();
         let mut comment_index = 0usize;

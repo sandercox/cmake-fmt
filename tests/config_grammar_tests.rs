@@ -877,3 +877,154 @@ mod config {
         }
     }
 }
+
+#[test]
+fn test_config_grammar_sortable_keywords_parsing() {
+    let toml_str = r#"
+[command_grammars.my_add_library]
+one_value_keywords = ["NAME"]
+multi_value_keywords = ["SRC_FILES", "COMMAND"]
+sortable_keywords = ["SRC_FILES"]
+sortable_positional = true
+"#;
+
+    let config: FormatConfig = toml::from_str(toml_str).unwrap();
+    let grammar = &config.command_grammars["my_add_library"];
+    assert_eq!(
+        grammar.sortable_keywords,
+        Some(vec!["SRC_FILES".to_string()])
+    );
+    assert!(grammar.sortable_positional);
+}
+
+#[test]
+fn test_config_grammar_sortable_keywords_applied() {
+    // A wrapper command opts one keyword into reordering; its neighbours,
+    // including a COMMAND argv, are left alone.
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_add_library".to_string(),
+        CommandGrammarConfig {
+            one_value_keywords: vec!["NAME".to_string()],
+            multi_value_keywords: vec!["SRC_FILES".to_string(), "COMMAND".to_string()],
+            sortable_keywords: Some(vec!["SRC_FILES".to_string()]),
+            ..Default::default()
+        },
+    );
+
+    let config = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        command_grammars,
+        ..Default::default()
+    };
+
+    let result = format_text(
+        "my_add_library(NAME foo SRC_FILES z.cpp a.cpp COMMAND run z.sh a.sh)\n",
+        &config,
+    );
+
+    assert!(
+        result.contains("SRC_FILES a.cpp z.cpp"),
+        "declared sortable keyword should sort:\n{}",
+        result
+    );
+    assert!(
+        result.contains("COMMAND run z.sh a.sh"),
+        "undeclared keyword must hold its order:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_config_grammar_sortable_positional_applied() {
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_set".to_string(),
+        CommandGrammarConfig {
+            one_value_keywords: vec!["UNUSED".to_string()],
+            sortable_positional: true,
+            ..Default::default()
+        },
+    );
+
+    let config = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        command_grammars,
+        ..Default::default()
+    };
+
+    // The first positional argument is the variable name and stays pinned
+    let result = format_text("my_set(VAR z.cpp a.cpp)\n", &config);
+    assert_eq!(result, "my_set(VAR a.cpp z.cpp)\n");
+}
+
+#[test]
+fn test_config_grammar_cannot_make_bin_pack_sortable() {
+    // A grammar declaring the same keyword as both bin-pack and sortable must
+    // not be able to scramble an argv.
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_runner".to_string(),
+        CommandGrammarConfig {
+            bin_pack_keywords: vec!["COMMAND".to_string()],
+            sortable_keywords: Some(vec!["COMMAND".to_string()]),
+            ..Default::default()
+        },
+    );
+
+    let config = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        command_grammars,
+        ..Default::default()
+    };
+
+    let result = format_text("my_runner(COMMAND run z.sh a.sh)\n", &config);
+    assert!(
+        result.contains("COMMAND run z.sh a.sh"),
+        "a bin-pack keyword must never be reordered:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_config_grammar_cannot_make_pair_value_sortable() {
+    // The twin of the bin-pack test above, and the half that had none: dropping
+    // `PairValue` from the guard in `is_sortable_keyword` left the whole suite
+    // green while a grammar could scramble a key/value run, separating every key
+    // from its value:
+    //
+    //     PROPERTIES B_KEY z_val A_KEY y_val
+    //       -> PROPERTIES A_KEY B_KEY y_val z_val
+    //
+    // Total semantic destruction, at exit 0.
+    let mut command_grammars = HashMap::new();
+    command_grammars.insert(
+        "my_props".to_string(),
+        CommandGrammarConfig {
+            pair_value_keywords: vec!["PROPERTIES".to_string()],
+            sortable_keywords: Some(vec!["PROPERTIES".to_string()]),
+            ..Default::default()
+        },
+    );
+
+    let config = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+        command_grammars,
+        ..Default::default()
+    };
+
+    for input in [
+        "my_props(PROPERTIES B_KEY z_val A_KEY y_val)\n",
+        "my_props(PROPERTIES Z_KEY a_val M_KEY b_val)\n",
+        // and with file-looking values, which is what the sorting pass reads
+        "my_props(PROPERTIES B_KEY z.cpp A_KEY a.cpp)\n",
+    ] {
+        let result = format_text(input, &config);
+        assert_eq!(
+            result, input,
+            "a pair-value keyword must never be reordered — its keys and values \
+             would come apart"
+        );
+    }
+}

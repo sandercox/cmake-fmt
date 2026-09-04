@@ -505,4 +505,21 @@ pub struct CommandGrammarConfig {
     /// Bin-pack keywords (packs values to fill lines)
     #[serde(default)]
     pub bin_pack_keywords: Vec<String>,
+    /// Keywords whose values are an unordered list, so `sort_sources` and
+    /// `source_grouping` may reorder them (e.g. SOURCES for a wrapper command).
+    ///
+    /// Reordering is opt-in: a keyword not named here is left alone. Omitting
+    /// the key entirely falls back to the conventional file-list names
+    /// (`SOURCES`, `SRCS`, `FILES`), which is what an auto-detected grammar
+    /// would have given; writing `sortable_keywords: []` says that nothing here
+    /// is sortable, which is the only way to refuse one of those names.
+    #[serde(default)]
+    pub sortable_keywords: Option<Vec<String>>,
+    /// True when the command's keyword-less arguments are an unordered list,
+    /// as in `set(VAR a.cpp b.cpp)`. The list's identifying name is never
+    /// sorted: a leading positional run pins its first argument, and a run
+    /// opened by a leading single-value keyword has already given its name to
+    /// that keyword.
+    #[serde(default)]
+    pub sortable_positional: bool,
 }

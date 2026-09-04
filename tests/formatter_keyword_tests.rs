@@ -3396,3 +3396,1192 @@ fn test_inline_single_keyword_source_grouping_with_blank_lines() {
         result
     );
 }
+
+#[test]
+fn test_an_own_line_comment_in_a_keyword_section_survives() {
+    // The shortcut that puts a lone value inline with its keyword emitted the
+    // keyword and the value and nothing else, so a comment written on its own
+    // line inside that section was deleted outright — silent content loss in an
+    // everyday shape. It now only applies when there is nothing else to place.
+    let config = FormatConfig::default();
+
+    for input in [
+        "target_sources(t PRIVATE\n\t# impl\n\tb.cpp\n)\n",
+        "install(TARGETS t\n\t# note\n\tDESTINATION lib)\n",
+        "target_sources(t PRIVATE\n\t# one\n\t# two\n\tb.cpp\n)\n",
+        "target_compile_definitions(t PUBLIC\n\t# why\n\tFOO=1\n)\n",
+    ] {
+        let result = format_text(input, &config);
+        for comment in ["# impl", "# note", "# one", "# two", "# why"] {
+            assert_eq!(
+                input.contains(comment),
+                result.contains(comment),
+                "comment {} lost for {:?}:\n{}",
+                comment,
+                input,
+                result
+            );
+        }
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+#[test]
+fn test_a_lone_value_still_goes_inline_with_its_keyword() {
+    // The guard above must not cost the layout it guards: with no comment, a
+    // single value still sits on the keyword's line.
+    let config = FormatConfig::default();
+    let result = format_text("target_sources(t PRIVATE\n\tb.cpp\n)\n", &config);
+    assert!(
+        result.contains("PRIVATE b.cpp"),
+        "a lone value should stay inline:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_comments_survive_every_keyword_shortcut() {
+    // Three arms had the same defect: they emit the keyword and its value and
+    // nothing else, so anything else the section carried was deleted. One was
+    // fixed; these are the other two, plus the `PairValue` branch that computed
+    // the comments into its own gate and then never emitted them.
+    let config = FormatConfig::default();
+
+    for (input, comments) in [
+        (
+            "list(APPEND V\n\t# note\n\ta.cpp\n\tb.cpp\n)\n",
+            &["# note"][..],
+        ),
+        (
+            "install(TARGETS t\n\t# note\n\tDESTINATION lib)\n",
+            &["# note"][..],
+        ),
+        (
+            "set_target_properties(t PROPERTIES\n\tK1 v1 # one\n\tK2 v2 # two\n)\n",
+            &["# one", "# two"][..],
+        ),
+        (
+            "set_target_properties(t PROPERTIES\n\t# why\n\tK1 v1\n\tK2 v2\n)\n",
+            &["# why"][..],
+        ),
+        (
+            "add_test(NAME t\n\t# note\n\tCOMMAND runner)\n",
+            &["# note"][..],
+        ),
+        // A comment on a bare key — the last pair with no value — is indexed to
+        // the key, not the value, and only the value's index was emitted
+        (
+            "set_target_properties(t PROPERTIES\n\tK1 v1\n\tK2 # dangling\n)\n",
+            &["# dangling"][..],
+        ),
+        (
+            "file(WRITE out.txt\n\t# note\n\t\"body\")\n",
+            &["# note"][..],
+        ),
+    ] {
+        let result = format_text(input, &config);
+        for comment in comments {
+            assert!(
+                result.contains(comment),
+                "comment {} lost for {:?}:\n{}",
+                comment,
+                input,
+                result
+            );
+        }
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+#[test]
+fn test_a_keyword_shortcut_still_applies_without_comments() {
+    // The guards must not cost the layout they guard.
+    let config = FormatConfig::default();
+    assert_eq!(
+        format_text("set_target_properties(t PROPERTIES K1 v1 K2 v2)\n", &config),
+        "set_target_properties(t PROPERTIES K1 v1 K2 v2)\n"
+    );
+    assert_eq!(
+        format_text("list(APPEND V a.cpp b.cpp)\n", &config),
+        "list(APPEND V a.cpp b.cpp)\n"
+    );
+}
+
+#[test]
+fn test_a_property_value_never_lands_inside_a_comment() {
+    // A comment runs to the end of its line, so emitting a key's trailing
+    // comment before the key's value put the value *inside* the comment. The
+    // token count looked right on the first pass, and each pass after it
+    // swallowed one more token: `CXX_STANDARD # note 17`, then `... 17 AUTOMOC`,
+    // then the comment, `17` and `AUTOMOC` were simply gone.
+    let config = FormatConfig::default();
+    let input = concat!(
+        "set_target_properties(mytarget PROPERTIES\n",
+        "\tCXX_STANDARD # vendor SDK needs this\n",
+        "\t17\n",
+        "\tAUTOMOC\n",
+        "\tON\n",
+        ")\n"
+    );
+
+    let mut current = format_text(input, &config);
+    assert!(
+        current.contains("CXX_STANDARD 17 # vendor SDK needs this"),
+        "the value must come before the comment:\n{}",
+        current
+    );
+    assert_eq!(current, format_text(&current, &config), "not idempotent");
+
+    // Nothing may erode over repeated passes
+    for _ in 0..4 {
+        current = format_text(&current, &config);
+        for token in [
+            "CXX_STANDARD",
+            "17",
+            "AUTOMOC",
+            "ON",
+            "vendor SDK needs this",
+        ] {
+            assert!(current.contains(token), "{} lost:\n{}", token, current);
+        }
+    }
+
+    // Odd arity: a key with no value keeps its comment too
+    let result = format_text(
+        "set_target_properties(t PROPERTIES\n\tCXX_STANDARD # note\n\t17\n\tAUTOMOC\n)\n",
+        &config,
+    );
+    assert!(result.contains("CXX_STANDARD 17 # note"), "{}", result);
+    assert!(result.contains("AUTOMOC"), "AUTOMOC lost:\n{}", result);
+}
+
+#[test]
+fn test_a_single_property_pair_keeps_its_comments() {
+    // The single-pair shortcut is tested *before* the flag that comments set, so
+    // the comments that were supposed to force the per-line layout never reached
+    // it and were dropped. Both the general path and the inline twin.
+    for style in [false, true] {
+        let config = FormatConfig {
+            inline_single_keyword: style,
+            ..Default::default()
+        };
+        for (input, comment) in [
+            (
+                "set_target_properties(t PROPERTIES\n\t# keep the standard\n\tCXX_STANDARD\n\t17\n)\n",
+                "# keep the standard",
+            ),
+            (
+                "set_target_properties(t PROPERTIES\n\tCXX_STANDARD\n\t17 # note\n)\n",
+                "# note",
+            ),
+        ] {
+            let result = format_text(input, &config);
+            assert!(
+                result.contains(comment),
+                "{} lost with inline_single_keyword={}:\n{}",
+                comment,
+                style,
+                result
+            );
+            assert_eq!(result, format_text(&result, &config), "not idempotent");
+        }
+    }
+}
+
+#[test]
+fn test_the_inline_twin_emits_own_line_property_comments() {
+    // The inline_single_keyword path emitted only trailing comments, so every
+    // own-line comment inside a PROPERTIES run was deleted.
+    let config = FormatConfig {
+        inline_single_keyword: true,
+        ..Default::default()
+    };
+    let result = format_text(
+        "set_target_properties(t PROPERTIES\n\t# note\n\tCXX_STANDARD\n\t17\n\tAUTOMOC\n\tON\n)\n",
+        &config,
+    );
+    assert!(
+        result.contains("# note"),
+        "own-line comment lost:\n{}",
+        result
+    );
+    for token in ["CXX_STANDARD", "17", "AUTOMOC", "ON"] {
+        assert!(result.contains(token), "{} lost:\n{}", token, result);
+    }
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_flag_with_no_values_keeps_its_comments() {
+    // The Flag arm's whole comment machinery sat inside `!args.is_empty()`, so a
+    // flag followed by another keyword lost its comment — and
+    // `find_package(Foo REQUIRED # note ...)` is everyday CMake.
+    //
+    // The *follower* is swept rather than chosen. This test first used
+    // `COMPONENTS`, a MultiValue keyword, which turned out to be the one
+    // follower class whose separator is safe — so it passed while the fix it
+    // guarded was destroying the following keyword for every other class. A
+    // comment runs to end of line, so whatever follows it has to start a new
+    // one, and nothing here may go missing.
+    let config = FormatConfig::default();
+
+    for follower in [
+        "QUIET",          // Flag: collapses after the previous section
+        "CONFIG",         // Flag
+        "COMPONENTS b a", // MultiValue
+        "NAMES foo",      // MultiValue
+        "PATHS /opt",     // MultiValue
+    ] {
+        let input = format!(
+            "find_package(Foo\n\tREQUIRED # only on windows\n\t{}\n)\n",
+            follower
+        );
+        let result = format_text(&input, &config);
+
+        assert!(
+            result.contains("# only on windows"),
+            "the flag's comment was lost before {}:\n{}",
+            follower,
+            result
+        );
+        for token in ["REQUIRED"]
+            .iter()
+            .chain(follower.split(' ').collect::<Vec<_>>().iter())
+        {
+            assert!(
+                appears_as_code(&result, token),
+                "{} was swallowed by the comment before {}:\n{}",
+                token,
+                follower,
+                result
+            );
+        }
+        assert_eq!(
+            result,
+            format_text(&result, &config),
+            "not idempotent for follower {}",
+            follower
+        );
+    }
+
+    // The shapes that lose a *flag* rather than a comment, which is what the
+    // collapsing separator did: every keyword after the comment vanished, as a
+    // stable fixed point that `--check` then called formatted.
+    for (input, tokens) in [
+        (
+            "find_package(Foo\n\tREQUIRED # a\n\tQUIET # b\n\tCONFIG # c\n\tGLOBAL)\n",
+            &["REQUIRED", "QUIET", "CONFIG", "GLOBAL", "# a", "# b", "# c"][..],
+        ),
+        (
+            "add_library(mylib STATIC # vendor blob\n\tEXCLUDE_FROM_ALL)\n",
+            &["STATIC", "EXCLUDE_FROM_ALL", "# vendor blob"][..],
+        ),
+        (
+            "add_executable(myexe WIN32 # note\n\tMACOSX_BUNDLE a.cpp)\n",
+            &["WIN32", "MACOSX_BUNDLE", "a.cpp", "# note"][..],
+        ),
+    ] {
+        let mut current = format_text(input, &config);
+        for pass in 1..=3 {
+            for token in tokens {
+                let present = if token.starts_with('#') {
+                    current.contains(token)
+                } else {
+                    appears_as_code(&current, token)
+                };
+                assert!(
+                    present,
+                    "{} lost by pass {} of {:?}:\n{}",
+                    token, pass, input, current
+                );
+            }
+            current = format_text(&current, &config);
+        }
+    }
+}
+
+/// Whether `token` appears as a real argument rather than as comment prose.
+///
+/// `contains` cannot tell the two apart, which is exactly how a bug that turned
+/// `QUIET` into part of `# note QUIET` passed a test asserting `contains("QUIET")`.
+/// A comment runs to the end of its line, so everything from the first `#`
+/// onwards is prose. Parentheses are separators too: a first argument is glued
+/// to its command name (`define_property(TEST`), and trimming only the ends of a
+/// word left it unfindable, so the oracle silently passed for the token that
+/// mattered most.
+fn appears_as_code(text: &str, token: &str) -> bool {
+    text.lines().any(|line| {
+        line.split('#')
+            .next()
+            .unwrap_or("")
+            .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+            .any(|word| word == token)
+    })
+}
+
+#[test]
+fn test_a_valueless_keyword_keeps_its_comments_in_every_arm() {
+    // Five arms render a keyword section, and each guarded its whole comment
+    // machinery on the section having values — so a comment attached to a
+    // keyword with none had nowhere to go and was deleted. One was fixed at a
+    // time over two rounds; these are all of them.
+    let config = FormatConfig::default();
+    let inline = FormatConfig {
+        inline_single_keyword: true,
+        ..Default::default()
+    };
+
+    let cases: &[(&str, &FormatConfig)] = &[
+        // Flag
+        (
+            "find_package(Foo\n\tREQUIRED # note\n\tCOMPONENTS b\n)\n",
+            &config,
+        ),
+        // PairValue
+        ("set_target_properties(t\n\tPROPERTIES # note\n)\n", &config),
+        // BinPack
+        (
+            "add_custom_command(TARGET t POST_BUILD\n\tCOMMAND # note\n)\n",
+            &config,
+        ),
+        // MultiValue / SingleValue catch-all
+        ("target_sources(t\n\tPRIVATE # note\n)\n", &config),
+        ("install(TARGETS t DESTINATION\n\t# note\n)\n", &config),
+        // the inline_single_keyword twin
+        ("find_package(Foo REQUIRED\n\t# note\n)\n", &inline),
+        ("target_sources(t\n\tPRIVATE # note\n)\n", &inline),
+    ];
+
+    for (input, cfg) in cases {
+        let result = format_text(input, cfg);
+        assert!(
+            result.contains("# note"),
+            "the comment was deleted for {:?}:\n{}",
+            input,
+            result
+        );
+        // `contains` alone would pass on a comment that had swallowed the code
+        // around it, which is the mistake this file has caught three times.
+        // Every non-comment token of the input has to still be an argument.
+        for token in input
+            .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+            .filter(|word| !word.is_empty())
+            .take_while(|word| !word.starts_with('#'))
+            .skip(1)
+        {
+            assert!(
+                appears_as_code(&result, token),
+                "{} was swallowed by the comment for {:?}:\n{}",
+                token,
+                input,
+                result
+            );
+        }
+        assert_eq!(
+            result,
+            format_text(&result, cfg),
+            "not idempotent for {:?}",
+            input
+        );
+    }
+}
+
+#[test]
+fn test_a_valueless_keywords_comment_sits_at_the_keywords_indent() {
+    // The whole point of moving these to `keyword_indent`: there are no values
+    // for the comment to sit under. Three arms used `value_indent`, so the same
+    // construct came out one tab in from one command and two from another.
+    //
+    // The sibling test asserts the comment survives and no code is swallowed —
+    // which every wrong indent, and even gluing the comment onto the keyword's
+    // own line, satisfies. Exact output is the only thing that sees it.
+    let config = FormatConfig::default();
+    let inline = FormatConfig {
+        inline_single_keyword: true,
+        ..Default::default()
+    };
+    for (input, expected, cfg) in [
+        // MultiValue
+        (
+            "target_sources(t\n\tPRIVATE # note\n)\n",
+            "target_sources(t\n\tPRIVATE\n\t# note\n)\n",
+            &config,
+        ),
+        // PairValue
+        (
+            "set_target_properties(t\n\tPROPERTIES # note\n)\n",
+            "set_target_properties(t\n\tPROPERTIES\n\t# note\n)\n",
+            &config,
+        ),
+        // BinPack
+        (
+            "add_custom_command(TARGET t POST_BUILD\n\tCOMMAND # note\n)\n",
+            "add_custom_command(\n\tTARGET t\n\tPOST_BUILD\n\tCOMMAND\n\t# note\n)\n",
+            &config,
+        ),
+        // Flag
+        (
+            "find_package(Foo REQUIRED\n\t# note\n)\n",
+            "find_package(Foo REQUIRED\n\t# note\n)\n",
+            &config,
+        ),
+        // the inline_single_keyword twin
+        (
+            "target_sources(t\n\tPRIVATE # note\n)\n",
+            "target_sources(t PRIVATE\n\t# note\n)\n",
+            &inline,
+        ),
+    ] {
+        let result = format_text(input, cfg);
+        assert_eq!(
+            result, expected,
+            "the comment of a valueless keyword is not at the keyword's indent"
+        );
+        assert_eq!(result, format_text(&result, cfg), "not idempotent");
+    }
+}
+
+#[test]
+fn test_a_comment_before_a_commands_first_keyword_survives() {
+    // The section parser pushed its leading section only when that section held
+    // an argument or a keyword, so a section holding *only* comments was thrown
+    // away — deleting every comment written before a command's first argument
+    // when that argument is a keyword. Stable fixed point, exit 0.
+    //
+    // The cause predates this branch, but the branch decides which spellings
+    // reach it: adding `TYPE`, `FILES`, `BASE_DIRS` to `target_sources` and
+    // creating `source_group` brought six new (command, keyword) pairs into it,
+    // all of which the previous release formatted correctly.
+    //
+    // Over every (command, keyword) pair the grammar knows, the previous release
+    // loses this comment on 227 of 375; this loses none.
+    let config = FormatConfig::default();
+    for (command, keyword) in [
+        // the six this branch would have added to the defect
+        ("source_group", "FILES"),
+        ("source_group", "PREFIX"),
+        ("source_group", "TREE"),
+        ("target_sources", "BASE_DIRS"),
+        ("target_sources", "FILES"),
+        ("target_sources", "TYPE"),
+        // and the shapes that were already reaching it
+        ("install", "FILES"),
+        ("target_sources", "PUBLIC"),
+        ("find_package", "REQUIRED"),
+        ("execute_process", "COMMAND"),
+        // multi-mode, where the mode keyword is emitted inline with the command
+        // name — it must not be inlined onto a line the comment has ended
+        ("list", "APPEND"),
+        ("file", "APPEND"),
+        ("define_property", "CACHED_VARIABLE"),
+    ] {
+        let input = format!("{command}(\n\t# ship the headers\n\t{keyword} x\n)\n");
+        let result = format_text(&input, &config);
+        assert!(
+            result.contains("# ship the headers"),
+            "the leading comment was deleted for {} {}:\n{}",
+            command,
+            keyword,
+            result
+        );
+        assert!(
+            appears_as_code(&result, keyword),
+            "{} was swallowed by the comment in {}:\n{}",
+            keyword,
+            command,
+            result
+        );
+        assert!(
+            appears_as_code(&result, "x"),
+            "the value was swallowed by the comment in {} {}:\n{}",
+            command,
+            keyword,
+            result
+        );
+        assert_eq!(
+            result,
+            format_text(&result, &config),
+            "not idempotent for {} {}",
+            command,
+            keyword
+        );
+    }
+}
+
+#[test]
+fn test_a_single_value_keyword_keeps_a_comment_on_its_value() {
+    // The arm that stopped a comment demoting a `SingleValue` section emits two
+    // kinds after the value: the trailing comment on the value's own line, and
+    // the own-line comments written around it. Both are new, and both were
+    // unpinned — deleting the trailing-comment loop left the whole suite green
+    // while `list(APPEND V # note)` came back without `# note`, at exit 0 and a
+    // stable fixed point.
+    //
+    // Exact output, because order is the other half of it: emitting the comment
+    // *before* the value also passed, and produced `APPEND # note V # note` —
+    // the value swallowed into a comment and the comment duplicated. That is the
+    // mistake the `PairValue` arm already carries a comment about.
+    let config = FormatConfig::default();
+    for (input, expected) in [
+        // a trailing comment on the value
+        (
+            "list(APPEND V # note\n\ta.cpp\n)\n",
+            "list(APPEND V # note\n\ta.cpp\n)\n",
+        ),
+        (
+            "add_custom_command(TARGET t POST_BUILD\n\tCOMMENT c # note\n\tCOMMAND x)\n",
+            "add_custom_command(\n\tTARGET t\n\tPOST_BUILD\n\tCOMMENT c # note\n\tCOMMAND x\n)\n",
+        ),
+        // an own-line comment written before the value: it cannot stay there —
+        // a comment runs to end of line and would swallow the value — so it
+        // moves after, at the keyword's indent
+        (
+            "add_custom_command(TARGET t POST_BUILD\n\tCOMMENT\n\t# note\n\tc\n\tCOMMAND x)\n",
+            "add_custom_command(\n\tTARGET t\n\tPOST_BUILD\n\tCOMMENT c\n\t# note\n\tCOMMAND x\n)\n",
+        ),
+        // and both kinds at once, in that order
+        (
+            "list(APPEND V # trail\n\t# own\n\ta.cpp\n)\n",
+            "list(APPEND V # trail\n\t# own\n\ta.cpp\n)\n",
+        ),
+    ] {
+        let result = format_text(input, &config);
+        assert_eq!(result, expected, "wrong placement for {:?}", input);
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+        // and nothing became comment prose. The tokens are taken from the
+        // input rather than listed, so a shape added later cannot skip the
+        // check by not mentioning them.
+        for line in input.lines() {
+            for token in line
+                .split('#')
+                .next()
+                .unwrap_or("")
+                .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+                .filter(|word| !word.is_empty())
+                .skip(usize::from(line.starts_with(char::is_alphabetic)))
+            {
+                assert!(
+                    appears_as_code(&result, token),
+                    "{} was swallowed by the comment for {:?}:\n{}",
+                    token,
+                    input,
+                    result
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_a_comment_does_not_move_a_mode_keyword_off_its_line() {
+    // The `SingleValue` shortcut keeps a multi-mode command's mode keyword and
+    // its value on the opening line — `list(APPEND V …)`. A comment used to
+    // demote the whole section into the catch-all arm, which puts the keyword on
+    // its own line and its value one level deeper than the elements that follow:
+    //
+    //     list(            <- APPEND left the line
+    //     \tAPPEND
+    //     \t\tV            <- and its value is deeper than a.cpp
+    //     \t\t# note
+    //     \ta.cpp
+    //     )
+    //
+    // 68 of 345 mode/style shapes did that. The comments are emitted after the
+    // value now, so the arm renders one shape with them or without.
+    let config = FormatConfig::default();
+    for (command, mode) in [
+        ("list", "APPEND"),
+        ("list", "PREPEND"),
+        ("list", "REMOVE_ITEM"),
+        ("file", "GLOB"),
+        ("file", "WRITE"),
+        ("install", "SCRIPT"),
+        ("install", "CODE"),
+        ("file", "READ"),
+        // `string(REGEX …)` and `define_property(TEST …)` are not this arm:
+        // their mode keyword is a Flag, so they go through the Flag arm, which
+        // has always honoured `first_keyword_inline`.
+    ] {
+        for body in ["\t# note\n\ta.cpp\n", "\ta.cpp\n\t# note\n"] {
+            let input = format!("{command}({mode} V\n{body})\n");
+            let result = format_text(&input, &config);
+            assert!(
+                result.starts_with(&format!("{command}({mode} V")),
+                "the mode keyword left its line:\n{}",
+                result
+            );
+            assert!(
+                result.contains("# note"),
+                "the comment was dropped:\n{}",
+                result
+            );
+            for token in ["V", "a.cpp"] {
+                assert!(
+                    appears_as_code(&result, token),
+                    "{} was swallowed by the comment:\n{}",
+                    token,
+                    result
+                );
+            }
+            assert_eq!(result, format_text(&result, &config), "not idempotent");
+        }
+    }
+}
+
+#[test]
+fn test_the_inline_twin_keeps_a_single_values_comment_too() {
+    // `format_keyword_aware_args_inline_single` kept the guard the general path
+    // shed: its shortcut required the section to carry no comments, so a comment
+    // put the mode keyword on its own line and cost the first-pass fixed point
+    // under sorting, exactly as it did on the general path before. Same input,
+    // same failure, one function over — which is why the test that caught it on
+    // the general path now runs against both configurations.
+    let inline = FormatConfig {
+        inline_single_keyword: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        format_text("list(APPEND V # note\n\ta.cpp\n)\n", &inline),
+        "list(APPEND V # note\n\ta.cpp\n)\n",
+        "the trailing comment moved the mode keyword off its line"
+    );
+    assert_eq!(
+        format_text("list(APPEND V\n\t# note\n\ta.cpp\n)\n", &inline),
+        "list(APPEND V\n\t# note\n\ta.cpp\n)\n",
+        "the own-line comment moved the mode keyword off its line"
+    );
+    // A blank line still disqualifies the shortcut — it has nowhere to put one —
+    // so the keyword drops to its own line. Byte-identical to the previous
+    // release, which is the point: the guard was narrowed to comments only.
+    assert_eq!(
+        format_text("list(APPEND V\n\n\ta.cpp\n)\n", &inline),
+        "list(APPEND\n\tV\n\ta.cpp\n)\n",
+        "a blank line should still disqualify the shortcut"
+    );
+}
+
+#[test]
+fn test_sorting_a_run_past_a_comment_still_reaches_a_fixed_point() {
+    // The parser gives a comment written after a `SingleValue` keyword's one
+    // value to *that* section, while a `list(APPEND V …)` run's elements live in
+    // the following keyword-less section. So sorting the run to put the
+    // commented element first moved the comment into that slot, and the *next*
+    // pass laid the whole command out differently — `--check` rejecting freshly
+    // formatted output. 12 of 345 shapes; the layout no longer depends on
+    // whether the section carries a comment.
+    for config in [
+        FormatConfig {
+            sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+            ..Default::default()
+        },
+        FormatConfig {
+            source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+            ..Default::default()
+        },
+        FormatConfig {
+            sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+            source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+            ..Default::default()
+        },
+        // The same shapes through the inline twin, which is a separate function
+        // and kept the same bug for a round after the general path lost it
+        FormatConfig {
+            inline_single_keyword: true,
+            sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+            ..Default::default()
+        },
+        FormatConfig {
+            inline_single_keyword: true,
+            sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+            source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+            ..Default::default()
+        },
+    ] {
+        for input in [
+            "list(APPEND V\n\tz.cpp\n\t# note\n\ta.cpp\n)\n",
+            "list(PREPEND V\n\tz.cpp\n\t# note\n\ta.cpp\n)\n",
+            "list(APPEND V\n\tb.cpp\n\t# note\n\tb.h\n)\n",
+        ] {
+            let once = format_text(input, &config);
+            let twice = format_text(&once, &config);
+            assert_eq!(
+                once, twice,
+                "sorting past a comment never settles:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+                once, twice
+            );
+            assert!(
+                once.contains("# note"),
+                "the comment was dropped:\n{}",
+                once
+            );
+        }
+    }
+}
+
+#[test]
+fn test_only_the_second_section_groups_with_the_leading_flag() {
+    // `define_property(TEST PROPERTY name)` puts the mode flag and the keyword
+    // after it on one line. Section index 1 only: a *later* `SingleValue` is an
+    // ordinary keyword and takes its own line. Loosening the index test to
+    // `>= 1` survived the suite and is observable on 9 of 18 probed shapes —
+    // `string(RANDOM LENGTH 8 ALPHABET abc)` collapses two keywords onto the
+    // opening line instead of one.
+    let config = FormatConfig::default();
+    for (input, expected) in [
+        (
+            "string(RANDOM\n\tLENGTH 8\n\tALPHABET abc\n\tv\n)\n",
+            "string(RANDOM LENGTH 8\n\tALPHABET abc\n\tv\n)\n",
+        ),
+        (
+            "define_property(TEST\n\tPROPERTY x\n\tBRIEF_DOCS \"b\"\n)\n",
+            "define_property(TEST PROPERTY x\n\tBRIEF_DOCS \"b\"\n)\n",
+        ),
+    ] {
+        let result = format_text(input, &config);
+        assert_eq!(
+            result, expected,
+            "only the section right after the leading flag joins its line"
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+#[test]
+fn test_a_multi_mode_commands_first_flag_keeps_its_comment() {
+    // The `SingleValue` arm collapses a multi-mode command's mode keyword onto
+    // the following keyword — `define_property(TEST PROPERTY foo)` — and its
+    // separator was an unconditional space, the one arm the previous round's
+    // guard was not wired into. So the follower became comment prose:
+    // `# note PROPERTY foo`, with the code gone from the file, stable, at exit 0.
+    //
+    // `file(GENERATE …)` escalated: pass 1 swallowed `OUTPUT out.txt`, pass 2
+    // also swallowed `CONTENT "x"`, so two runs of a pre-commit hook ate the
+    // command body.
+    //
+    // The arm is reached only by a multi-mode command whose first section is a
+    // valueless flag and whose second is a `SingleValue` — a *command shape*,
+    // not a follower type, which is the dimension the sweep above cannot see.
+    let config = FormatConfig::default();
+
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "define_property(TEST # note\n\tPROPERTY foo\n\tBRIEF_DOCS \"b\"\n)\n",
+            &["TEST", "PROPERTY", "foo", "BRIEF_DOCS"],
+        ),
+        (
+            "define_property(GLOBAL # note\n\tPROPERTY foo\n)\n",
+            &["GLOBAL", "PROPERTY", "foo"],
+        ),
+        (
+            "define_property(DIRECTORY # note\n\tPROPERTY foo\n)\n",
+            &["DIRECTORY", "PROPERTY", "foo"],
+        ),
+        (
+            "define_property(SOURCE # note\n\tPROPERTY foo\n)\n",
+            &["SOURCE", "PROPERTY", "foo"],
+        ),
+        (
+            "define_property(CACHED_VARIABLE # note\n\tPROPERTY foo\n)\n",
+            &["CACHED_VARIABLE", "PROPERTY", "foo"],
+        ),
+        (
+            "file(GENERATE # note\n\tOUTPUT out.txt\n\tCONTENT \"x\"\n)\n",
+            &["GENERATE", "OUTPUT", "out.txt", "CONTENT"],
+        ),
+        (
+            "file(CONFIGURE # note\n\tOUTPUT out.txt\n\tCONTENT \"x\"\n)\n",
+            &["CONFIGURE", "OUTPUT", "out.txt", "CONTENT"],
+        ),
+        (
+            "file(ARCHIVE_CREATE # note\n\tOUTPUT a.tar\n\tPATHS p\n)\n",
+            &["ARCHIVE_CREATE", "OUTPUT", "a.tar", "PATHS"],
+        ),
+        (
+            "file(GET_RUNTIME_DEPENDENCIES # note\n\tRESOLVED_DEPENDENCIES_VAR v\n)\n",
+            &["GET_RUNTIME_DEPENDENCIES", "RESOLVED_DEPENDENCIES_VAR", "v"],
+        ),
+        (
+            "string(RANDOM # note\n\tLENGTH 8\n\tv\n)\n",
+            &["RANDOM", "LENGTH", "8", "v"],
+        ),
+        (
+            "string(UUID # note\n\tNAMESPACE ns\n\tNAME n\n\tTYPE MD5\n\tv\n)\n",
+            &["UUID", "NAMESPACE", "ns", "NAME", "TYPE", "v"],
+        ),
+    ];
+
+    // Three passes: the escalating shape looks partly intact after one.
+    for (input, tokens) in cases {
+        let mut current = format_text(input, &config);
+        for pass in 1..=3 {
+            assert!(
+                current.contains("# note"),
+                "the comment was lost by pass {} of {:?}:\n{}",
+                pass,
+                input,
+                current
+            );
+            for token in *tokens {
+                assert!(
+                    appears_as_code(&current, token),
+                    "{} was swallowed by the comment by pass {} of {:?}:\n{}",
+                    token,
+                    pass,
+                    input,
+                    current
+                );
+            }
+            current = format_text(&current, &config);
+        }
+    }
+}
+
+#[test]
+fn test_a_trailing_comment_on_a_section_with_values_holds_the_line_too() {
+    // The guard reads both halves of a section's comments, and only the own-line
+    // half was pinned — cutting `trailing_comments` out of it survived the whole
+    // suite. It is not dead: these are the shapes where the *previous* section
+    // has values and its comment trails them, which is the commonest spelling of
+    // all and the one the collapsing separator ate.
+    let config = FormatConfig::default();
+    for (input, tokens) in [
+        (
+            "add_library(l STATIC a.cpp # note\n\tEXCLUDE_FROM_ALL)\n",
+            &["l", "STATIC", "a.cpp", "EXCLUDE_FROM_ALL"][..],
+        ),
+        (
+            "find_package(Foo # note\n\tREQUIRED)\n",
+            &["Foo", "REQUIRED"][..],
+        ),
+        (
+            "add_executable(e a.cpp # note\n\tWIN32)\n",
+            &["e", "a.cpp", "WIN32"][..],
+        ),
+    ] {
+        let result = format_text(input, &config);
+        assert!(
+            result.contains("# note"),
+            "the trailing comment was lost for {:?}:\n{}",
+            input,
+            result
+        );
+        for token in tokens {
+            assert!(
+                appears_as_code(&result, token),
+                "{} was swallowed by the trailing comment for {:?}:\n{}",
+                token,
+                input,
+                result
+            );
+        }
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+#[test]
+fn test_the_inline_twin_does_not_collapse_onto_a_commented_line() {
+    // The inline twin's "keyword follows pre-keyword args" separator is an
+    // unconditional space as well, so under `inline_single_keyword` the keyword
+    // joined a line the pre-keyword args had already ended with a comment. The
+    // mechanism predates the branch, but new grammar entries for `target_sources`
+    // and `source_group` brought eighteen more shapes into it — and a file can
+    // turn the setting on for itself.
+    let config = FormatConfig {
+        inline_single_keyword: true,
+        ..Default::default()
+    };
+    for (input, tokens) in [
+        (
+            "target_sources(t # c\n\tTYPE sv1\n)\n",
+            &["t", "TYPE", "sv1"][..],
+        ),
+        (
+            "target_sources(t # c\n\tPRIVATE a.cpp\n)\n",
+            &["t", "PRIVATE", "a.cpp"][..],
+        ),
+        (
+            "source_group(g # c\n\tFILES a.cpp\n)\n",
+            &["g", "FILES", "a.cpp"][..],
+        ),
+        (
+            "# cmake-fmt: inline_single_keyword=true\ntarget_sources(t # c\n\tTYPE sv1\n)\n",
+            &["t", "TYPE", "sv1"][..],
+        ),
+    ] {
+        let result = format_text(input, &config);
+        assert!(
+            result.contains("# c"),
+            "the comment was lost for {:?}:\n{}",
+            input,
+            result
+        );
+        for token in tokens {
+            assert!(
+                appears_as_code(&result, token),
+                "{} was swallowed by the comment for {:?}:\n{}",
+                token,
+                input,
+                result
+            );
+        }
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+
+    // And without a comment the keyword still shares the line — that collapse is
+    // the whole point of the setting.
+    assert!(
+        format_text("target_sources(t\n\tPRIVATE a.cpp b.cpp\n)\n", &config)
+            .starts_with("target_sources(t PRIVATE"),
+        "the inline collapse stopped happening"
+    );
+}
+
+#[test]
+fn test_a_comment_after_the_last_property_pair_survives() {
+    // The inline twin's "anything written after the last pair" loop had no test:
+    // deleting it left the whole suite green while the comment was dropped.
+    let config = FormatConfig {
+        inline_single_keyword: true,
+        ..Default::default()
+    };
+    for input in [
+        "set_target_properties(t PROPERTIES\n\tK1 V1\n\tK2 V2\n\t# after all\n)\n",
+        "set_target_properties(t PROPERTIES\n\tK1\n\t# mid\n\tV1\n)\n",
+    ] {
+        let result = format_text(input, &config);
+        assert!(
+            result.contains("# after all") || result.contains("# mid"),
+            "the comment was dropped for {:?}:\n{}",
+            input,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+#[test]
+fn test_the_inline_twins_pair_comments_stay_with_their_pairs() {
+    // The inline twin's per-pair comment loop was pinned for *presence* only:
+    // making it never fire left every comment preserved and every one detached
+    // from the pair it annotates, falling through to the drain that runs after
+    // the last pair —
+    //
+    //     PROPERTIES / A 1 / B 2 / # about A / # about B
+    //
+    // No content lost, so no oracle that counts tokens or comments notices.
+    // Exact output is what sees it.
+    let inline = FormatConfig {
+        inline_single_keyword: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        format_text(
+            "set_target_properties(t PROPERTIES\n\t# about A\n\tA 1\n\t# about B\n\tB 2\n)\n",
+            &inline
+        ),
+        "set_target_properties(t PROPERTIES\n\t# about A\n\tA 1\n\t# about B\n\tB 2\n)\n",
+        "a pair's comment came away from its pair"
+    );
+    // A comment after the last pair still belongs after it
+    assert_eq!(
+        format_text(
+            "set_target_properties(t PROPERTIES\n\tA 1\n\tB 2\n\t# after all\n)\n",
+            &inline
+        ),
+        "set_target_properties(t PROPERTIES\n\tA 1\n\tB 2\n\t# after all\n)\n",
+        "a trailing comment moved"
+    );
+}
+
+#[test]
+fn test_a_blank_line_before_a_leading_comment_is_written_once() {
+    // Two rules wrote the same blank. A comments-only section holds no
+    // arguments, so its own `blank_lines[0]` and the "blank line between
+    // sections" rule — which looks at `blank_lines.contains(&args.len())` —
+    // are the same entry, and both fired. One blank line in the source came
+    // back as two, on 233 of 233 grammar shapes; the previous release cannot
+    // show it only because it deletes the comment.
+    let config = FormatConfig::default();
+    for (command, keyword) in [
+        ("install", "FILES"),
+        ("target_sources", "PRIVATE"),
+        ("source_group", "FILES"),
+        ("find_package", "COMPONENTS"),
+    ] {
+        let input = format!("{command}(\n\n\t# ship\n\t{keyword} a.h\n)\n");
+        let result = format_text(&input, &config);
+        assert!(
+            !result.contains("\n\n\t# ship\n\n"),
+            "one blank line came back as two for {} {}:\n{:?}",
+            command,
+            keyword,
+            result
+        );
+        assert_eq!(
+            result.matches("\n\n").count(),
+            input.matches("\n\n").count(),
+            "the number of blank lines changed for {} {}:\n{:?}",
+            command,
+            keyword,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+
+    // A positional argument in the same slot is not a comments-only section and
+    // must keep the behaviour it had
+    let control = format_text("install(\n\n\tq\n\tFILES a.h\n)\n", &config);
+    assert_eq!(
+        control,
+        format_text(&control, &config),
+        "control not idempotent"
+    );
+}
+
+#[test]
+fn test_a_blank_after_the_last_argument_survives_grouping() {
+    // Blanks are re-emitted at segment boundaries, so a blank whose recorded
+    // position equals `args.len()` had no boundary to be written at and was
+    // dropped — while the comment-blank bookkeeping passed through unchanged.
+    // The next parse read the survivor as a different kind of entry and laid the
+    // section out differently, so `--check` rejected freshly formatted output.
+    for config in [
+        FormatConfig {
+            source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+            ..Default::default()
+        },
+        FormatConfig {
+            sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+            ..Default::default()
+        },
+    ] {
+        for input in [
+            "define_property(\n\n\t# c\n\n\t# d\n\tDIRECTORY\n\tSRCS\n\tz.cpp\n\ta.cpp\n)\n",
+            "set(SRCS\n\tz.cpp\n\ta.cpp\n\n\t# after the last\n)\n",
+            // Two comment groups separated by a blank, inside a sortable
+            // keyword section: `comment_blank_indices` names a comment by index
+            // and sorting rebuilds the comments in a new order, so the entry
+            // came to name a different comment than the author meant and the
+            // next parse recorded a different index again. The previous release
+            // fails this at one blank and passes at two and three by accident —
+            // its blank record fired a spurious second time, which happened to
+            // make those spellings self-consistent. All three settle here.
+            "install(\n\tFILES\n\tSRCS\n\n\t# c\n\n\t# d\n\tz.cpp\n\ta.cpp\n)\n",
+            "install(\n\tFILES\n\tSRCS\n\n\n\t# c\n\n\n\t# d\n\tz.cpp\n\ta.cpp\n)\n",
+            "install(\n\tFILES\n\tSRCS\n\n\n\n\t# c\n\n\n\n\t# d\n\tz.cpp\n\ta.cpp\n)\n",
+        ] {
+            let once = format_text(input, &config);
+            let twice = format_text(&once, &config);
+            assert_eq!(
+                once, twice,
+                "no first-pass fixed point:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+                once, twice
+            );
+        }
+    }
+}
+
+#[test]
+fn test_a_blank_run_before_a_comment_reaches_a_fixed_point() {
+    // The blank-line record fired once per newline past the first, so the third
+    // newline of one blank run took the "blank line between comment groups"
+    // branch and recorded a blank before comment index 0 — for a comment that
+    // sits at a later argument position. The next pass then wrote a blank in
+    // front of that comment, so `--check` rejected freshly formatted output.
+    //
+    // Whitespace only, no content at risk, but the previous release has 99 of
+    // these across the (command, keyword) pairs the grammar knows and this has
+    // none.
+    let config = FormatConfig::default();
+    for input in [
+        "add_custom_command(\n\n\n\tq\n\t#b\n\tVERBATIM\n)\n",
+        "target_sources(\n\n\n\tt\n\t# note\n\tPRIVATE a.cpp\n)\n",
+        "install(\n\n\n\tx\n\t# note\n\tFILES a.h\n)\n",
+        // more than one blank run, and a blank between comment groups, which
+        // still has to keep its blank
+        "set(SRCS\n\n\n\tx.cpp\n\n\n\t# a\n\ty.cpp\n)\n",
+        "set(SRCS\n\t# a\n\n\t# b\n\tx.cpp\n)\n",
+    ] {
+        let once = format_text(input, &config);
+        let twice = format_text(&once, &config);
+        assert_eq!(
+            once, twice,
+            "no first-pass fixed point for {:?}:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+            input, once, twice
+        );
+    }
+}
+
+#[test]
+fn test_a_blank_between_comment_groups_names_the_right_comment() {
+    // `comment_blank_indices` promises "a blank line before the *next* comment
+    // at this argument position". Three ways that promise went wrong, all
+    // whitespace, all costing the output its first-pass fixed point or adding a
+    // line nobody wrote:
+    //
+    //  - an argument arriving instead of a second comment left the promise
+    //    unkept, and the entry went on to name whatever comment landed at that
+    //    index later — where `blank_lines` already carried a blank of its own
+    //  - the "already wrote it" guard read `args.is_empty()`, which is only one
+    //    of the three section shapes that emit their own blank
+    //  - clearing the vector after a sort was right when the sort reordered the
+    //    comments and wrong when it was the identity
+    let config = FormatConfig::default();
+    let sorting = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        ..Default::default()
+    };
+
+    // (a) an argument between the two comment groups
+    for input in [
+        "install(\n\tFILES\n\n\t# note\n\n\tx\n\n\t# c\n)\n",
+        "target_sources(t\n\tPRIVATE\n\n\t# note\n\n\ta.cpp\n\n\t# c\n)\n",
+    ] {
+        let once = format_text(input, &config);
+        assert_eq!(
+            once,
+            format_text(&once, &config),
+            "no first-pass fixed point:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+            once,
+            format_text(&once, &config)
+        );
+    }
+
+    // (b) every shape that writes its own blank writes exactly one
+    for input in [
+        "install(\n\n\t# ship\n\tFILES a.h\n)\n",
+        "install(\n\tFILES a.h\n\n\t# c\n\tDESTINATION inc)\n",
+        "target_sources(t\n\n\t# c\n\tPRIVATE a.cpp\n)\n",
+    ] {
+        let result = format_text(input, &config);
+        assert_eq!(
+            result.matches("\n\n").count(),
+            input.matches("\n\n").count(),
+            "the number of blank lines changed for {:?}:\n{:?}",
+            input,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+
+    // (c) an identity sort keeps the blank; a real sort settles
+    assert_eq!(
+        format_text(
+            "add_executable(\n\tEXCLUDE_FROM_ALL\n\n\t# c\n\n\t# d\n\ta.cpp\n\tz.cpp\n)\n",
+            &sorting
+        ),
+        "add_executable(\n\tEXCLUDE_FROM_ALL\n\n\t# c\n\n\t# d\n\ta.cpp\n\tz.cpp\n)\n",
+        "an identity sort should not delete the blank between comment groups"
+    );
+    for input in [
+        "install(\n\tFILES\n\tSRCS\n\n\t# c\n\n\t# d\n\tz.cpp\n\ta.cpp\n)\n",
+        "install(\n\tFILES\n\tSRCS\n\n\n\t# c\n\n\n\t# d\n\tz.cpp\n\ta.cpp\n)\n",
+    ] {
+        let once = format_text(input, &sorting);
+        assert_eq!(
+            once,
+            format_text(&once, &sorting),
+            "a real sort never settles"
+        );
+    }
+}

@@ -9,6 +9,28 @@ pub struct GrammarRegistry {
 }
 
 impl GrammarRegistry {
+    /// Every builtin grammar, as `(command, mode, grammar)`.
+    ///
+    /// Exposed so a test can assert the *whole* reordering allowlist rather than
+    /// its effects: `mark_sortable_lists` is this branch's entire contract, and
+    /// adding a command to it — `file(GLOB)`, say, where glob order decides
+    /// match order — passed the suite silently because nothing enumerated it.
+    pub fn entries(&self) -> Vec<(&str, Option<&str>, &CommandGrammar)> {
+        let mut out = Vec::new();
+        for (command, grammar) in &self.grammars {
+            match grammar {
+                Grammar::Simple(g) => out.push((command.as_str(), None, g)),
+                Grammar::Modes { modes } => {
+                    for (mode, g) in modes {
+                        out.push((command.as_str(), Some(mode.as_str()), g));
+                    }
+                }
+            }
+        }
+        out.sort_by_key(|(command, mode, _)| (*command, *mode));
+        out
+    }
+
     /// Get the global singleton instance
     pub fn global() -> &'static GrammarRegistry {
         static REGISTRY: OnceLock<GrammarRegistry> = OnceLock::new();
@@ -128,6 +150,34 @@ pub fn config_grammars_to_map(
             for kw in &cfg.bin_pack_keywords {
                 keywords.insert(kw.clone(), KeywordType::BinPack);
             }
+            // A config entry replaces the grammar auto-detected from
+            // `cmake_parse_arguments` wholesale, so a user who declared one for
+            // wrapping reasons silently lost the sorting the auto-detected
+            // grammar gave them, with no diagnostic. The conventional file-list
+            // names are a default here for the same reason they are one there —
+            // but only a *default*: naming any sortable keyword is the user
+            // saying what is unordered, and "reordering is opt-in, keywords not
+            // listed here are left alone" is what the config docs, the schema
+            // and `--help-grammar` all promise. Overriding that left no way to
+            // say "not this one".
+            //
+            // The default is drawn from the multi-value keywords, not from every
+            // declared keyword: a `FILES` declared as a flag takes no values, so
+            // marking it sortable only reorders whatever positional arguments
+            // happen to follow it.
+            let sortable_keywords: HashSet<String> = match &cfg.sortable_keywords {
+                // Named, however short the list: that list is the whole list
+                Some(declared) => declared.iter().cloned().collect(),
+                // Not named at all: the same default an auto-detected grammar
+                // would have carried
+                None => cfg
+                    .multi_value_keywords
+                    .iter()
+                    .filter(|kw| super::argparse_extractor::is_conventional_file_list(kw))
+                    .cloned()
+                    .collect(),
+            };
+
             (
                 name.to_lowercase(),
                 CommandGrammar {
@@ -135,6 +185,8 @@ pub fn config_grammars_to_map(
                     force_args_on_new_line: false,
                     sub_keywords: HashSet::new(),
                     collection_keywords: HashSet::new(),
+                    sortable_keywords,
+                    sortable_positional: cfg.sortable_positional,
                 },
             )
         })
