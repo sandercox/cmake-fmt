@@ -78,9 +78,17 @@ async function formatWithCli(
       reject(new Error('cancelled'));
     });
 
-    // Attach data listeners BEFORE writing to stdin (prevents buffer deadlock)
-    childProcess.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString();
+    // Attach data listeners BEFORE writing to stdin (prevents buffer deadlock).
+    // setEncoding decodes across chunk boundaries: without it a multi-byte
+    // character split across two reads becomes U+FFFD, which would make the
+    // output differ from the input and cause a full-document edit to be applied
+    // even for a file the ignore rules said to leave alone.
+    childProcess.stdout.setEncoding('utf8');
+    // Same reason for stderr: a diagnostic split across a chunk boundary
+    // decoded to U+FFFD without it.
+    childProcess.stderr.setEncoding('utf8');
+    childProcess.stdout.on('data', (data: string) => {
+      stdout += data;
     });
 
     childProcess.stderr.on('data', (data: Buffer) => {
@@ -93,7 +101,10 @@ async function formatWithCli(
       reject(err);
     });
 
-    childProcess.on('exit', (code) => {
+    // 'close' rather than 'exit': exit can fire before stdout has drained,
+    // and a truncated read differs from the input, which would make the
+    // extension apply a full-document edit for a file it should have left alone
+    childProcess.on('close', (code) => {
       clearTimeout(timeout);
       cancellationListener.dispose();
 
