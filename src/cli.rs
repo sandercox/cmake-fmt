@@ -1,5 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
+use ignore::Match;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use rayon::prelude::*;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -467,6 +469,56 @@ pub fn run() -> Result<ExitCode> {
         None
     };
 
+    // `--ignore-file` is read by the walk-root check, once per root, and again
+    // by the walk itself. A one-shot stream — the fifo behind `<(...)`, or
+    // `/dev/stdin` — is empty by the second read, so the first root examined ate
+    // the patterns and everything after it was formatted. Copy such a source
+    // once so every reader sees the same content; a regular file needs nothing.
+    //
+    // A broken `--ignore-file` is a bad argument whatever mode follows, so it is
+    // rejected here — before any mode that walks or formats. The four
+    // informational modes (`--help-style`, `--help-grammar`,
+    // `--export-all-grammar`, and a `--line-ranges` that fails to parse) return
+    // before this and never look at it.
+    //
+    // The cost of checking here is that a one-shot source is opened even when
+    // the run would not have consulted it — so a writerless fifo now blocks a
+    // run over an explicit file list (which used to exit 0), over a glob, and
+    // in stdin mode (both exit 0), none of which it blocked before. Accepting a
+    // path we cannot read is the worse trade: it is the failure that reads as
+    // success.
+    //
+    // Bound to the lifetime of `run`, so the copy outlives every reader.
+    // An `--ignore-file` on a one-shot stream that *is* this run's stdin eats
+    // the buffer it was going to format: the copy drains fd 0, and the formatter
+    // then reads nothing. `cmake-fmt - --ignore-file /dev/stdin` printed an
+    // empty document and exited 0, which an editor applying the result as a
+    // whole-document edit reads as "the formatted file is empty". Sharing an
+    // inode with stdin is not on its own enough to lose data — see
+    // `drains_stdin`.
+    if let Some(path) = cli.ignore_file.as_deref()
+        && stdin_would_be_read(&cli)
+        && drains_stdin(path)
+    {
+        eprintln!(
+            "error: --ignore-file {} names this run's own stdin, which the buffer is read from",
+            path.display()
+        );
+        return Ok(ExitCode::FAILURE);
+    }
+
+    let prepared = match cli.ignore_file.as_deref() {
+        Some(path) => match prepare_ignore_file(path) {
+            Ok(prepared) => Some(prepared),
+            Err(reason) => {
+                eprintln!("error: --ignore-file {} {}", path.display(), reason);
+                return Ok(ExitCode::FAILURE);
+            }
+        },
+        None => None,
+    };
+    let ignore_file: Option<PathBuf> = prepared.as_ref().map(|(_, path)| path.clone());
+
     // Handle interactive mode first (if --interactive flag is set)
     if cli.interactive {
         // Determine if stdin input is specified
@@ -534,7 +586,9 @@ pub fn run() -> Result<ExitCode> {
             return Ok(ExitCode::FAILURE);
         }
 
-        // Canonicalize assume_filename if provided
+        // Make assume_filename absolute if provided. Not canonicalized here —
+        // `is_path_ignored` resolves it through `resolve_path`, which is what
+        // has to agree with the walk.
         let assume_path = cli.assume_filename.as_ref().map(|p| {
             if p.is_relative() {
                 std::env::current_dir().unwrap_or_default().join(p)
@@ -542,6 +596,15 @@ pub fn run() -> Result<ExitCode> {
                 p.clone()
             }
         });
+
+        // Honour ignore files for the path stdin stands in for, so editors that
+        // pipe the buffer through --assume-filename skip the same files the
+        // directory walk skips (e.g. format-on-save in the VS Code extension).
+        if let Some(path) = assume_path.as_deref()
+            && is_path_ignored(path, ignore_file.as_deref(), cli.verbose)
+        {
+            return passthrough_stdin(check_mode, diff_mode);
+        }
 
         // For stdin, resolve config from assume_filename path or current directory
         let config = crate::config::resolve_config(
@@ -566,8 +629,12 @@ pub fn run() -> Result<ExitCode> {
         };
 
         // Collect files, expanding directories and glob patterns
-        let collected =
-            collect_cmake_files(&paths_to_search, cli.recursive, cli.ignore_file.as_deref())?;
+        let collected = collect_cmake_files(
+            &paths_to_search,
+            cli.recursive,
+            ignore_file.as_deref(),
+            cli.verbose,
+        )?;
 
         // Handle case where no files found
         if collected.is_empty() {
@@ -626,6 +693,7 @@ fn collect_cmake_files(
     paths: &[PathBuf],
     recursive: bool,
     ignore_file: Option<&Path>,
+    verbose: bool,
 ) -> Result<Vec<PathBuf>> {
     use ignore::WalkBuilder;
 
@@ -668,14 +736,69 @@ fn collect_cmake_files(
         }
     }
 
-    // Walk directories using the `ignore` crate
+    // Walk directories using the `ignore` crate.
+    //
+    // A walk only tests entries at or below its own root, so a root that is
+    // itself inside an excluded directory would be walked happily —
+    // `cmake-fmt -r .` from inside `third_party/` would format files that
+    // `cmake-fmt -r .` from the project root skips, and that the stdin path
+    // skips. An excluded path stays excluded however the tool is invoked, so
+    // drop such roots up front.
+    let dir_paths: Vec<PathBuf> = dir_paths
+        .into_iter()
+        .filter(|dir| {
+            // --ignore-file decides here too, or `--ignore-file` naming
+            // `build/` would exclude a file under `build/` on the stdin path
+            // while `cmake-fmt -r build` formatted it. What it may not do is
+            // decide about its own root directory: the allowlist idiom (`*`
+            // plus `!*.cmake`) matches that directory with `*`, and the walk
+            // never tests its own root as an entry either. `ignore_decision`
+            // enforces that.
+            // `is_dir_ignored` absolutizes and resolves, so a relative root
+            // (`.`, the common case) needs no preparation here
+            let excluded = is_dir_ignored(dir, ignore_file, verbose);
+            if excluded {
+                eprintln!("Skipping {}: excluded by an ignore file", dir.display());
+            }
+            !excluded
+        })
+        .collect();
+
     if !dir_paths.is_empty() {
-        let first = dir_paths[0].clone();
-        let mut builder = WalkBuilder::new(&first);
+        // Walk the physical path of each root, and map the results back to the
+        // spelling the user gave.
+        //
+        // The `ignore` crate matches an `--ignore-file` pattern against the path
+        // as spelled while canonicalizing for the ignore files it reads above an
+        // entry, so an anchored pattern like `sub/deep/**` excluded
+        // `cmake-fmt -r sub` and not `cmake-fmt -r link-to-sub` or
+        // `cmake-fmt -r sub/../sub` — three verdicts for one directory, none of
+        // which the stdin path could agree with. Resolving first makes the
+        // verdict a property of the directory rather than of how it was named.
+        let roots: Vec<(PathBuf, PathBuf)> = dir_paths
+            .iter()
+            .map(|dir| (resolve_path(dir), dir.clone()))
+            .collect();
+
+        let mut builder = WalkBuilder::new(&roots[0].0);
+
+        // `add_ignore` anchors its matcher at the walker's idea of the working
+        // directory, and `Gitignore::strip` removes that prefix from a candidate
+        // before matching — so an *anchored* pattern only fires when the two
+        // spellings agree. The roots above are resolved, while the crate would
+        // discover an unresolved `current_dir()` for itself, and on Windows
+        // those differ whenever the path holds a junction, an 8.3 component, a
+        // `subst` drive or a mapped network drive. Nothing was stripped, `gen/*`
+        // was matched against a full absolute path where it can never fire, and
+        // every file it excluded was formatted — with `-i`, rewritten. Told
+        // explicitly here so the library anchors where the roots do.
+        builder.current_dir(resolve_path(
+            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        ));
 
         // Add remaining directories
-        for dir in &dir_paths[1..] {
-            builder.add(dir);
+        for (resolved, _) in &roots[1..] {
+            builder.add(resolved);
         }
 
         // Depth: 1 means the directory itself + its immediate children (depth 0 = root only)
@@ -694,9 +817,17 @@ fn collect_cmake_files(
         // Do NOT skip hidden directories/files — let ignore rules handle exclusions
         builder.hidden(false);
 
-        // Load the user-specified extra ignore file if provided
+        // Load the user-specified extra ignore file if provided.
+        //
+        // The error is not reported here, and this is the only place in the file
+        // where discarding one is right: every root above went through
+        // `is_dir_ignored`, which builds a matcher from the same file and has
+        // already said what is wrong with it. Reporting it again printed the
+        // same sentence twice per root, with the path repeated inside it — and
+        // for a one-shot source it named the temporary copy rather than anything
+        // the user typed. Silence was the original bug; this is not that.
         if let Some(extra) = ignore_file {
-            builder.add_ignore(extra);
+            let _ = builder.add_ignore(extra);
         }
 
         let walk = builder.build();
@@ -704,15 +835,48 @@ fn collect_cmake_files(
         for entry in walk {
             match entry {
                 Ok(e) => {
+                    // A `.cmake-fmt-ignore` at or below the walk root is read by
+                    // the walk, not by `is_ignored`, so this is the only place
+                    // its complaint can come from. `add` stops at a bad line, so
+                    // the patterns after one are silently dropped — for
+                    // `cmake-fmt -r .` that is the whole project's ignore file.
+                    //
+                    // Only the glob errors arrive here: the crate discards the
+                    // encoding ones before the walk can see them
+                    // (`maybe_push_ignore_io`), so a non-UTF-8 line still goes
+                    // unreported by this path.
+                    if let Some(err) = e.error() {
+                        // Keyed on the crate's own text, not the respelled one:
+                        // two spellings of one root resolve to the same
+                        // directory and would otherwise report it twice.
+                        let raw = plain_paths_in(&format!("{:#}", err));
+                        if !already_reported_error(&raw) {
+                            eprintln!("Warning: {}", respell_message(&raw, &roots));
+                        }
+                    }
                     if e.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
                         let p = e.into_path();
                         if is_cmake_file(&p) {
-                            result.push(p);
+                            // Report the path the user would recognise, not the
+                            // resolved one the walk ran on
+                            result.push(respell(&p, &roots));
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Warning: Error walking directory: {:#}", e);
+                    // An ignore file the matcher refused reaches this arm too,
+                    // depending on where it sits relative to the walk root — and
+                    // then it was printed a second time, prefixed with a sentence
+                    // about walking a directory that had not failed. Keyed on the
+                    // message, so whichever printer gets there first wins and the
+                    // prefix only ever lands on a real traversal failure.
+                    let raw = plain_paths_in(&format!("{:#}", e));
+                    if !already_reported_error(&raw) {
+                        eprintln!(
+                            "Warning: Error walking directory: {}",
+                            respell_message(&raw, &roots)
+                        );
+                    }
                 }
             }
         }
@@ -737,6 +901,662 @@ fn is_cmake_file(path: &Path) -> bool {
         }
     }
     false
+}
+
+/// Returns true if `path` is excluded by a `.cmake-fmt-ignore` file in one of
+/// its ancestor directories, or by the extra `--ignore-file` if one was given.
+///
+/// Each `.cmake-fmt-ignore` uses gitignore syntax and is anchored at its own
+/// directory, exactly like the directory walk; `--ignore-file` is anchored at
+/// the working directory instead, matching `WalkBuilder::add_ignore`. Two rules
+/// decide the outcome: for any given
+/// path the deepest ignore file whose directory contains it wins, and an
+/// excluded ancestor directory is final — git cannot re-include a file whose
+/// parent directory is excluded, and the walk never descends into one to read a
+/// deeper ignore file at all.
+fn is_path_ignored(path: &Path, ignore_file: Option<&Path>, verbose: bool) -> bool {
+    is_ignored(path, false, ignore_file, verbose)
+}
+
+/// The same question for a directory: the only difference is that the target is
+/// matched as one, so a directory-only pattern such as `build/` can match it.
+fn is_dir_ignored(path: &Path, ignore_file: Option<&Path>, verbose: bool) -> bool {
+    is_ignored(path, true, ignore_file, verbose)
+}
+
+fn is_ignored(path: &Path, is_dir: bool, ignore_file: Option<&Path>, verbose: bool) -> bool {
+    let spelled = path.to_path_buf();
+    let path = resolve_path(path);
+
+    // Directories from the filesystem root down to the file's own directory.
+    // `ancestors()` yields deepest-first, so reverse it.
+    let mut dirs: Vec<PathBuf> = path
+        .parent()
+        .map(|dir| dir.ancestors().map(|a| a.to_path_buf()).collect())
+        .unwrap_or_default();
+    dirs.reverse();
+
+    // One matcher per directory carrying a .cmake-fmt-ignore, kept in the same
+    // shallow-to-deep order as `dirs` so the deepest can be preferred later
+    let mut matchers: Vec<(PathBuf, Gitignore)> = Vec::new();
+    for dir in &dirs {
+        let file = dir.join(".cmake-fmt-ignore");
+        if file.is_file()
+            && let Some(matcher) = build_ignore_matcher(&file, dir, Some(&file))
+        {
+            matchers.push((dir.clone(), matcher));
+        }
+    }
+
+    // --ignore-file is rooted at the working directory and ranks below the
+    // .cmake-fmt-ignore chain, matching WalkBuilder::add_ignore
+    let extra = ignore_file.and_then(|file| {
+        // Resolved, because the target is: `current_dir()` is physical on Unix
+        // but keeps whatever spelling the shell used on Windows, so an
+        // unresolved bound never matched a resolved target there and no
+        // `--ignore-file` rule was ever consulted.
+        //
+        // A working directory that cannot be read leaves no bound to apply. It
+        // must not fall back to `.`: that normalizes to an empty path, every
+        // path `starts_with` it, and the containment guard below would then
+        // admit every ancestor up to the root — skipping files outside the
+        // directory the bound exists to confine it to, and exiting 0 on work
+        // not done. Dropping the matcher errs the other way, which is the way
+        // that still does the work.
+        let root = resolve_path(&std::env::current_dir().ok()?);
+        build_ignore_matcher(file, &root, None).map(|matcher| (root, matcher))
+    });
+
+    // Ancestor directories decide first, and an excluded one is final: git
+    // cannot re-include a file whose parent directory is excluded, and the
+    // walk never descends into it to read a deeper ignore file at all.
+    let ignored = dirs.iter().any(|dir| {
+        // --ignore-file is consulted for an ancestor only when that ancestor is
+        // under its root. Without this, gitignore basename matching lets an
+        // ordinary pattern like `build/` or `tmp/` match a component of the
+        // absolute path — `/tmp/...`, a checkout under `build/` — and exclude a
+        // directory nobody was asking about.
+        //
+        // The right boundary is the *walk root*: the walk asks its add_ignore
+        // matcher about every entry at or below that root and never about
+        // anything above it. There is no walk root on the stdin path, so the
+        // working directory stands in for one. That is an approximation, and it
+        // shows: for a target outside the working directory the stdin path
+        // consults fewer ancestors than a walk rooted near that target would,
+        // so it can format a file the walk would skip. Erring this way keeps a
+        // stray pattern from disabling a whole run, which is the failure that
+        // reads as success.
+        let extra_here = extra.as_ref().filter(|(root, _)| dir.starts_with(root));
+        matches!(
+            ignore_decision(dir, true, &matchers, extra_here),
+            Some(true)
+        )
+    }) || matches!(
+        // The target itself is matched without that restriction: a basename
+        // pattern in --ignore-file is meant to apply to a file outside the
+        // working directory too.
+        ignore_decision(&path, is_dir, &matchers, extra.as_ref()),
+        Some(true)
+    );
+
+    if verbose && ignored {
+        // Named as the caller spelled it, so this line and the "Skipping …"
+        // line right after it are about a recognisably single directory
+        eprintln!("verbose: {} is ignored, skipping", spelled.display());
+    }
+
+    ignored
+}
+
+/// Ask the ignore rules about one path: `Some(true)` excluded, `Some(false)`
+/// explicitly re-included, `None` no rule matched.
+///
+/// The deepest matcher whose directory strictly contains `target` decides, so a
+/// nearer `.cmake-fmt-ignore` overrides a more distant one. An ignore file never
+/// decides about its own directory, only about what lies beneath it.
+fn ignore_decision(
+    target: &Path,
+    is_dir: bool,
+    matchers: &[(PathBuf, Gitignore)],
+    extra: Option<&(PathBuf, Gitignore)>,
+) -> Option<bool> {
+    let consult = |matcher: &Gitignore| -> Option<bool> {
+        match matcher.matched(target, is_dir) {
+            Match::Ignore(_) => Some(true),
+            Match::Whitelist(_) => Some(false),
+            Match::None => None,
+        }
+    };
+
+    matchers
+        .iter()
+        .rev()
+        // An ignore file governs what lies beneath its own directory, so it has
+        // no say about that directory itself.
+        .filter(|(root, _)| root.as_path() != target && target.starts_with(root))
+        .find_map(|(_, matcher)| consult(matcher))
+        // --ignore-file is consulted without the containment check: rooted at
+        // the working directory like the walk's add_ignore, its basename
+        // patterns still have to apply to a file outside that directory. The
+        // one rule it does share is that it has no say about its own root —
+        // otherwise `*` in the allowlist idiom excludes the working directory
+        // and takes the whole tree with it.
+        .or_else(|| {
+            extra
+                .filter(|(root, _)| root.as_path() != target)
+                .and_then(|(_, matcher)| consult(matcher))
+        })
+}
+
+/// Build a gitignore matcher for `file`, anchored at `root`.
+///
+/// A malformed pattern is a partial failure: the builder still took every valid
+/// line, so the matcher is kept. Dropping the whole file would silently format
+/// everything the user excluded, which is the bug this all exists to prevent.
+/// `report_as` names the file in any complaint, and `None` keeps quiet.
+///
+/// `--ignore-file` is checked once by `prepare_ignore_file` and stays quiet
+/// here, because it is read again for every named root and printing per root
+/// said the same sentence four times for `-r x y build .`.
+///
+/// A `.cmake-fmt-ignore` complains from here, and `already_reported_error` keeps
+/// that to once however many readers reach it. This site sees only an *ancestor*
+/// of something being checked, because an ignore file has no say about its own
+/// directory; the walk's own matcher sees the rest and hands its complaint back
+/// on the entry, which the walk loop prints under the same dedup.
+///
+/// One class still goes unreported: the `ignore` crate discards an encoding
+/// error before the walk can surface it (`maybe_push_ignore_io`), so a
+/// `.cmake-fmt-ignore` in a walk root with a non-UTF-8 line loses the patterns
+/// after it silently. `GitignoreBuilder::add` stops at that line rather than
+/// skipping it, so what survives depends on line order — a stray byte on line 1
+/// voids the whole file.
+///
+/// The name is passed in rather than taken from `file` because they differ: a
+/// one-shot source is read from a temporary copy, and a complaint about a path
+/// nobody typed is not actionable.
+fn build_ignore_matcher(file: &Path, root: &Path, report_as: Option<&Path>) -> Option<Gitignore> {
+    let mut builder = GitignoreBuilder::new(root);
+
+    if let Some(err) = builder.add(file)
+        && let Some(name) = report_as
+    {
+        // Verbatim prefixes out, like the walk's own printers. Not respelled:
+        // an ignore file reached here was *discovered* by walking above a root
+        // rather than named by the caller, so there is no spelling of it to
+        // keep — and the roots that would provide one are not in scope. The
+        // consequence is that `-r .` alone names it relatively while `-r . sub`
+        // names it absolutely, because a different printer wins the dedup;
+        // recorded rather than plumbed, since it is one diagnostic line.
+        let message = plain_paths_in(&named_error(&err, file, name));
+        if !already_reported_error(&message) {
+            eprintln!("Warning: {}", message);
+        }
+    }
+
+    match builder.build() {
+        Ok(matcher) => Some(matcher),
+        // Unreachable in practice: every glob error surfaces from `add` above,
+        // so `GlobSetBuilder::build` has nothing left to reject — 20 malformed
+        // pattern shapes through both readers reach this zero times. Kept
+        // because it is the crate's declared error path, not ours.
+        Err(err) => {
+            if let Some(name) = report_as
+                && !already_reported(name)
+            {
+                eprintln!(
+                    "Warning: Failed to build ignore rules from {}: {}",
+                    name.display(),
+                    named_error(&err, file, name)
+                );
+            }
+            None
+        }
+    }
+}
+
+/// Whether this ignore file has already been complained about, marking it as
+/// complained about if not.
+///
+/// `is_ignored` re-reads the `.cmake-fmt-ignore` chain once per root it is asked
+/// about, so without this a broken one printed the same sentence per root — the
+/// duplication `--ignore-file` was just cured of, in the other reader.
+fn already_reported(file: &Path) -> bool {
+    already_reported_error(&file.to_string_lossy())
+}
+
+/// The same, keyed by the message rather than by the file.
+///
+/// The walk's own matcher and `is_ignored`'s produce the same sentence about the
+/// same ignore file, from two places that do not share a path spelling — so
+/// `-r sub` said it twice, once plain and once prefixed with "Error walking
+/// directory", which had not happened.
+fn already_reported_error(message: &str) -> bool {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+
+    static REPORTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let reported = REPORTED.get_or_init(|| Mutex::new(HashSet::new()));
+    match reported.lock() {
+        Ok(mut seen) => !seen.insert(message.to_string()),
+        // A poisoned lock means another thread panicked mid-report. Saying it
+        // twice beats not saying it.
+        Err(_) => false,
+    }
+}
+
+/// A gitignore error with the path it read swapped for the one the user typed.
+///
+/// The message embeds the file name, so a materialised one-shot source made it
+/// read `Warning: /tmp/.tmpXXXX: line 2: …` — a path the user never wrote and
+/// cannot look at.
+fn named_error(err: &ignore::Error, read: &Path, name: &Path) -> String {
+    let text = format!("{:#}", err);
+    let read = read.display().to_string();
+    let name = name.display().to_string();
+    if read == name {
+        text
+    } else {
+        text.replace(&read, &name)
+    }
+}
+
+/// Put a walked path back into the spelling its root was given as.
+///
+/// The walk runs on resolved roots so its verdicts do not depend on how a
+/// directory was named, but every message the user sees should name the
+/// directory they typed.
+fn respell(path: &Path, roots: &[(PathBuf, PathBuf)]) -> PathBuf {
+    // Longest resolved root first, like `respell_message`. Argument order would
+    // respell a path under `sub` through `.` for `-r . sub`, so the two
+    // disagreed about the same file — and the nested root is the more
+    // informative of the two.
+    let mut by_depth: Vec<&(PathBuf, PathBuf)> = roots.iter().collect();
+    by_depth.sort_by_key(|(resolved, _)| std::cmp::Reverse(resolved.as_os_str().len()));
+    for (resolved, original) in by_depth {
+        if let Ok(relative) = path.strip_prefix(resolved) {
+            return original.join(relative);
+        }
+    }
+    path.to_path_buf()
+}
+
+/// Remove Windows' `\\?\` verbatim prefix wherever it appears inside a message.
+///
+/// The `ignore` crate canonicalizes internally, so its own diagnostics carry a
+/// verbatim path even when every path handed to it is plain. That leaked into
+/// the output, and — because the de-duplication key is the message text — the
+/// same broken ignore file was reported twice, once in each spelling.
+#[cfg(windows)]
+fn plain_paths_in(message: &str) -> String {
+    let mut out = String::with_capacity(message.len());
+    let mut rest = message;
+    while let Some(at) = rest.find(r"\\?\") {
+        let (before, from) = rest.split_at(at);
+        out.push_str(before);
+        let tail = &from[r"\\?\".len()..];
+        if let Some(unc) = tail.strip_prefix(r"UNC\") {
+            out.push_str(r"\\");
+            rest = unc;
+            continue;
+        }
+        // The same guard `strip_verbatim` applies: only a drive-letter path is
+        // shortened. Anything else — `\\?\Volume{GUID}\`, or the text of a
+        // glob the user wrote — is left exactly as it is, so the two never
+        // disagree about a spelling and a diagnostic does not misquote the
+        // pattern it is complaining about.
+        //
+        // The `UNC\` arm above has no such guard, in either function: a
+        // verbatim UNC path cannot be told from a glob that happens to contain
+        // that literal text, so a pattern spelling `\\?\UNC\srv\share\…` is
+        // still shortened when quoted back. Both functions do it identically,
+        // so the de-duplication keys stay in one spelling; the cost is confined
+        // to how that one pattern reads in one diagnostic.
+        let bytes = tail.as_bytes();
+        if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            rest = tail;
+        } else {
+            out.push_str(r"\\?\");
+            rest = tail;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+#[cfg(not(windows))]
+fn plain_paths_in(message: &str) -> String {
+    message.to_string()
+}
+
+/// Rewrite a resolved root back to the spelling the user typed, inside a message
+/// the `ignore` crate built.
+///
+/// `respell` takes a `Path`; a diagnostic embeds the path in prose, so this one
+/// has to be textual. Roots are absolutized before the walk so that a verdict
+/// belongs to the directory rather than to how it was spelled — which left the
+/// walk's own complaints naming a path nobody typed, while `Would reformat:`
+/// kept the user's. Longest resolved prefix first, so a shorter root cannot
+/// rewrite part of a longer one.
+fn respell_message(message: &str, roots: &[(PathBuf, PathBuf)]) -> String {
+    let mut pairs: Vec<(&Path, &Path)> = roots
+        .iter()
+        .map(|(resolved, original)| (resolved.as_path(), original.as_path()))
+        .collect();
+    pairs.sort_by_key(|(resolved, _)| std::cmp::Reverse(resolved.as_os_str().len()));
+
+    let mut out = message.to_string();
+    for (resolved, original) in pairs {
+        let (Some(from), Some(to)) = (resolved.to_str(), original.to_str()) else {
+            continue;
+        };
+        if from != to && !from.is_empty() {
+            out = out.replace(from, to);
+        }
+    }
+    out
+}
+
+/// Whether this run will read its input from stdin.
+///
+/// Decided the same way the stdin path decides it further down, but needed
+/// earlier, before `--ignore-file` is opened.
+fn stdin_would_be_read(cli: &Cli) -> bool {
+    use std::io::IsTerminal;
+    (cli.files.len() == 1 && cli.files[0] == Path::new("-"))
+        || (cli.files.is_empty() && !std::io::stdin().is_terminal())
+}
+
+/// Whether `path` is another name for this process's own stdin.
+///
+/// `/dev/stdin`, `/dev/fd/0` and `/proc/self/fd/0` all are, and so is the very
+/// file a shell redirect points fd 0 at. Compared by device and inode rather
+/// than by spelling, because the spellings are unbounded.
+#[cfg(unix)]
+fn drains_stdin(path: &Path) -> bool {
+    use std::io::IsTerminal;
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+    let (Ok(target), Ok(stdin)) = (std::fs::metadata(path), std::fs::metadata("/dev/stdin")) else {
+        return false;
+    };
+    if target.dev() != stdin.dev() || target.ino() != stdin.ino() {
+        return false;
+    }
+    // Naming the same file as stdin is not enough: only a stream with one
+    // shared read position loses data. A regular file is reopened at its own
+    // offset — `prepare_ignore_file` returns it directly and never copies — and
+    // `/dev/null` is a single system-wide inode, so it aliases stdin under the
+    // ordinary `< /dev/null` that a cron job or a systemd unit gives every
+    // process, while reading it consumes nothing.
+    let kind = target.file_type();
+    kind.is_fifo() || kind.is_socket() || std::io::stdin().is_terminal()
+}
+
+#[cfg(not(unix))]
+fn drains_stdin(_path: &Path) -> bool {
+    false
+}
+
+/// Generous for an ignore file, and small enough to hold comfortably.
+const IGNORE_FILE_LIMIT: u64 = 1 << 20;
+
+/// Copy an ignore file that can only be read once into a temporary file.
+///
+/// One byte over the limit is taken deliberately: the caller can then tell a
+/// stream that merely reached the bound from one that runs past it, and refuse
+/// the second rather than silently dropping its tail. Truncating instead cut a
+/// pattern in half and matched something the author never wrote.
+fn copy_ignore_file(path: &Path) -> std::io::Result<tempfile::NamedTempFile> {
+    use std::io::Read;
+
+    let mut temp = tempfile::NamedTempFile::new()?;
+    let mut source = std::fs::File::open(path)?.take(IGNORE_FILE_LIMIT + 1);
+    std::io::copy(&mut source, temp.as_file_mut())?;
+    Ok(temp)
+}
+
+/// Make `--ignore-file` readable by every reader that will want it, or say why
+/// it cannot be one.
+///
+/// A regular file can be read as many times as the walk likes, so it is used
+/// where it lies. Anything else may only yield its bytes once, so it is copied
+/// first and every check then runs on the copy.
+///
+/// Checking the source before copying it is what broke: the check drained a
+/// character device to measure it, and the copy then reopened a stream that had
+/// already given everything up. A terminal behind `/dev/stdin` lost every
+/// pattern that way, silently, and the files the author excluded were
+/// reformatted. `/dev/null` and `/dev/zero` survive being read twice, which is
+/// exactly why the tests did not see it.
+fn prepare_ignore_file(
+    path: &Path,
+) -> std::result::Result<(Option<tempfile::NamedTempFile>, PathBuf), String> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) => return Err(format!("cannot be read: {}", err)),
+    };
+    if metadata.is_dir() {
+        return Err("is a directory".to_string());
+    }
+
+    if metadata.is_file() {
+        check_ignore_file_readable(path)?;
+        report_unusable_patterns(path, path);
+        return Ok((None, path.to_path_buf()));
+    }
+
+    // A fifo, a character device, a socket: one read is all there is.
+    let temp = match copy_ignore_file(path) {
+        Ok(temp) => temp,
+        Err(err) => return Err(format!("cannot be read: {}", err)),
+    };
+    let copied = match temp.as_file().metadata() {
+        Ok(metadata) => metadata.len(),
+        Err(err) => return Err(format!("cannot be read: {}", err)),
+    };
+    if copied > IGNORE_FILE_LIMIT {
+        return Err(over_the_limit());
+    }
+    let owned = temp.path().to_path_buf();
+    report_unusable_patterns(&owned, path);
+    Ok((Some(temp), owned))
+}
+
+/// Say once what the matcher will refuse to read from `--ignore-file`.
+///
+/// It opens and reads — so the readability check passed — and then turns out not
+/// to be text, or to hold a pattern `gitignore` will not take. Discarding that
+/// silently is how a broken ignore file used to reach the walk with no
+/// diagnostic at all and every excluded file got formatted, exit 0. The matcher
+/// built here is thrown away; the readers build their own, quietly.
+fn report_unusable_patterns(read: &Path, spelled: &Path) {
+    // Same base as the matcher this diagnoses, and the same reason for giving up
+    // when the working directory cannot be read: an empty root would make the
+    // verdicts disagree with the real ones.
+    let Ok(cwd) = std::env::current_dir() else {
+        return;
+    };
+    let _ = build_ignore_matcher(read, &resolve_path(&cwd), Some(spelled));
+}
+
+fn over_the_limit() -> String {
+    format!(
+        "is larger than {} KiB, which is not an ignore file",
+        IGNORE_FILE_LIMIT / 1024
+    )
+}
+
+/// Whether a regular `--ignore-file` can actually be read, and why not when it
+/// cannot.
+///
+/// `is_file()` answers a different question: it is true for a file whose mode
+/// forbids reading it, which left the old silent path intact — the walk dropped
+/// the error outright, so every excluded file was formatted with no diagnostic
+/// at all and the exit code spoke only about the other files.
+///
+/// Only regular files come here, and only they can be probed: reading anything
+/// else consumes what the matcher will need. `prepare_ignore_file` copies those
+/// instead and measures the copy.
+///
+/// The bound matters as much as the open: `GitignoreBuilder::add` reads the
+/// whole file, and a line-less one like `/dev/zero` never ends, so the process
+/// aborted trying to hold it. An ignore file larger than the bound is refused
+/// rather than read.
+fn check_ignore_file_readable(path: &Path) -> std::result::Result<(), String> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) => return Err(format!("cannot be read: {}", err)),
+    };
+    match std::io::copy(
+        &mut std::io::Read::take(file, IGNORE_FILE_LIMIT + 1),
+        &mut std::io::sink(),
+    ) {
+        Ok(read) if read > IGNORE_FILE_LIMIT => Err(over_the_limit()),
+        Ok(_) => Ok(()),
+        Err(err) => Err(format!("cannot be read: {}", err)),
+    }
+}
+
+/// Strip Windows' `\\?\` verbatim prefix from a canonicalized path.
+///
+/// `canonicalize` returns a verbatim path on Windows and nothing else here
+/// produces one: `current_dir()`, the `ignore` crate's matcher roots and the
+/// spelling a caller types are all plain. Every comparison in this module is
+/// textual — `target.starts_with(root)`, `root != target` — so a verbatim path
+/// on one side and a plain one on the other made them answer wrongly in *both*
+/// directions. No matcher was ever consulted about a file, so an excluded file
+/// was formatted; and the guard that stops an ignore file deciding about its own
+/// root stopped firing, so the `*` of an allowlist idiom dropped the whole tree.
+/// Five tests covering this branch's own feature failed on Windows and nowhere
+/// else.
+#[cfg(windows)]
+fn strip_verbatim(path: PathBuf) -> PathBuf {
+    // A path that is not valid UTF-16-to-UTF-8 is left alone rather than
+    // round-tripped lossily.
+    let Some(text) = path.to_str() else {
+        return path;
+    };
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{}", rest));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        // Only a drive-letter path is safe to shorten; leave any other
+        // verbatim form as it is.
+        let bytes = rest.as_bytes();
+        if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            return PathBuf::from(rest);
+        }
+    }
+    path
+}
+
+#[cfg(not(windows))]
+fn strip_verbatim(path: PathBuf) -> PathBuf {
+    path
+}
+
+/// Resolve `path` as far as the filesystem allows, then re-join what is left.
+///
+/// The walk resolves symlinks for every entry whose ignore files it reads
+/// (`Ignore::add_parents` canonicalizes), so every path compared against one has
+/// to be resolved the same way — otherwise the two disagree about the same file
+/// and `cmake-fmt -r link` and `--assume-filename link/a.cmake` reach opposite
+/// verdicts. It also puts both sides of the working-directory comparison in the
+/// same spelling, which needs resolving on *both* sides: `current_dir()` is
+/// physical on Unix, so on a system whose temp directory is reached through a
+/// symlink (macOS, where `/var` is a link) a caller-supplied spelling never
+/// matched it — while on Windows it is the caller's spelling that survives, 8.3
+/// components and junctions included, so there it is the working directory that
+/// has to be resolved before anything is compared against it.
+///
+/// Only the deepest existing ancestor is canonicalized. `--assume-filename`
+/// routinely names a file that does not exist yet, but its directory almost
+/// always does.
+fn resolve_path(path: &Path) -> PathBuf {
+    let absolute = if path.is_relative() {
+        std::env::current_dir().unwrap_or_default().join(path)
+    } else {
+        path.to_path_buf()
+    };
+
+    // Deliberately *not* normalized first. `link/..` is the parent of what
+    // `link` points at, not the directory `link` sits in, and only the
+    // filesystem knows which — collapsing `..` as text first named a different
+    // directory, and since walk roots are resolved here that meant walking one
+    // nobody asked for.
+    let mut unresolved: Vec<std::ffi::OsString> = Vec::new();
+    let mut cursor = absolute.as_path();
+    loop {
+        if let Ok(real) = cursor.canonicalize() {
+            let mut resolved = strip_verbatim(real);
+            resolved.extend(unresolved.iter().rev());
+            return resolved;
+        }
+        match (cursor.parent(), cursor.file_name()) {
+            (Some(parent), Some(name)) => {
+                unresolved.push(name.to_os_string());
+                cursor = parent;
+            }
+            // Nothing on this path exists, so a lexical answer is all there is
+            _ => return normalize_path(&absolute),
+        }
+    }
+}
+
+/// Collapse `.` and `..` components without touching the filesystem.
+///
+/// `--assume-filename` routinely names a file that doesn't exist yet, so
+/// `canonicalize()` is not an option; but an un-normalized path makes
+/// `ancestors()` yield directories that aren't ancestors at all.
+fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // Only a real directory name can be cancelled. `out.pop()`
+                // succeeds on a trailing `..` as well — `Path::new("..")` has a
+                // parent — so `../../a` collapsed to `a`, a path pointing at a
+                // different tree entirely. A root cannot be escaped, so `/..`
+                // is just `/`.
+                match out.components().next_back() {
+                    Some(Component::Normal(_)) => {
+                        out.pop();
+                    }
+                    // A root cannot be escaped, so `/..` is just `/`. A bare
+                    // Windows prefix can: `C:..\a` is relative to the drive's
+                    // current directory, so the `..` still means something.
+                    Some(Component::RootDir) => {}
+                    _ => out.push(Component::ParentDir.as_os_str()),
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Copy stdin to stdout untouched, for a file that ignore rules exclude
+fn passthrough_stdin(check_mode: bool, diff_mode: bool) -> Result<ExitCode> {
+    use std::io::{copy, sink, stdin, stdout};
+
+    // Copy bytes rather than decoding them. This path exists because the ignore
+    // rules said to leave the file alone, so refusing it for not being UTF-8
+    // would report an error about a file nobody asked us to look at — and
+    // format-on-save would show that error every time it was saved.
+    let mut input = stdin().lock();
+    if check_mode || diff_mode {
+        // Those modes report "nothing to do" rather than echoing the buffer, but
+        // the pipe still has to be drained
+        copy(&mut input, &mut sink())?;
+    } else {
+        copy(&mut input, &mut stdout().lock())?;
+    }
+
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Process stdin to stdout
@@ -1063,4 +1883,55 @@ fn write_file_atomically(path: &std::path::Path, content: &str) -> Result<()> {
     temp.persist(path)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `normalize_path` stands in for `canonicalize` on a path that may not
+    /// exist, so the paths it produces decide which ignore files are read. It
+    /// had no tests, and `out.pop()` succeeding on a trailing `..` — which it
+    /// does, because `Path::new("..")` has a parent — meant a relative path with
+    /// stacked `..` collapsed onto a different tree.
+    /// `resolve_path` re-joins the components below the deepest existing
+    /// directory, so a target two levels below one has to come back in order.
+    #[test]
+    fn test_resolve_path_rejoins_a_missing_tail_in_order() {
+        let tempdir = tempfile::TempDir::new().expect("tempdir");
+        // Normalized the way `resolve_path` normalizes, so this compares the
+        // re-joined tail and not the `\\?\` prefix that `canonicalize` adds on
+        // Windows and `strip_verbatim` takes off again. Identity on Unix.
+        let root = strip_verbatim(tempdir.path().canonicalize().expect("canonicalize"));
+
+        let target = root.join("a").join("b").join("c.cmake");
+        assert_eq!(resolve_path(&target), target, "a fully missing tail");
+
+        std::fs::create_dir(root.join("a")).expect("mkdir");
+        assert_eq!(resolve_path(&target), target, "one existing level");
+    }
+
+    #[test]
+    fn test_normalize_path_keeps_leading_parent_components() {
+        for (input, expected) in [
+            ("a/b/c", "a/b/c"),
+            ("./a/./b", "a/b"),
+            ("a/b/../c", "a/c"),
+            ("a/../b", "b"),
+            ("../a", "../a"),
+            ("../../a", "../../a"),
+            ("../../../a/b", "../../../a/b"),
+            ("../a/../b", "../b"),
+            ("/a/../b", "/b"),
+            ("/../a", "/a"),
+            ("/../../a", "/a"),
+        ] {
+            assert_eq!(
+                normalize_path(Path::new(input)),
+                PathBuf::from(expected),
+                "normalizing {:?}",
+                input
+            );
+        }
+    }
 }

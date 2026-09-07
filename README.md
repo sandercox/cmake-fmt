@@ -163,6 +163,67 @@ third_party/
 generated/*.cmake
 ```
 
+`.cmake-fmt-ignore` is honoured both when walking directories and when a file is
+piped through stdin with `--assume-filename`, so editor format-on-save skips the
+same files, which are passed through unchanged. As in git, an excluded directory
+is final: `build/` cannot be undone by a later `!build/keep.cmake`, though
+`build/*` can.
+
+Two limits worth knowing.
+
+The stdin path consults `.cmake-fmt-ignore` and `--ignore-file` only. The
+directory walk additionally honours `.ignore`, `.gitignore` (when the tree is
+inside a git repository), `.git/info/exclude`, and your global gitignore — so a
+path excluded solely by one of those is skipped on the command line but still
+formatted on save. Put it in `.cmake-fmt-ignore` if you want both to skip it.
+
+And a file named explicitly on the command line is always formatted, ignore
+rules or not. A *directory* named explicitly is not: if `.cmake-fmt-ignore`
+excludes it, it is skipped however you reach it, including `cmake-fmt -r .` run
+from inside it. The `.gitignore` family does not get that treatment — a
+directory excluded only by `.gitignore` is still walked when you name it.
+
+The asymmetry runs both ways, so it is worth knowing which direction you are
+in. The stdin path skips *less* than the walk, because of the sources above.
+It can also skip *more*: `--ignore-file` ranks below all of them on the walk, so
+a negation in `.gitignore` or `.ignore` can override it there and has no
+counterpart on the stdin path.
+
+`--ignore-file` is resolved against the working directory, and on the stdin path
+its directory patterns are only tested against directories at or below that
+working directory. A walk tests them against every directory at or below its own
+root, and the stdin path has no root to use — so for a file outside the working
+directory, `cmake-fmt - --assume-filename …` can format something that
+`cmake-fmt -r` rooted next to that file would skip. Running both from the same
+directory removes most of the difference, though not all of it. From `proj/sub`,
+with `ig.txt` holding `*` and `!*.cmake`, `cmake-fmt -r .. --ignore-file ig.txt`
+skips the whole tree — `*` matches the directory `proj`, and an excluded
+directory is never descended into — while
+`cmake-fmt - --assume-filename x.cmake --ignore-file ig.txt` formats the file,
+because `proj` is above the working directory and so is not consulted at all.
+Note the alternative would be worse: a pattern like `build/` or `tmp/` matches by
+basename, so testing every ancestor would let a directory far above your project
+disable the entire run.
+
+Pointing `--ignore-file` at something that cannot be read is an error rather
+than something silently ignored — a typo there would otherwise format every
+file you meant to exclude, with no diagnostic at all. `/dev/null`, a `<(...)` pattern list and
+`/dev/stdin` — a pipe or a terminal — all work: a source that can only be read
+once is copied first, so every reader sees the same patterns. A directory, an
+unreadable file, and anything larger than 1 MiB are refused, one-shot sources
+included; the bound is never applied by truncating, which would cut a pattern in
+half.
+
+A directory named as the walk root is resolved before it is walked, so its
+verdict is a property of the directory rather than of how you spelled it —
+`cmake-fmt -r sub`, `-r ./sub`, `-r sub/../sub` and `-r link-to-sub` all agree
+with each other and with the stdin path. Reported paths still use the spelling
+you gave.
+
+If you use `pre-commit`, `lint-staged` or a similar hook, note that those pass an
+explicit file list, which is the one invocation that ignores `.cmake-fmt-ignore`
+entirely. Pass the directory instead if you want the ignore rules applied.
+
 When going through your files for the first time, you can use `--interactive` to review changes hunk-by-hunk and choose which ones to apply or skip/disable.
 
 ## Configuration
