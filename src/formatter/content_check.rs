@@ -830,8 +830,8 @@ pub(crate) fn check(
     // It also accepts the CRLF pass, which runs after formatting as a blanket
     // replacement and so rewrites newlines inside a bracket argument or bracket
     // comment as well as between lines.
-    let input = strip_carriage_returns(input);
-    let output = strip_carriage_returns(output);
+    let input = normalize_line_endings(input);
+    let output = normalize_line_endings(output);
 
     // Nothing to compare when nothing changed, and `--check` over an
     // already-formatted tree is the common case
@@ -844,7 +844,7 @@ pub(crate) fn check(
 
 /// The same, for a caller that has already parsed what the formatter parsed.
 ///
-/// `input` must be `\r`-stripped and `input_cst` must be its parse — the
+/// `input` must have `\n` line endings and `input_cst` must be its parse — the
 /// formatter's own `parse_input` and `cst`. Get that wrong and the two sides are
 /// read from different texts. It saves the third parse of a file that changed,
 /// which is where this check costs anything at all.
@@ -856,22 +856,30 @@ pub(crate) fn check_parsed(
     grammars: &UserGrammars,
 ) -> Option<Difference> {
     debug_assert!(
-        !input.contains('\r'),
-        "check_parsed takes the text the caller parsed, which is \\r-stripped"
+        !input.contains("\r\n"),
+        "check_parsed takes the text the caller parsed, whose line endings are \\n"
     );
-    let output = strip_carriage_returns(output);
+    let output = normalize_line_endings(output);
     if input == output {
         return None;
     }
     compare_parsed(input_cst, input, &output, config, grammars)
 }
 
-/// `\r`-stripped, and borrowed when there was nothing to strip — this runs over
-/// every formatted file, and two whole-file copies to find no `\r` was the
-/// measured cost of the guard on an already-formatted tree.
-pub(crate) fn strip_carriage_returns(text: &str) -> std::borrow::Cow<'_, str> {
-    if text.contains('\r') {
-        std::borrow::Cow::Owned(text.replace('\r', ""))
+/// Line endings normalised to `\n`, and borrowed when there were none to
+/// normalise — this runs over every formatted file, and two whole-file copies to
+/// find no `\r\n` was the measured cost of the guard on an already-formatted
+/// tree.
+///
+/// `\r\n`, not every `\r`. A lone `\r` is not a line ending, it is a byte in a
+/// quoted or bracket argument, and deleting it is the same mistake the
+/// whole-buffer whitespace strip made: a pass over finished text cannot tell a
+/// line ending from a token's payload. Both sides of the comparison are
+/// normalised the same way, so this decides what the guard will forgive, and it
+/// must forgive exactly what [`super::format_with_config`] does to the input.
+pub(crate) fn normalize_line_endings(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains("\r\n") {
+        std::borrow::Cow::Owned(text.replace("\r\n", "\n"))
     } else {
         std::borrow::Cow::Borrowed(text)
     }

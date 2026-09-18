@@ -3607,6 +3607,68 @@ fn test_whitespace_inside_a_value_is_not_the_formatters_to_remove() {
     }
 }
 
+/// A carriage return inside a value is that value's byte, not a line ending.
+#[test]
+fn test_a_carriage_return_inside_a_value_is_not_a_line_ending() {
+    // Same rule as the test above, for the other whole-buffer pass: the input
+    // had every `\r` deleted before parsing, which reached inside a quoted and a
+    // bracket argument exactly as the whitespace strip did. `set(A "a\rb")` came
+    // back as `set(A "ab")` — a value `cmake -P` reads differently — and the
+    // content guard could not see it, because it deleted every `\r` from both
+    // sides before comparing.
+    let config = default_config();
+    for input in ["set(A \"a\rb\")\n", "set(A [[a\rb]])\n"] {
+        let result = format_text(input, &config);
+        assert!(
+            result.contains("a\rb"),
+            "the value lost its carriage return for {:?}:\n{:?}",
+            input,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+
+    // `\r\n` between lines is a line ending — `line_ending = auto` reads it and
+    // writes it back.
+    assert_eq!(format_text("set(A b)\r\n", &config), "set(A b)\r\n");
+
+    // A lone `\r` is *space*, which is what CMake calls it: `cmake -P` on
+    // `set(A 1)\rmessage(x)` is a parse error, so the `\r` does not end the
+    // command. Asserted as "the same as a space", so this cannot drift into
+    // asserting whatever the lexer happens to do.
+    // Doubled, because that is where space and line ending part company: two
+    // newlines are a blank line to preserve, two spaces are not.
+    assert_eq!(
+        format_text("set(A b)\r\rset(C d)\n", &config),
+        format_text("set(A b)  set(C d)\n", &config)
+    );
+
+    // And it does not end a comment. `cmake -P` on `# c\rmessage("x")` prints
+    // nothing, so the `message` is commented out; treating the `\r` as a line
+    // ending here promoted it to a command — uncommenting code, exit 0, no
+    // warning, and invisible to the content guard, which re-parses the output
+    // with this same lexer and so ends the comment in the same wrong place on
+    // both sides.
+    let commented = format_text("message(\"start\")\n# c\rmessage(\"x\")\n", &config);
+    assert!(
+        commented.lines().count() == 2 && commented.contains("\rmessage(\"x\")"),
+        "the lone carriage return ended the comment and uncommented what followed:\n{:?}",
+        commented
+    );
+    assert_eq!(
+        commented,
+        format_text(&commented, &config),
+        "not idempotent"
+    );
+
+    // And a file written with CRLF still gets CRLF back.
+    let crlf = FormatConfig {
+        line_ending: cmake_fmt::formatter::LineEnding::CrLf,
+        ..Default::default()
+    };
+    assert_eq!(format_text("set(A b)\n", &crlf), "set(A b)\r\n");
+}
+
 /// A `( ... )` group carrying a comment is emitted as its author wrote it.
 #[test]
 fn test_a_comment_inside_a_parenthesized_group_is_left_alone() {

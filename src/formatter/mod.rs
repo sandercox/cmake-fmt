@@ -64,9 +64,10 @@ pub(crate) fn describe_content_change(
     file_path: Option<&Path>,
     verbose: bool,
 ) -> Option<String> {
-    // The same two savings the main path got: borrow when there is no `\r` to
-    // strip, and hand the parse over rather than making a third.
-    let input = content_check::strip_carriage_returns(input);
+    // The same two savings the main path got: borrow when there is no `\r\n` to
+    // normalize, and parse once here and hand it to `check_parsed`, rather than
+    // letting `check` parse the input a second time.
+    let input = content_check::normalize_line_endings(input);
     let cst = parse_text(&input);
     let grammars = resolve_user_grammars(&cst.root, config, file_path, verbose);
     content_check::check_parsed(&cst, &input, output, config, &grammars)
@@ -166,10 +167,14 @@ pub fn format_text_with_diagnostics_and_path(
         other => other,
     };
 
-    // Normalize input: strip \r so the parser/formatter sees only \n
+    // Line endings normalized to `\n` for the parser. `\r\n` only: a lone `\r`
+    // is a byte inside a quoted or bracket argument, not a line ending, and
+    // deleting every `\r` turned `set(A "a\rb")` into `set(A "ab")` — a value
+    // change `cmake -P` observes, and invisible to the content guard, which
+    // normalized both sides the same way.
     let normalized;
-    let parse_input = if input.contains('\r') {
-        normalized = input.replace('\r', "");
+    let parse_input = if input.contains("\r\n") {
+        normalized = input.replace("\r\n", "\n");
         &normalized
     } else {
         input
