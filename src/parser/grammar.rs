@@ -156,7 +156,31 @@ impl Parser {
     fn parse_argument_list(&mut self) {
         self.builder
             .start_node(CMakeLang::kind_to_raw(SyntaxKind::ARGUMENT_LIST));
+        self.parse_argument_list_body();
+        self.builder.finish_node();
+    }
 
+    /// Parse a nested parenthesized group as an ARGUMENT_LIST node that owns its
+    /// own parens, so the node's text is the complete `( ... )` span.
+    fn parse_nested_argument_list(&mut self) {
+        self.builder
+            .start_node(CMakeLang::kind_to_raw(SyntaxKind::ARGUMENT_LIST));
+        self.bump(); // consume LPAREN
+        self.parse_argument_list_body();
+        if self.at(SyntaxKind::RPAREN) {
+            self.bump(); // consume RPAREN
+        } else {
+            let message = "Expected ')' to close nested argument list".to_string();
+            self.errors.push(ParseError {
+                message,
+                offset: self.byte_offset,
+            });
+        }
+        self.builder.finish_node();
+    }
+
+    /// Parse the contents of an argument list, without wrapping them in a node
+    fn parse_argument_list_body(&mut self) {
         loop {
             self.skip_trivia();
 
@@ -167,17 +191,7 @@ impl Parser {
 
             // Handle nested parens: CMake allows (a (b c) d)
             if self.at(SyntaxKind::LPAREN) {
-                self.bump(); // consume LPAREN
-                self.parse_argument_list(); // recursive parse
-                if self.at(SyntaxKind::RPAREN) {
-                    self.bump(); // consume RPAREN
-                } else {
-                    let message = "Expected ')' to close nested argument list".to_string();
-                    self.errors.push(ParseError {
-                        message,
-                        offset: self.byte_offset,
-                    });
-                }
+                self.parse_nested_argument_list();
             }
             // Check for argument tokens
             else if self.is_argument_token() {
@@ -199,8 +213,6 @@ impl Parser {
                 self.builder.finish_node();
             }
         }
-
-        self.builder.finish_node();
     }
 
     /// Check if current token is a valid argument token

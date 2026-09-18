@@ -904,6 +904,7 @@ fn push_end_of_section_comments(
 /// list whose contents nobody can read.
 fn group_sortable_runs(
     args: &[String],
+    group_args: &[usize],
     sort_from: usize,
     grouping: super::config::SourceGrouping,
 ) -> (Vec<String>, Vec<usize>) {
@@ -913,7 +914,7 @@ fn group_sortable_runs(
     let mut out: Vec<String> = args[..pinned].to_vec();
     let mut old_to_new: Vec<usize> = (0..pinned).collect();
 
-    for run in split_at_barriers(args, pinned..args.len()) {
+    for run in split_at_barriers(args, group_args, pinned..args.len()) {
         let base = out.len();
         let (grouped, local) = group_source_pairs(&args[run.clone()], grouping);
         out.extend(grouped);
@@ -943,7 +944,8 @@ fn group_source_pairs_preserving_blanks(
     let sort_from = section.sort_from.unwrap_or(usize::MAX);
 
     if blank_lines.is_empty() {
-        let (grouped_args, old_to_new) = group_sortable_runs(args, sort_from, grouping);
+        let (grouped_args, old_to_new) =
+            group_sortable_runs(args, &section.group_args, sort_from, grouping);
         let mut annotations = section.annotations.clone();
         annotations.remap(|position| {
             old_to_new
@@ -982,8 +984,20 @@ fn group_source_pairs_preserving_blanks(
 
     let mut segment_start = 0;
     for segment in &segments {
-        let (grouped, segment_old_to_new) =
-            group_sortable_runs(segment, sort_from.saturating_sub(segment_start), grouping);
+        // Segment-local group indices: a group at global index `g` sits at
+        // `g - segment_start` here.
+        let segment_groups: Vec<usize> = section
+            .group_args
+            .iter()
+            .filter(|g| **g >= segment_start && **g < segment_start + segment.len())
+            .map(|g| g - segment_start)
+            .collect();
+        let (grouped, segment_old_to_new) = group_sortable_runs(
+            segment,
+            &segment_groups,
+            sort_from.saturating_sub(segment_start),
+            grouping,
+        );
 
         for (local_index, &local_new) in segment_old_to_new.iter().enumerate() {
             let global_index = segment_start + local_index;
@@ -1097,6 +1111,16 @@ pub struct KeywordSection {
     /// own-line comments and the blank lines around them — in the order they
     /// wrote it.
     pub annotations: Annotations,
+    /// Indices into `args` that hold a parenthesized group.
+    ///
+    /// Recorded where the sections are built, because that is the only place
+    /// that knows — the group arrives as an `ArgumentList` node. Asking the
+    /// rendered string instead needed a scanner over quoted and bracket spans,
+    /// and it was wrong in both directions: `a.cpp[[x(1)]]` opened a bracket
+    /// span the lexer does not (a bracket argument starts an argument, it does
+    /// not appear inside one) and hid a real group, while an unterminated `[[`
+    /// answered "group" for a token holding none.
+    pub group_args: Vec<usize>,
     /// The type of the keyword (if known from grammar)
     pub keyword_type: Option<KeywordType>,
     /// `Some(n)` when this section's arguments are an unordered list that
@@ -1126,6 +1150,7 @@ pub fn parse_keyword_sections_with_grammar(
         annotations: Annotations::default(),
         keyword_type: None,
         // Leading positional run: index 0 is the variable or target name
+        group_args: Vec::new(),
         sort_from: grammar.is_some_and(|g| g.sortable_positional).then_some(1),
         values_on_new_line: false,
     };
@@ -1211,6 +1236,7 @@ pub fn parse_keyword_sections_with_grammar(
                             trailing_comments: Vec::new(),
                             annotations: Annotations::default(),
                             keyword_type: kw_type,
+                            group_args: Vec::new(),
                             sort_from: kw_sort_from,
                             values_on_new_line: false,
                         };
@@ -1258,6 +1284,7 @@ pub fn parse_keyword_sections_with_grammar(
                                 trailing_comments: Vec::new(),
                                 annotations: Annotations::default(),
                                 keyword_type: None,
+                                group_args: Vec::new(),
                                 sort_from: overflow_sortable.then_some(0),
                                 values_on_new_line: false,
                             };
@@ -1319,6 +1346,74 @@ pub fn parse_keyword_sections_with_grammar(
                     saw_separator = true;
                     consecutive_newlines = 0;
                 }
+            }
+        } else if let NodeOrToken::Node(node) = child {
+            // A nested `( ... )` group is one logical argument, never a keyword,
+            // e.g. the grouped sub-expression in `if((A AND B) OR C)`.
+            if let Some(nested) = ArgumentList::cast(node) {
+                consecutive_newlines = 0;
+                let text = super::cst_to_doc::render_nested_group(&nested);
+
+                if !saw_separator && !current_section.args.is_empty() {
+                    // Adjacent to previous token (no whitespace) — merge,
+                    // e.g. `NOT(TRUE)`. The merged argument holds a group, so
+                    // it is a barrier even though the paren does not lead.
+                    let index = current_section.args.len() - 1;
+                    current_section.args[index].push_str(&text);
+                    if !current_section.group_args.contains(&index) {
+                        current_section.group_args.push(index);
+                    }
+                } else if matches!(current_section.keyword_type, Some(KeywordType::SingleValue))
+                    && !current_section.args.is_empty()
+                {
+                    // Same SingleValue overflow the token path applies: the
+                    // keyword already has its one value, so this starts a new
+                    // positional section. `sort_from` is decided the same way
+                    // too — before the push, while `sections` is still empty
+                    // for a leading mode keyword. The group itself cannot move:
+                    // it is index 0 of `group_args` below.
+                    let overflow_sortable =
+                        sections.is_empty() && grammar.is_some_and(|g| g.sortable_positional);
+                    sections.push(current_section);
+                    current_section = KeywordSection {
+                        keyword: None,
+                        args: vec![text],
+                        trailing_comments: Vec::new(),
+                        annotations: Annotations::default(),
+                        group_args: vec![0],
+                        sort_from: overflow_sortable.then_some(0),
+                        keyword_type: None,
+                        values_on_new_line: false,
+                    };
+                } else {
+                    // The token arm's rule, for a group opening a keyword's
+                    // values. No test pins it and none can: every consumer of
+                    // the flag emits `flat_alt(hardline + indent, space)` on
+                    // both sides of its `use_per_line` branch, so the two agree
+                    // unless `force_multiline` is set — and the newline that
+                    // sets this flag sets that one too. Neutralizing both
+                    // writes leaves the corpus byte-identical under every
+                    // style. Kept so the two walks stay the same shape, which
+                    // is what makes them auditable against each other.
+                    if current_section.args.is_empty()
+                        && current_section.keyword.is_some()
+                        && saw_newline_since_keyword
+                    {
+                        current_section.values_on_new_line = true;
+                    }
+                    current_section.group_args.push(current_section.args.len());
+                    current_section.args.push(text);
+                }
+                saw_separator = false;
+            } else {
+                // Any other node would be an ERROR region. The lexer cannot
+                // produce one inside an argument list — it emits
+                // UNQUOTED_ARGUMENT for everything that is not a paren or EOF —
+                // so this is unreachable today and no test can cover it. Kept
+                // because the other two copies of this walk do the same, and a
+                // stale `saw_separator` would merge the next argument onto the
+                // previous one if the lexer ever changed.
+                saw_separator = true;
             }
         }
     }
@@ -1522,11 +1617,15 @@ fn unmark_unsortable_positional_runs(
             governs_the_list && (is_whole_variable_reference(name) || is_search_path_variable(name))
         });
 
-        let blocked_by_value = sections[idx]
-            .args
-            .iter()
-            .skip(sort_from)
-            .any(|arg| !is_variable_like(arg) && !is_sortable_positional_value(arg));
+        // A group is not exempted here, and does not need to be: its rendered
+        // text passes the value test on its own, and asking `group_args` as well
+        // changes nothing across 972 shape/style combinations. The group's
+        // position is protected by `split_at_barriers`, which is where the
+        // question belongs.
+        let blocked_by_value = sections[idx].args.iter().skip(sort_from).any(|arg| {
+            opens_an_unclosed_bracket(arg)
+                || (!is_variable_like(arg) && !is_sortable_positional_value(arg))
+        });
 
         if blocked_by_name || blocked_by_value {
             sections[idx].sort_from = None;
@@ -1543,13 +1642,17 @@ pub fn parse_keyword_sections(arg_list: &ArgumentList) -> Vec<KeywordSection> {
 /// Split `seg` into runs of adjacent sortable args, with each variable-like arg
 /// becoming its own single-element run — a barrier that can neither move nor let
 /// its neighbours move across it.
-fn split_at_barriers(args: &[String], seg: std::ops::Range<usize>) -> Vec<std::ops::Range<usize>> {
+fn split_at_barriers(
+    args: &[String],
+    group_args: &[usize],
+    seg: std::ops::Range<usize>,
+) -> Vec<std::ops::Range<usize>> {
     let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
     let mut run_start = seg.start;
 
     for (offset, arg) in args[seg.start..seg.end].iter().enumerate() {
         let idx = seg.start + offset;
-        if is_variable_like(arg) {
+        if group_args.contains(&idx) || is_variable_like(arg) || opens_an_unclosed_bracket(arg) {
             if run_start < idx {
                 runs.push(run_start..idx);
             }
@@ -1565,14 +1668,51 @@ fn split_at_barriers(args: &[String], seg: std::ops::Range<usize>) -> Vec<std::o
     runs
 }
 
+/// True when `s` opens a bracket argument it never closes.
+///
+/// The lexer then swallows the rest of the file into this one token, so nothing
+/// after it can be read — including whether it is a filename. A veto, never an
+/// exemption: it only ever declines to reorder. The group question is answered
+/// structurally by `group_args`; this one really is about the spelling, because
+/// it asks whether this token's own bracket is closed.
+fn opens_an_unclosed_bracket(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            let mut open = i + 1;
+            while open < bytes.len() && bytes[open] == b'=' {
+                open += 1;
+            }
+            if open < bytes.len() && bytes[open] == b'[' {
+                let close = format!("]{}]", "=".repeat(open - i - 1));
+                match s[open + 1..].find(&close) {
+                    Some(offset) => i = open + 1 + offset + close.len(),
+                    None => return true,
+                }
+                continue;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 /// True for arguments that expand to something unknown at format time, so their
 /// position may be meaningful even inside a list that is otherwise unordered.
 ///
 /// A leading quote is stripped first: `"${GENERATED}"` is as common as the bare
 /// spelling, and it would otherwise sort ahead of everything because `"` (0x22)
 /// precedes every letter.
+///
+/// Groups are not its business any more: which arguments hold one is recorded
+/// structurally in `KeywordSection::group_args`.
 fn is_variable_like(s: &str) -> bool {
     let s = s.trim_start_matches('"');
+    // A parenthesized group is one rendered argument holding several real ones,
+    // so its position is meaningful for the same reason a variable's is — and
+    // the value heuristics cannot read it: `(b c.cpp)` looks like a file with
+    // extension "cpp)", and its leading '(' hides any flag inside it.
     s.starts_with("${") || s.starts_with("$<") || s.starts_with("$ENV{") || s.starts_with("$CACHE{")
 }
 
@@ -1628,7 +1768,7 @@ pub fn sort_source_args(section: &mut KeywordSection) {
     // index and act as a barrier for the arguments around them
     let segments: Vec<std::ops::Range<usize>> = segments
         .into_iter()
-        .flat_map(|seg| split_at_barriers(&section.args, seg))
+        .flat_map(|seg| split_at_barriers(&section.args, &section.group_args, seg))
         .collect();
 
     // For each segment, build sortable entries (arg + associated comments)
@@ -3116,6 +3256,7 @@ mod tests {
             args: args.iter().map(|arg| arg.to_string()).collect(),
             trailing_comments: Vec::new(),
             annotations,
+            group_args: Vec::new(),
             keyword_type: None,
             sort_from,
             values_on_new_line: false,

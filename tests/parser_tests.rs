@@ -320,3 +320,87 @@ fn test_snapshot_error_recovery() {
 
     insta::assert_debug_snapshot!("error_recovery_cst", cst.root);
 }
+
+#[test]
+fn test_nested_group_node_owns_its_parens() {
+    // The formatter renders a group from its node text, so the node has to
+    // span the parens themselves, not just what sits between them.
+    let cst = parse_text("if((TRUE) AND (FALSE))\n");
+    let commands: Vec<_> = cst.commands().collect();
+    let arg_list = commands[0].argument_list().expect("has argument list");
+
+    let groups: Vec<String> = arg_list
+        .nested_lists()
+        .map(|g| g.syntax().text().to_string())
+        .collect();
+
+    assert_eq!(groups, vec!["(TRUE)".to_string(), "(FALSE)".to_string()]);
+}
+
+#[test]
+fn test_unterminated_nested_group_roundtrips() {
+    // Error recovery must still reproduce the input byte for byte — which the
+    // old parser did too, so the roundtrip alone says nothing about this change.
+    // What it has to also do is record the failure and still build the group
+    // node, so the formatter has something to render instead of dropping it.
+    // The second number is how many *nested* groups end at EOF, which is the
+    // only thing `parse_nested_argument_list`'s own error records.
+    for (input, expected_nested_errors) in [
+        ("if((A)\n", 0),
+        ("if((\n", 1),
+        ("if((((((\n", 5),
+        ("if(()\n", 0),
+        ("if((A))extra\n", 0),
+    ] {
+        let cst = parse_text(input);
+        assert_eq!(
+            cst.root.text().to_string(),
+            input,
+            "roundtrip failed for {:?}",
+            input
+        );
+        // The base parser recursed too, so counting nested nodes proves
+        // nothing. What changed is that a nested list *owns its parens*, which
+        // is what lets the formatter render the group verbatim instead of
+        // dropping it.
+        let nested: Vec<String> = cst
+            .root
+            .descendants()
+            .filter(|n| n.kind() == SyntaxKind::ARGUMENT_LIST)
+            .filter(|n| {
+                n.parent()
+                    .is_some_and(|p| p.kind() == SyntaxKind::ARGUMENT_LIST)
+            })
+            .map(|n| n.text().to_string())
+            .collect();
+        assert!(!nested.is_empty(), "no nested group node for {:?}", input);
+        // The comment above promises a recorded failure, and nothing asserted it
+        // — removing the `errors.push` from `parse_nested_argument_list` left the
+        // whole suite green. Nothing in `src/` reads parse errors today, so this
+        // is the library API's contract rather than the formatter's.
+        // Counted, not `has_errors()`: that is true for all five inputs from the
+        // enclosing command's own missing `)`, so it passes with this push
+        // removed. Three of the five never reach the nested arm at all — the
+        // command-level error fires first — so only the two that do can pin it.
+        let nested_errors = cst
+            .errors
+            .iter()
+            .filter(|e| e.message.contains("nested argument list"))
+            .count();
+        assert_eq!(
+            nested_errors,
+            expected_nested_errors,
+            "wrong number of nested-group errors for {:?}: {:?}",
+            input,
+            cst.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+        for text in &nested {
+            assert!(
+                text.starts_with('('),
+                "a nested group must own its opening paren, got {:?} for {:?}",
+                text,
+                input
+            );
+        }
+    }
+}
