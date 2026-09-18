@@ -368,6 +368,20 @@ impl<'a> Lexer<'a> {
         // Consume characters that are not whitespace, parens, quotes, or special characters
         while let Some(ch) = self.cursor.peek() {
             match ch {
+                // A backslash escapes the character after it, and CMake lets it
+                // escape the very characters this loop breaks on: `cmake -P`
+                // reads `message(A\"B)`, `A\#B`, `A\(B`, `A\)B` and `A\ B` as one
+                // argument each. Breaking on the escaped character instead
+                // opened a quoted argument that never closed, so the parse ran
+                // to end of file — after which the content guard refused the
+                // whole file and told the author it might not be valid CMake,
+                // which for `libgit2`, `ESP-IDF` and several vcpkg ports it was
+                // not. A newline is the exception: `\` before one is a parse
+                // error to CMake, so it is left to end the argument.
+                '\\' if !matches!(self.cursor.peek_nth(1), None | Some('\n') | Some('\r')) => {
+                    self.cursor.advance();
+                    self.cursor.advance();
+                }
                 ' ' | '\t' | '\n' | '\r' | '(' | ')' | '"' | '#' => break,
                 _ => {
                     self.cursor.advance();

@@ -1,6 +1,7 @@
 use cmake_fmt::formatter::format_text;
 use cmake_fmt::formatter::{
     ClosingStyle, CommandCase, CommentStyle, FinalNewline, FormatConfig, UserCommandCase,
+    format_text_with_diagnostics,
 };
 
 // Helper to create default config
@@ -3604,6 +3605,39 @@ fn test_whitespace_inside_a_value_is_not_the_formatters_to_remove() {
         );
         assert_eq!(result, format_text(&result, &config), "not idempotent");
     }
+}
+
+/// A backslash in an unquoted argument escapes what follows it.
+#[test]
+fn test_an_escaped_paren_or_quote_does_not_end_an_unquoted_argument() {
+    // `cmake -P` reads `message(A\"B)` and the `\#`, `\(`, `\)` and `\ ` forms as
+    // one argument each. The lexer broke on the escaped character instead, so
+    // `\"` opened a quoted argument that never closed and the parse ran to end
+    // of file — silently deleting commands from `libgit2`, `ESP-IDF` and
+    // several vcpkg ports.
+    let config = default_config();
+    for escape in ["\\\"", "\\#", "\\(", "\\)", "\\ "] {
+        let input = format!("message(A{}B)\nmessage(TAIL)\n", escape);
+        // Through the warnings as well as the text, because a formatter that
+        // refuses a file hands the input straight back — so `result == input`
+        // alone would read a refusal as success.
+        let (result, warnings) = format_text_with_diagnostics(&input, &config);
+        assert!(
+            warnings.is_empty(),
+            "the file was not formatted cleanly for {:?}: {:?}",
+            input,
+            warnings
+        );
+        assert_eq!(result, input, "the argument was rewritten for {:?}", input);
+    }
+
+    // The lexer excludes a newline from the escape, because CMake calls `\`
+    // before one a *bad character* rather than a line continuation. Nothing is
+    // asserted about it here on purpose: `message(A\<newline>B)` is a parse
+    // error to `cmake -P`, so there is no oracle, and every difference between
+    // escaping the newline and not is a layout choice on input CMake rejects
+    // either way. An assertion here would pin the implementation, not a rule.
+    let _ = format_text("message(A\\\nB)\n", &config);
 }
 
 #[test]
