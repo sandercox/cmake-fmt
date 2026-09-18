@@ -106,14 +106,14 @@ fn render_batch(docs: Vec<RcDoc<'static, ()>>, width: usize) -> String {
 }
 
 /// Collect all trailing comments in the file
-fn collect_trailing_comments(node: &SyntaxNode) -> std::collections::HashSet<String> {
+fn collect_trailing_comments(node: &SyntaxNode) -> std::collections::HashSet<usize> {
     let mut trailing_comments = std::collections::HashSet::new();
     for child in node.children_with_tokens() {
         if let NodeOrToken::Node(child_node) = &child
             && child_node.kind() == SyntaxKind::COMMAND_INVOCATION
             && let Some(trailing) = comments::extract_trailing_comment(child_node)
         {
-            trailing_comments.insert(trailing);
+            trailing_comments.insert(trailing.offset);
         }
     }
     trailing_comments
@@ -196,7 +196,7 @@ fn format_file(
 
     // Add trailing comments to handled set
     for trailing in &trailing_comments {
-        handled_comments.insert(trailing.clone());
+        handled_comments.insert(*trailing);
     }
 
     // Then collect leading comments, but skip those that are trailing comments
@@ -206,8 +206,8 @@ fn format_file(
         {
             for lc in comments::extract_leading_comments(child_node) {
                 // Don't mark as handled if it's a trailing comment
-                if !trailing_comments.contains(&lc.text) {
-                    handled_comments.insert(lc.text);
+                if !trailing_comments.contains(&lc.offset) {
+                    handled_comments.insert(lc.offset);
                 }
             }
         }
@@ -223,14 +223,9 @@ fn format_file(
                         let leading_comments = comments::extract_leading_comments(&child_node);
 
                         // Process directives in leading comments
-                        // We need to find the actual comment position by searching backwards in source
-                        let cmd_start: usize = child_node.text_range().start().into();
                         for lc in &leading_comments {
                             if let Some(directive) = parse_directive(&lc.text) {
-                                // Find comment position by searching backwards from command
-                                let comment_offset =
-                                    source[..cmd_start].rfind(&lc.text[..]).unwrap_or(cmd_start);
-                                let line = line_number_at_offset(source, comment_offset);
+                                let line = line_number_at_offset(source, lc.offset);
 
                                 // Handle style directives separately
                                 match &directive {
@@ -267,7 +262,7 @@ fn format_file(
                         // Check if any leading comments will actually be emitted
                         let has_emittable_leading = leading_comments
                             .iter()
-                            .any(|lc| !trailing_comments.contains(&lc.text));
+                            .any(|lc| !trailing_comments.contains(&lc.offset));
 
                         // Emit accumulated blank lines before command/comments
                         // When leading comments exist, blank_line_before handles all gaps
@@ -292,17 +287,14 @@ fn format_file(
                                 // Skip mode: emit formatted leading comments
                                 let indent_str = indent_string(current_indent, &config);
                                 for lc in &leading_comments {
-                                    if !trailing_comments.contains(&lc.text) {
+                                    if !trailing_comments.contains(&lc.offset) {
                                         if lc.blank_line_before
                                             && (!docs.is_empty() || !batch_strings.is_empty())
                                         {
                                             docs.push(RcDoc::hardline());
                                         }
                                         // Normalize line comments, but skip block comments and bracket comments
-                                        let lc_line = source[..cmd_start]
-                                            .rfind(&lc.text[..])
-                                            .map(|offset| line_number_at_offset(source, offset))
-                                            .unwrap_or(0);
+                                        let lc_line = line_number_at_offset(source, lc.offset);
                                         let text = if !lc.text.starts_with("#[")
                                             && !block_comment_lines.contains(&lc_line)
                                         {
@@ -326,7 +318,7 @@ fn format_file(
                                 // Suppressed region: emit raw leading comments
                                 let indent_str = indent_string(current_indent, &config);
                                 for lc in &leading_comments {
-                                    if !trailing_comments.contains(&lc.text) {
+                                    if !trailing_comments.contains(&lc.offset) {
                                         if lc.blank_line_before
                                             && (!docs.is_empty() || !batch_strings.is_empty())
                                         {
@@ -371,10 +363,10 @@ fn format_file(
                                 // suppressed command is emitted verbatim, so it
                                 // keeps its comment as written.
                                 let text = if is_suppressed {
-                                    trailing_comment
+                                    trailing_comment.text
                                 } else {
                                     cmake_rules::render_trailing_comment(
-                                        &trailing_comment,
+                                        &trailing_comment.text,
                                         config.comment_style,
                                     )
                                 };
@@ -391,17 +383,14 @@ fn format_file(
                         let indent_str = indent_string(current_indent, &config);
                         for lc in &leading_comments {
                             // Only emit if not already handled as a trailing comment
-                            if !trailing_comments.contains(&lc.text) {
+                            if !trailing_comments.contains(&lc.offset) {
                                 if lc.blank_line_before
                                     && (!docs.is_empty() || !batch_strings.is_empty())
                                 {
                                     docs.push(RcDoc::hardline());
                                 }
                                 // Normalize line comments, but skip block comments and bracket comments
-                                let lc_line = source[..cmd_start]
-                                    .rfind(&lc.text[..])
-                                    .map(|offset| line_number_at_offset(source, offset))
-                                    .unwrap_or(0);
+                                let lc_line = line_number_at_offset(source, lc.offset);
                                 let text = if !lc.text.starts_with("#[")
                                     && !block_comment_lines.contains(&lc_line)
                                 {
@@ -508,7 +497,7 @@ fn format_file(
                                 // Shared with `trailing_width_after`, so the
                                 // width model measures this exact string
                                 let text = cmake_rules::render_trailing_comment(
-                                    &trailing_comment,
+                                    &trailing_comment.text,
                                     config.comment_style,
                                 );
                                 cmd_doc = cmd_doc.append(RcDoc::space()).append(RcDoc::text(text));
@@ -566,14 +555,15 @@ fn format_file(
             NodeOrToken::Token(token) => {
                 match token.kind() {
                     SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
-                        // Only emit standalone comments (not already handled)
-                        // Untrimmed: this is the key `handled_comments` was
-                        // filled with, and trimming it here stopped the lookup
-                        // matching, so the comment was emitted a second time.
-                        // The trim belongs on the text that is written, below.
+                        // Only emit standalone comments (not already handled).
+                        // Keyed on where the comment is, not what it says: a
+                        // file may hold the same `# note` twice, and keying on
+                        // the text read the second one as already emitted and
+                        // dropped it.
                         let comment_text = token.text().to_string();
+                        let comment_offset: usize = token.text_range().start().into();
 
-                        if !handled_comments.contains(&comment_text) {
+                        if !handled_comments.contains(&comment_offset) {
                             // Process directives in standalone comments (not leading/trailing)
                             if let Some(directive) = parse_directive(&comment_text) {
                                 let line = line_number_at_offset(

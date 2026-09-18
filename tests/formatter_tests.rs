@@ -1,7 +1,7 @@
 use cmake_fmt::formatter::format_text;
 use cmake_fmt::formatter::{
-    ClosingStyle, CommandCase, CommentStyle, FinalNewline, FormatConfig, UserCommandCase,
-    format_text_with_diagnostics,
+    ClosingStyle, CommandCase, CommentStyle, FinalNewline, FormatConfig, FormatWarning,
+    UserCommandCase, format_text_with_diagnostics,
 };
 
 // Helper to create default config
@@ -3667,6 +3667,49 @@ fn test_a_carriage_return_inside_a_value_is_not_a_line_ending() {
         ..Default::default()
     };
     assert_eq!(format_text("set(A b)\n", &crlf), "set(A b)\r\n");
+}
+
+/// A comment is identified by where it is, not by what it says.
+#[test]
+fn test_the_same_comment_twice_is_written_twice() {
+    // The set of comments already emitted as a command's leading or trailing
+    // comment was keyed on the comment's text, so a file holding the same
+    // `# note` twice read the second one as already emitted and dropped it. The
+    // content guard caught that and refused the file, which turned a silent loss
+    // into a valid file that could not be formatted at all — still a bug, and
+    // the one a user actually hits.
+    let config = default_config();
+    for input in [
+        // trailing, then standalone at end of file
+        "set(A b) # note\n# note\n",
+        // trailing, then standalone between blank lines, then a command
+        "set(A b) # note\n\n# note\n\nset(C d)\n",
+        // leading, then standalone
+        "# note\nset(A b)\n# note\n",
+        // three of them
+        "# note\nset(A b) # note\nset(C d)\n# note\n",
+    ] {
+        // Asserted through the warnings, not the text: when the guard refuses,
+        // `format_text` hands the *input* straight back, so counting comments in
+        // its return value would count the input's and pass either way.
+        let (result, warnings) = format_text_with_diagnostics(input, &config);
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| matches!(w, FormatWarning::ContentChanged { .. })),
+            "the file could not be formatted at all for {:?}: {:?}",
+            input,
+            warnings
+        );
+        assert_eq!(
+            result.matches("# note").count(),
+            input.matches("# note").count(),
+            "a copy of the comment was dropped for {:?}:\n{}",
+            input,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
 }
 
 /// A `( ... )` group carrying a comment is emitted as its author wrote it.
