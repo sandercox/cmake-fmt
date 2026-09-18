@@ -17,33 +17,45 @@ pub enum Directive {
 
 /// Warnings produced during suppression tracking
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SuppressionWarning {
+pub enum FormatWarning {
     /// A suppression region was opened but never closed
     UnclosedRegion { start_line: usize },
     /// An "on" directive appeared without a matching "off"
     UnmatchedOn { line: usize },
     /// An "off" directive appeared while already in a suppressed region
     NestedOff { line: usize },
+    /// The formatted output said something different from the input, so the file
+    /// was left alone. Either the formatter has a bug, or the input is not valid
+    /// CMake and the formatter cannot represent it — both files this fires on in
+    /// practice are the second kind, so the message must not blame only itself.
+    ContentChanged { detail: String },
 }
 
-impl fmt::Display for SuppressionWarning {
+impl fmt::Display for FormatWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SuppressionWarning::UnclosedRegion { start_line } => {
+            FormatWarning::UnclosedRegion { start_line } => {
                 write!(
                     f,
                     "line {}: warning: suppression region started here but never closed",
                     start_line
                 )
             }
-            SuppressionWarning::UnmatchedOn { line } => {
+            FormatWarning::ContentChanged { detail } => {
+                write!(
+                    f,
+                    "warning: formatting would have changed this file's contents ({}), so it was left unchanged — this is a bug in cmake-fmt unless the input is not valid CMake",
+                    detail
+                )
+            }
+            FormatWarning::UnmatchedOn { line } => {
                 write!(
                     f,
                     "line {}: warning: 'cmake-fmt: on' without matching 'cmake-fmt: off'",
                     line
                 )
             }
-            SuppressionWarning::NestedOff { line } => {
+            FormatWarning::NestedOff { line } => {
                 write!(
                     f,
                     "line {}: warning: nested 'cmake-fmt: off' (already in suppressed region)",
@@ -107,7 +119,7 @@ pub struct SuppressionTracker {
     /// Whether sorting should be skipped for the next command
     skip_sort_next: bool,
     /// Accumulated warnings
-    warnings: Vec<SuppressionWarning>,
+    warnings: Vec<FormatWarning>,
 }
 
 impl SuppressionTracker {
@@ -129,7 +141,7 @@ impl SuppressionTracker {
             Directive::Off => {
                 if self.active {
                     // Nested off - warn but don't change state
-                    self.warnings.push(SuppressionWarning::NestedOff { line });
+                    self.warnings.push(FormatWarning::NestedOff { line });
                 } else {
                     // Start suppression
                     self.active = true;
@@ -143,7 +155,7 @@ impl SuppressionTracker {
                     self.start_line = None;
                 } else {
                     // Unmatched on - warn
-                    self.warnings.push(SuppressionWarning::UnmatchedOn { line });
+                    self.warnings.push(FormatWarning::UnmatchedOn { line });
                 }
             }
             Directive::Skip => {
@@ -193,7 +205,7 @@ impl SuppressionTracker {
     }
 
     /// Consume the tracker and return accumulated warnings
-    pub fn into_warnings(self) -> Vec<SuppressionWarning> {
+    pub fn into_warnings(self) -> Vec<FormatWarning> {
         self.warnings
     }
 }
@@ -316,7 +328,7 @@ mod tests {
         tracker.finalize();
         let warnings = tracker.into_warnings();
         assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0], SuppressionWarning::UnmatchedOn { line: 5 });
+        assert_eq!(warnings[0], FormatWarning::UnmatchedOn { line: 5 });
     }
 
     #[test]
@@ -333,7 +345,7 @@ mod tests {
         let warnings = tracker.into_warnings();
         // Should have: nested off warning only (unclosed regions no longer warn)
         assert_eq!(warnings.len(), 1);
-        assert!(warnings.contains(&SuppressionWarning::NestedOff { line: 15 }));
+        assert!(warnings.contains(&FormatWarning::NestedOff { line: 15 }));
     }
 
     #[test]
@@ -361,19 +373,19 @@ mod tests {
 
     #[test]
     fn test_warning_display() {
-        let w1 = SuppressionWarning::UnclosedRegion { start_line: 42 };
+        let w1 = FormatWarning::UnclosedRegion { start_line: 42 };
         assert_eq!(
             w1.to_string(),
             "line 42: warning: suppression region started here but never closed"
         );
 
-        let w2 = SuppressionWarning::UnmatchedOn { line: 10 };
+        let w2 = FormatWarning::UnmatchedOn { line: 10 };
         assert_eq!(
             w2.to_string(),
             "line 10: warning: 'cmake-fmt: on' without matching 'cmake-fmt: off'"
         );
 
-        let w3 = SuppressionWarning::NestedOff { line: 20 };
+        let w3 = FormatWarning::NestedOff { line: 20 };
         assert_eq!(
             w3.to_string(),
             "line 20: warning: nested 'cmake-fmt: off' (already in suppressed region)"

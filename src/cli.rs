@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cmake_fmt::formatter::{
-    FormatConfig, LineRange, SuppressionWarning, format_text_with_diagnostics_and_path,
+    FormatConfig, FormatWarning, LineRange, format_text_with_diagnostics_and_path,
     format_with_line_ranges, parse_line_ranges,
 };
 
@@ -88,10 +88,37 @@ pub struct Cli {
 }
 
 /// Print suppression warnings to stderr
-fn print_warnings(warnings: &[SuppressionWarning], file_label: &str) {
+fn print_warnings(warnings: &[FormatWarning], file_label: &str) {
     for warning in warnings {
         eprintln!("{}: {}", file_label, warning);
     }
+}
+
+/// What processing one file concluded.
+struct FileOutcome {
+    /// The file is not formatted as configured (check/diff mode reports this).
+    needs_formatting: bool,
+    /// The file was left alone because formatting would have changed its
+    /// contents. Fails the run in every mode.
+    content_changed: bool,
+}
+
+impl FileOutcome {
+    fn needs_formatting(needs_formatting: bool) -> Self {
+        Self {
+            needs_formatting,
+            content_changed: false,
+        }
+    }
+}
+
+/// True when a file was left unformatted because the output would have said
+/// something different from the input. The run reports failure so this surfaces
+/// in CI rather than only in whoever reads stderr.
+fn content_changed(warnings: &[FormatWarning]) -> bool {
+    warnings
+        .iter()
+        .any(|w| matches!(w, FormatWarning::ContentChanged { .. }))
 }
 
 /// Print all available style settings
@@ -551,6 +578,7 @@ pub fn run() -> Result<ExitCode> {
 
         // Run interactive mode
         match cmake_fmt::interactive::run_interactive(&cli.files[0], &config) {
+            Ok(result) if result.content_changed => return Ok(ExitCode::from(1)),
             Ok(_result) => return Ok(ExitCode::SUCCESS),
             Err(e) => {
                 eprintln!("error: {:#}", e);
@@ -1582,6 +1610,15 @@ fn process_stdin(
         .unwrap_or_else(|| "stdin".to_string());
     print_warnings(&warnings, &label);
 
+    // Left unchanged on purpose, but the run still fails so CI notices
+    if content_changed(&warnings) {
+        if !check_mode && !diff_mode {
+            use std::io::Write as _;
+            write!(stdout().lock(), "{}", input)?;
+        }
+        return Ok(ExitCode::from(1));
+    }
+
     if diff_mode {
         if input != formatted {
             cmake_fmt::diff::print_colored_diff(&input, &formatted, &label);
@@ -1625,6 +1662,7 @@ fn process_files(
         // SEQUENTIAL PATH: stdout mode
         let mut stdout_handle = stdout().lock();
         let mut config_cache: HashMap<PathBuf, FormatConfig> = HashMap::new();
+        let mut any_content_changed = false;
 
         for file in files {
             // Validate file exists
@@ -1657,10 +1695,19 @@ fn process_files(
                 )
             };
             print_warnings(&warnings, &file.display().to_string());
+            if content_changed(&warnings) {
+                any_content_changed = true;
+            }
             write!(stdout_handle, "{}", formatted)?;
         }
 
-        return Ok(ExitCode::SUCCESS);
+        // A file the formatter refused to touch fails the run in every mode, or
+        // the one mode a user runs by hand is the one that says nothing is wrong
+        return Ok(if any_content_changed {
+            ExitCode::from(1)
+        } else {
+            ExitCode::SUCCESS
+        });
     }
 
     // PARALLEL PATH: in-place, check, or diff mode
@@ -1733,18 +1780,18 @@ fn process_files(
     // Step 5: Process files (parallel or sequential based on threshold)
     let diff_lock = Arc::new(std::sync::Mutex::new(()));
 
-    let process_file_closure = |file: &PathBuf| -> Result<bool> {
+    let process_file_closure = |file: &PathBuf| -> Result<FileOutcome> {
         // Validate file exists
         if !file.exists() {
             eprintln!("Warning: File not found: {}", file.display());
             completed.fetch_add(1, Ordering::Relaxed);
-            return Ok(false);
+            return Ok(FileOutcome::needs_formatting(false));
         }
 
         if !file.is_file() {
             eprintln!("Warning: Not a file: {}", file.display());
             completed.fetch_add(1, Ordering::Relaxed);
-            return Ok(false);
+            return Ok(FileOutcome::needs_formatting(false));
         }
 
         // Look up config from pre-populated cache
@@ -1781,7 +1828,7 @@ fn process_files(
         result
     };
 
-    let results: Vec<Result<bool>> = if use_parallel {
+    let results: Vec<Result<FileOutcome>> = if use_parallel {
         files.par_iter().map(process_file_closure).collect()
     } else {
         files.iter().map(process_file_closure).collect()
@@ -1794,15 +1841,20 @@ fn process_files(
 
     // Step 7: Aggregate results
     let mut any_need_formatting = false;
+    let mut any_content_changed = false;
+    let mut any_error = false;
     for result in results {
         match result {
-            Ok(needs_formatting) => {
-                if needs_formatting {
-                    any_need_formatting = true;
-                }
+            Ok(outcome) => {
+                any_need_formatting |= outcome.needs_formatting;
+                any_content_changed |= outcome.content_changed;
             }
             Err(e) => {
+                // A file that could not be read or written is a failed run: a
+                // report nobody reads is how an unformatted file reaches a
+                // release
                 eprintln!("Error processing file: {:#}", e);
+                any_error = true;
             }
         }
     }
@@ -1813,7 +1865,9 @@ fn process_files(
         eprintln!("{} file(s) would be reformatted", count);
     }
 
-    if (check_mode || diff_mode) && any_need_formatting {
+    // A file left alone because formatting would have changed it fails the run
+    // in every mode, so CI sees it rather than only whoever reads stderr.
+    if any_error || any_content_changed || ((check_mode || diff_mode) && any_need_formatting) {
         Ok(ExitCode::from(1))
     } else {
         Ok(ExitCode::SUCCESS)
@@ -1829,12 +1883,12 @@ fn process_file(
     diff_mode: bool,
     verbose: bool,
     line_ranges: Option<&[LineRange]>,
-) -> Result<bool> {
+) -> Result<FileOutcome> {
     use std::fs;
 
     // In stdout mode (no flags set), don't process here - it's handled by process_files
     if !in_place && !check_mode && !diff_mode {
-        return Ok(false);
+        return Ok(FileOutcome::needs_formatting(false));
     }
 
     let original = fs::read_to_string(path)?;
@@ -1845,29 +1899,37 @@ fn process_file(
     };
     print_warnings(&warnings, &path.display().to_string());
 
+    // Left unchanged on purpose; the caller fails the run regardless of mode
+    if content_changed(&warnings) {
+        return Ok(FileOutcome {
+            needs_formatting: false,
+            content_changed: true,
+        });
+    }
+
     if diff_mode {
         if original != formatted {
             cmake_fmt::diff::print_colored_diff(&original, &formatted, &path.display().to_string());
-            Ok(true)
+            Ok(FileOutcome::needs_formatting(true))
         } else {
-            Ok(false)
+            Ok(FileOutcome::needs_formatting(false))
         }
     } else if check_mode {
         if original != formatted {
             eprintln!("Would reformat: {}", path.display());
-            Ok(true)
+            Ok(FileOutcome::needs_formatting(true))
         } else {
-            Ok(false)
+            Ok(FileOutcome::needs_formatting(false))
         }
     } else if in_place {
         // Only write if content changed
         if original != formatted {
             write_file_atomically(path, &formatted)?;
         }
-        Ok(false)
+        Ok(FileOutcome::needs_formatting(false))
     } else {
         // Default mode: stdout (handled by caller)
-        Ok(false)
+        Ok(FileOutcome::needs_formatting(false))
     }
 }
 
