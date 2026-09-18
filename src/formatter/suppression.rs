@@ -15,8 +15,13 @@ pub enum Directive {
     Style { key: String, value: String },
 }
 
-/// Warnings produced during suppression tracking
+/// Warnings produced while formatting a file.
+///
+/// `#[non_exhaustive]` because it has grown once already — `ContentChanged`
+/// arrived after the guard — and matching it exhaustively broke every consumer
+/// that had.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FormatWarning {
     /// A suppression region was opened but never closed
     UnclosedRegion { start_line: usize },

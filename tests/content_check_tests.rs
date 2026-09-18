@@ -692,3 +692,126 @@ fn test_an_invalid_directive_value_does_not_open_an_exemption() {
         formatted
     );
 }
+
+#[test]
+fn test_a_path_that_is_not_a_formattable_file_fails_the_run() {
+    // The commit that made an *unreadable* file fail the run left a path that is
+    // not there exiting 0, on the same reasoning that condemns it: a report
+    // nobody reads is how an unformatted file reaches a release. Eight mutations
+    // of that change survived the whole suite, because none of it was tested.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join("clean.cmake"), "set(A b)\n").expect("write");
+
+    let missing = root.join("moved.cmake");
+    // A *directory* is a legitimate argument — it gets walked — so the
+    // not-a-file case needs something that is neither. A fifo is one, and it is
+    // also what a shell's `<(...)` hands over by mistake.
+    let not_a_file = root.join("afifo");
+    let made = Command::new("sh")
+        .arg("-c")
+        .arg(format!("mkfifo {}", not_a_file.display()))
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    let mut paths = vec![&missing];
+    if made {
+        paths.push(&not_a_file);
+    }
+    for path in paths {
+        for args in [
+            vec!["-i"],
+            vec!["--check"],
+            vec!["--diff"],
+            vec![],
+            vec!["--check", "--line-ranges", "1:1"],
+        ] {
+            let mut full = args.clone();
+            let p = path.to_str().unwrap();
+            full.push(p);
+            let output = Command::new(cmake_fmt_bin())
+                .args(&full)
+                .current_dir(root)
+                .output()
+                .expect("run");
+            assert_eq!(
+                output.status.code(),
+                Some(1),
+                "{:?} on {:?} should fail the run:\n{}",
+                args,
+                path.file_name().unwrap(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    // And a file that is there and already formatted still succeeds
+    let output = Command::new(cmake_fmt_bin())
+        .args(["--check", "clean.cmake"])
+        .current_dir(root)
+        .output()
+        .expect("run");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn test_a_pattern_that_matches_nothing_fails_the_run() {
+    // The same reasoning reaches a glob: `cmake-fmt --check 'src/**/*.cmake'`
+    // reporting success after a directory rename is the failure the rule was
+    // written for, and cmake-fmt expands its own globs. A *directory* holding no
+    // CMake files still succeeds — there was nothing to do and the caller said
+    // so.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::create_dir(root.join("empty")).expect("dirs");
+    std::fs::write(root.join("clean.cmake"), "set(A b)\n").expect("write");
+
+    let code = |args: &[&str]| -> Option<i32> {
+        Command::new(cmake_fmt_bin())
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("run")
+            .status
+            .code()
+    };
+
+    assert_eq!(code(&["--check", "zzz*.cmake"]), Some(1), "unmatched glob");
+    assert_eq!(
+        code(&["--check", "zzz*.cmake", "clean.cmake"]),
+        Some(1),
+        "an unmatched glob alongside a match"
+    );
+    assert_eq!(code(&["--check", "*.cmake"]), Some(0), "a matched glob");
+    assert_eq!(
+        code(&["--check", "empty"]),
+        Some(0),
+        "a directory with no CMake files is not an error"
+    );
+}
+
+#[test]
+fn test_check_counts_the_files_it_would_reformat() {
+    // It printed `files.len()`, so one file needing work alongside one already
+    // formatted read as "2 file(s) would be reformatted" — and it counted files
+    // that are missing or were refused, neither of which is going to be
+    // reformatted at all.
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    std::fs::write(root.join("needs.cmake"), "set(  A   b)\n").expect("write");
+    std::fs::write(root.join("clean.cmake"), "set(A b)\n").expect("write");
+
+    let output = Command::new(cmake_fmt_bin())
+        .args(["--check", "needs.cmake", "clean.cmake", "gone.cmake"])
+        .current_dir(root)
+        .output()
+        .expect("run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("1 file(s) would be reformatted"),
+        "the count should be of files that would be reformatted:\n{}",
+        stderr
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stderr);
+}
