@@ -9,6 +9,7 @@ use rowan::NodeOrToken;
 
 use super::builtins;
 use super::cmake_rules;
+use super::cmake_rules::ParenPad;
 use super::comments;
 use super::config::{ClosingStyle, CommandCase, FormatConfig, UserCommandCase};
 use super::grammar::GrammarRegistry;
@@ -298,12 +299,17 @@ fn format_file(
                                         let text = if !lc.text.starts_with("#[")
                                             && !block_comment_lines.contains(&lc_line)
                                         {
-                                            cmake_rules::normalize_comment_whitespace(
+                                            cmake_rules::render_comment(
                                                 &lc.text,
                                                 config.comment_style,
+                                                true,
                                             )
                                         } else {
-                                            lc.text.clone()
+                                            cmake_rules::render_comment(
+                                                &lc.text,
+                                                config.comment_style,
+                                                false,
+                                            )
                                         };
                                         docs.push(RcDoc::text(format!("{}{}", indent_str, text)));
                                         docs.push(RcDoc::hardline());
@@ -319,7 +325,12 @@ fn format_file(
                                         {
                                             docs.push(RcDoc::hardline());
                                         }
-                                        // Suppressed: preserve comment text as-is
+                                        // Suppressed: verbatim, trailing whitespace
+                                        // included. `# cmake-fmt: off` is a
+                                        // request not to touch the region, and
+                                        // that has to include the whitespace the
+                                        // author left there — the trailing-comment
+                                        // arm below already keeps it.
                                         let text = lc.text.clone();
                                         docs.push(RcDoc::text(format!("{}{}", indent_str, text)));
                                         docs.push(RcDoc::hardline());
@@ -387,12 +398,17 @@ fn format_file(
                                 let text = if !lc.text.starts_with("#[")
                                     && !block_comment_lines.contains(&lc_line)
                                 {
-                                    cmake_rules::normalize_comment_whitespace(
+                                    cmake_rules::render_comment(
                                         &lc.text,
                                         config.comment_style,
+                                        true,
                                     )
                                 } else {
-                                    lc.text.clone()
+                                    cmake_rules::render_comment(
+                                        &lc.text,
+                                        config.comment_style,
+                                        false,
+                                    )
                                 };
                                 docs.push(RcDoc::text(format!("{}{}", indent_str, text)));
                                 docs.push(RcDoc::hardline());
@@ -600,8 +616,16 @@ fn format_file(
                             // Normalize line comments (not bracket comments), but not when suppressed or in a comment block
                             let comment_line =
                                 line_number_at_offset(source, token.text_range().start().into());
-                            let text = if token.kind() == SyntaxKind::COMMENT
-                                && !tracker.is_suppressed()
+                            let text = if tracker.is_suppressed() {
+                                // Verbatim, like the leading and trailing
+                                // comments of a suppressed command. `off` asks
+                                // for the region to be left as written, and that
+                                // includes the whitespace at the end of a line;
+                                // this arm was trimming it while the other two
+                                // were not, so the answer depended on whether
+                                // the comment had a command to belong to.
+                                comment_text.clone()
+                            } else if token.kind() == SyntaxKind::COMMENT
                                 && !block_comment_lines.contains(&comment_line)
                             {
                                 cmake_rules::normalize_comment_whitespace(
@@ -609,7 +633,11 @@ fn format_file(
                                     config.comment_style,
                                 )
                             } else {
-                                comment_text
+                                cmake_rules::render_comment(
+                                    &comment_text,
+                                    config.comment_style,
+                                    false,
+                                )
                             };
                             docs.push(RcDoc::text(format!("{}{}", indent_str, text)));
                             docs.push(RcDoc::hardline());
@@ -684,14 +712,14 @@ fn format_command(
     };
 
     // Handle block closers and mid-block commands based on closing_style
-    let args_doc = if let Some(closer_ctx) = closer_context {
+    let (args_doc, paren_pad) = if let Some(closer_ctx) = closer_context {
         if closer_ctx.is_mid_block && name.to_lowercase() == "elseif" {
             // elseif carries a condition — always preserve its arguments
             if let Some(arg_list) = cmd.argument_list() {
                 let is_custom = !builtins::is_builtin_command(&name_lower);
                 format_argument_list(&arg_list, ctx, is_custom, &name_lower)
             } else {
-                RcDoc::nil()
+                (RcDoc::nil(), ParenPad::Builder)
             }
         } else {
             // True closers (endif, endforeach, etc.) — apply closing_style
@@ -752,17 +780,17 @@ fn format_command(
                             format_argument_list(&arg_list, ctx, is_custom, &name_lower)
                         }
                     } else {
-                        RcDoc::nil()
+                        (RcDoc::nil(), ParenPad::Builder)
                     }
                 }
                 ClosingStyle::Remove => {
                     // Remove mode: emit empty argument list
-                    RcDoc::nil()
+                    (RcDoc::nil(), ParenPad::Builder)
                 }
                 ClosingStyle::Force => {
                     // Force mode: emit opener's arguments
                     if closer_ctx.opener_args.is_empty() {
-                        RcDoc::nil()
+                        (RcDoc::nil(), ParenPad::Builder)
                     } else {
                         // A closer echoing a condition is laid out by the same
                         // rules as its opener, measured at its own width — which
@@ -796,7 +824,7 @@ fn format_command(
                             None
                         };
 
-                        laid_out.unwrap_or_else(|| {
+                        let doc = laid_out.unwrap_or_else(|| {
                             // Mirror the space the opening paren gets, or
                             // space_between_command_parens yields `endif( A)`
                             // — spaced open, unspaced close.
@@ -806,7 +834,9 @@ fn format_command(
                             } else {
                                 doc
                             }
-                        })
+                        });
+                        // Either arm opens with the condition's first clause.
+                        (doc, ParenPad::Caller)
                     }
                 }
             }
@@ -869,7 +899,7 @@ fn format_command(
                 format_argument_list(&arg_list, ctx, is_custom, &name_lower)
             }
         } else {
-            RcDoc::nil()
+            (RcDoc::nil(), ParenPad::Builder)
         }
     };
 
@@ -916,11 +946,17 @@ fn format_command(
         }
         _ => writes_own_args(),
     };
-    let space_after = if ctx.config.space_between_command_parens && has_args {
-        " "
-    } else {
-        ""
-    };
+    // The pad only exists where something shares the opening line. Where the
+    // arguments break away from it, `args_doc` was built knowing that and either
+    // put the pad in its own flat arm or left it out; either way it is not the
+    // caller's to write, and writing it regardless left a space at end of line —
+    // which the whole-buffer strip used to take back off, and no longer does.
+    let space_after =
+        if ctx.config.space_between_command_parens && has_args && paren_pad == ParenPad::Caller {
+            " "
+        } else {
+            ""
+        };
     let paren_open = format!("{}({}", space_before, space_after);
     let cmd_doc = RcDoc::text(formatted_name)
         .append(RcDoc::text(paren_open))
@@ -1307,11 +1343,11 @@ fn format_argument_list(
     ctx: &FormatContext,
     is_custom_command: bool,
     name_lower: &str,
-) -> RcDoc<'static, ()> {
+) -> (RcDoc<'static, ()>, ParenPad) {
     let args = collect_logical_args(arg_list);
 
     if args.is_empty() {
-        return RcDoc::nil();
+        return (RcDoc::nil(), ParenPad::Builder);
     }
 
     // Detect formatting signals
@@ -1328,7 +1364,7 @@ fn format_argument_list(
             trailing_width_after(arg_list, ctx.config),
         )
     {
-        return doc;
+        return (doc, ParenPad::Caller);
     }
 
     // If no multiline signals, use auto-layout (flat_alt + group)
@@ -1340,9 +1376,12 @@ fn format_argument_list(
         if args.len() == 1 {
             // Single argument: simple case, but still need closing paren position
             // so that space_between_command_parens / indent_closing_paren apply.
-            return RcDoc::text(args[0].clone())
-                .append(closing_paren_position(ctx.config, ctx.indent_level, false))
-                .group();
+            return (
+                RcDoc::text(args[0].clone())
+                    .append(closing_paren_position(ctx.config, ctx.indent_level, false))
+                    .group(),
+                ParenPad::Caller,
+            );
         }
 
         // Use explicit text indentation via flat_alt instead of nest()
@@ -1363,10 +1402,13 @@ fn format_argument_list(
                         RcDoc::space(),
                     ));
                 } else {
-                    // First arg: flat → no separator, broken → newline + indent
+                    // First arg: flat → the paren's pad, if it is owed one,
+                    // broken → newline + indent. The pad travels in the flat arm
+                    // because only the renderer knows which arm is taken, and on
+                    // the broken one it would end the line.
                     all_docs.push(RcDoc::flat_alt(
                         RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
-                        RcDoc::nil(),
+                        cmake_rules::paren_pad_flat(ctx.config),
                     ));
                 }
                 all_docs.push(RcDoc::text(arg.clone()));
@@ -1376,7 +1418,7 @@ fn format_argument_list(
             all_docs.push(closing_paren_position(ctx.config, ctx.indent_level, false));
 
             // Group all arguments together - when it doesn't fit flat, all break
-            return RcDoc::concat(all_docs).group();
+            return (RcDoc::concat(all_docs).group(), ParenPad::Builder);
         } else {
             // Builtin command: first arg stays inline, rest break
             let first_text = args[0].clone();
@@ -1396,7 +1438,10 @@ fn format_argument_list(
 
             // When flat: "first rest1 rest2"
             // When broken: "first\n<inner>rest1\n<inner>rest2\n<base>"
-            return RcDoc::text(first_text).append(RcDoc::concat(rest_docs).group());
+            return (
+                RcDoc::text(first_text).append(RcDoc::concat(rest_docs).group()),
+                ParenPad::Caller,
+            );
         }
     }
 
@@ -1465,7 +1510,11 @@ fn format_argument_list(
                     }
                     SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
                         // Comments at same indent level as arguments
-                        let text = token.text();
+                        let text = &cmake_rules::render_comment(
+                            token.text(),
+                            ctx.config.comment_style,
+                            false,
+                        );
                         rest_parts.push('\n');
 
                         // If there were blank lines before this comment, emit extra newlines
@@ -1512,23 +1561,34 @@ fn format_argument_list(
 
     // Build final Doc IR from pre-rendered string
     // Using RcDoc::text with pre-rendered content avoids deeply-nested concat trees
+    // Every arm below either opens with a newline or opens with `first`, so the
+    // pad follows from which one it is.
     if is_custom_command {
         if !rest_parts.is_empty() {
-            RcDoc::text(rest_parts).append(RcDoc::text(format!("\n{}", closing_indent)))
+            (
+                RcDoc::text(rest_parts).append(RcDoc::text(format!("\n{}", closing_indent))),
+                ParenPad::Builder,
+            )
         } else {
-            RcDoc::nil()
+            (RcDoc::nil(), ParenPad::Builder)
         }
     } else if let Some(first) = first_arg {
         if !rest_parts.is_empty() {
-            RcDoc::text(first)
-                .append(RcDoc::text(rest_parts))
-                .append(RcDoc::text(format!("\n{}", closing_indent)))
+            (
+                RcDoc::text(first)
+                    .append(RcDoc::text(rest_parts))
+                    .append(RcDoc::text(format!("\n{}", closing_indent))),
+                ParenPad::Caller,
+            )
         } else {
             // Single-arg force-multiline builtin: still need closing paren on its own line
-            RcDoc::text(first).append(RcDoc::text(format!("\n{}", closing_indent)))
+            (
+                RcDoc::text(first).append(RcDoc::text(format!("\n{}", closing_indent))),
+                ParenPad::Caller,
+            )
         }
     } else {
-        RcDoc::nil()
+        (RcDoc::nil(), ParenPad::Builder)
     }
 }
 
@@ -1550,21 +1610,13 @@ pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
                 | SyntaxKind::ENV_VAR_REF
                 | SyntaxKind::CACHE_VAR_REF
                 | SyntaxKind::GENERATOR_EXPR => {
-                    // Per line, not per token: `post_process_rendered_output`
-                    // strips trailing whitespace from every line, so a token
-                    // that spans lines is written narrower than it reads here —
-                    // and these strings are what `format_condition_args`
-                    // measures. `if(AAAA BBBB "q…   \nz")` had no fixed point:
-                    // the layout broke it, the strip made the pieces fit, the
-                    // next pass joined them again.
-                    //
-                    // Only the sites a width decision reads from need this. The
-                    // raw force-multiline walk below and the standalone-comment
-                    // path have already broken by the time they emit, so
-                    // trimming there changes nothing — measured over 216
-                    // shape/style combinations — and the strip cleans up after
-                    // them.
-                    let text = &cmake_rules::trim_line_ends(token.text());
+                    // Untrimmed, and that is the point: these strings are what
+                    // `format_condition_args` measures, and nothing rewrites
+                    // them afterwards. Trimming here while the emitter wrote the
+                    // bytes as read was one half of a disagreement that cost the
+                    // fixed point; deleting the characters to match was the
+                    // other, and changed the value the script holds.
+                    let text = token.text();
                     if !saw_separator && !args.is_empty() {
                         args.last_mut().unwrap().push_str(text);
                     } else {

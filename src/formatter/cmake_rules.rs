@@ -29,17 +29,15 @@ fn is_source_file(name: &str) -> bool {
 
 /// Every line of `text` with its trailing whitespace removed.
 ///
-/// `post_process_rendered_output` strips trailing whitespace from every line of
-/// the finished output, so a token that carries some — a bracket comment or a
-/// quoted argument spanning lines — is written narrower than it was measured.
-/// Both width models then decide against a line the file will not hold, and the
-/// result has no fixed point: the layout breaks, the strip makes the pieces fit,
-/// and the next pass joins them again.
+/// `trim_end` is not enough: it reaches the end of the *string*, while a
+/// comment can span lines and the whitespace that matters sits before an
+/// interior newline.
 ///
-/// So the bytes are trimmed here, as they enter the doc, and the emitter, the
-/// width model and `pretty` all read one string. `trim_end` is not enough — it
-/// reaches the end of the *token*, while the strip reaches the end of every
-/// *line*, and the whitespace that matters sits before an interior newline.
+/// Only comments reach this now. It once also trimmed value tokens, to keep
+/// them in step with a whole-buffer strip that ran over the finished output —
+/// but that strip could not tell a comment's padding from a quoted or bracket
+/// argument's payload and deleted characters from inside both, so it is gone
+/// and values are written as they were read.
 pub fn trim_line_ends(text: &str) -> std::borrow::Cow<'_, str> {
     if !text
         .split('\n')
@@ -66,16 +64,39 @@ pub fn trim_line_ends(text: &str) -> std::borrow::Cow<'_, str> {
 /// that is written as-is, one column wider than the truth, and a line at
 /// exactly the limit was wrapped for ever.
 pub fn render_trailing_comment(comment: &str, style: super::config::CommentStyle) -> String {
-    let rendered = if comment.starts_with("#[") {
-        comment.to_string()
+    // A bracket comment keeps its hashes; every comment loses its trailing
+    // whitespace. Both readers of this — the emitter and the width model —
+    // must see the same bytes, or the layout is decided against a line the
+    // file will not contain.
+    render_comment(comment, style, !comment.starts_with("#["))
+}
+
+/// Where a comment's text is prepared for output, so that trimming is
+/// structural rather than remembered. Eight call sites used to decide it
+/// independently and six forgot to trim, which only surfaced once the
+/// whole-buffer strip covering for them was removed.
+///
+/// Two paths deliberately do not come through here, and both emit their text
+/// exactly as the author wrote it: a `# cmake-fmt: off` region, and a `( ... )`
+/// group that carries a comment, which `render_nested_group` emits verbatim
+/// because folding a line comment onto one line would swallow what follows it.
+/// A comment inside either keeps its trailing whitespace, and `comment_style`
+/// is not applied to it.
+///
+/// `normalize_hashes` is the caller's question, not this one's. A bracket
+/// comment, a `##` run and a suppressed region each keep their hashes as
+/// written; none of them keeps trailing whitespace.
+pub fn render_comment(
+    comment: &str,
+    style: super::config::CommentStyle,
+    normalize_hashes: bool,
+) -> String {
+    let trimmed = trim_line_ends(comment);
+    if normalize_hashes {
+        normalize_comment_hashes(&trimmed, style)
     } else {
-        normalize_comment_whitespace(comment, style)
-    };
-    // Trimmed here, at the one site all three readers share, so that none of
-    // them measures bytes the file will not contain — see `trim_line_ends`,
-    // which is per line rather than per token because the strip that removes
-    // them is.
-    trim_line_ends(&rendered).into_owned()
+        trimmed.into_owned()
+    }
 }
 
 /// Normalize whitespace in line comments according to the specified style.
@@ -87,6 +108,10 @@ pub fn render_trailing_comment(comment: &str, style: super::config::CommentStyle
 ///   - HashNoSpace: "#  foo" -> "#foo", "#" -> "#"
 ///   - Any style: "## heading" -> "## heading" (multi-hash preserved)
 pub fn normalize_comment_whitespace(comment: &str, style: super::config::CommentStyle) -> String {
+    render_comment(comment, style, true)
+}
+
+fn normalize_comment_hashes(comment: &str, style: super::config::CommentStyle) -> String {
     use super::config::CommentStyle;
 
     // Multi-hash comments (##, ###, etc.) are preserved as-is
@@ -614,6 +639,52 @@ fn keyword_stays_on_the_opening_line(
     first_keyword_inline: bool,
 ) -> bool {
     first_keyword_inline && !previous_section_ended_in_a_comment(sections, index)
+}
+
+/// Whose job it is to emit the pad `space_between_command_parens` puts after
+/// the opening paren.
+///
+/// The pad sits *inside* the parens, so it exists only while something shares
+/// the opening line. Where the break is already settled the builder answers for
+/// it; where only the renderer settles it, the builder puts the pad in the flat
+/// arm of its own `flat_alt` so the two disappear together. The paren used to
+/// carry the pad as text either way and let the whole-buffer trailing-whitespace
+/// strip take it back off — and that strip is gone, because it also reached
+/// inside values.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ParenPad {
+    /// The first argument shares the paren's line, so the caller emits the pad.
+    Caller,
+    /// A break follows the paren, or the builder put the pad in a flat arm.
+    Builder,
+}
+
+/// The pad as it appears in the flat arm of a first-argument separator.
+pub(crate) fn paren_pad_flat(config: &FormatConfig) -> RcDoc<'static, ()> {
+    if config.space_between_command_parens {
+        RcDoc::text(" ")
+    } else {
+        RcDoc::nil()
+    }
+}
+
+/// The separator before a first argument that does not share the opening line.
+fn push_first_arg_break(
+    docs: &mut Vec<RcDoc<'static, ()>>,
+    indent: &str,
+    force_multiline: bool,
+    config: &FormatConfig,
+) -> ParenPad {
+    if force_multiline {
+        docs.push(RcDoc::hardline());
+        docs.push(RcDoc::text(indent.to_string()));
+    } else {
+        docs.push(RcDoc::flat_alt(
+            RcDoc::hardline().append(RcDoc::text(indent.to_string())),
+            paren_pad_flat(config),
+        ));
+    }
+    ParenPad::Builder
 }
 
 /// Whether this `SingleValue` section is grouped onto the line of the valueless
@@ -1208,11 +1279,8 @@ pub fn parse_keyword_sections_with_grammar(
                 SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
                     saw_separator = true;
                     // Normalize whitespace in line comments (not bracket comments)
-                    let text = if token.kind() == SyntaxKind::COMMENT {
-                        normalize_comment_whitespace(&text, comment_style)
-                    } else {
-                        text
-                    };
+                    let text =
+                        render_comment(&text, comment_style, token.kind() == SyntaxKind::COMMENT);
                     if consecutive_newlines == 0 && !current_section.args.is_empty() {
                         // Same line as previous arg (trailing inline comment)
                         let arg_index = current_section.args.len() - 1;
@@ -1749,9 +1817,9 @@ pub fn format_keyword_aware_args(
     force_args_on_new_line: bool,
     sub_keywords: Option<&HashSet<String>>,
     command_name_len: usize,
-) -> RcDoc<'static, ()> {
+) -> (RcDoc<'static, ()>, ParenPad) {
     if sections.is_empty() {
-        return RcDoc::nil();
+        return (RcDoc::nil(), ParenPad::Builder);
     }
 
     // Detect formatting signals from the input (same as non-grammar path).
@@ -1837,6 +1905,9 @@ pub fn format_keyword_aware_args(
     // ARGL-03: first arg should stay on same line as command (no separator before it)
     let mut docs = Vec::new();
     let mut is_first_arg = true;
+    // Overwritten by whichever first-argument site runs; `Builder` is right for
+    // the sections that emit a `hardline` before reaching one.
+    let mut pad = ParenPad::Builder;
 
     for (i, section) in sections.iter().enumerate() {
         if signals.force_multiline && blank_line_between_sections(&sections, i) {
@@ -1865,14 +1936,14 @@ pub fn format_keyword_aware_args(
                         is_first_arg = false;
                         if keyword_stays_on_the_opening_line(&sections, i, first_keyword_inline) {
                             // No separator: the keyword belongs on the opening line
-                        } else if signals.force_multiline {
-                            docs.push(RcDoc::hardline());
-                            docs.push(RcDoc::text(keyword_indent.clone()));
+                            pad = ParenPad::Caller;
                         } else {
-                            docs.push(RcDoc::flat_alt(
-                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
-                                RcDoc::nil(),
-                            ));
+                            pad = push_first_arg_break(
+                                &mut docs,
+                                &keyword_indent,
+                                signals.force_multiline,
+                                config,
+                            );
                         }
                     } else {
                         // Consecutive flags group with space; builtin flags after positional args stay inline
@@ -2011,18 +2082,16 @@ pub fn format_keyword_aware_args(
                     {
                         is_first_arg = false;
                         // No separator: the keyword belongs on the opening line
+                        pad = ParenPad::Caller;
                     } else if is_first_arg {
                         is_first_arg = false;
                         // Regular command: first keyword drops to next line when multiline
-                        if signals.force_multiline {
-                            docs.push(RcDoc::hardline());
-                            docs.push(RcDoc::text(keyword_indent.clone()));
-                        } else {
-                            docs.push(RcDoc::flat_alt(
-                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
-                                RcDoc::nil(),
-                            ));
-                        }
+                        pad = push_first_arg_break(
+                            &mut docs,
+                            &keyword_indent,
+                            signals.force_multiline,
+                            config,
+                        );
                     } else {
                         if groups_with_the_leading_flag(&sections, i, first_keyword_inline) {
                             docs.push(RcDoc::space());
@@ -2056,15 +2125,12 @@ pub fn format_keyword_aware_args(
                     if is_first_arg {
                         is_first_arg = false;
                         // First keyword in command: drop to next line when multiline
-                        if signals.force_multiline {
-                            docs.push(RcDoc::hardline());
-                            docs.push(RcDoc::text(keyword_indent.clone()));
-                        } else {
-                            docs.push(RcDoc::flat_alt(
-                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
-                                RcDoc::nil(),
-                            ));
-                        }
+                        pad = push_first_arg_break(
+                            &mut docs,
+                            &keyword_indent,
+                            signals.force_multiline,
+                            config,
+                        );
                     } else if signals.force_multiline {
                         docs.push(RcDoc::hardline());
                         docs.push(RcDoc::text(keyword_indent.clone()));
@@ -2201,15 +2267,12 @@ pub fn format_keyword_aware_args(
                     // Add separator before the keyword
                     if is_first_arg {
                         is_first_arg = false;
-                        if signals.force_multiline {
-                            docs.push(RcDoc::hardline());
-                            docs.push(RcDoc::text(keyword_indent.clone()));
-                        } else {
-                            docs.push(RcDoc::flat_alt(
-                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
-                                RcDoc::nil(),
-                            ));
-                        }
+                        pad = push_first_arg_break(
+                            &mut docs,
+                            &keyword_indent,
+                            signals.force_multiline,
+                            config,
+                        );
                     } else {
                         docs.push(RcDoc::flat_alt(
                             RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
@@ -2227,15 +2290,12 @@ pub fn format_keyword_aware_args(
                     // Add separator before the keyword (same pattern as other keywords)
                     if is_first_arg {
                         is_first_arg = false;
-                        if signals.force_multiline {
-                            docs.push(RcDoc::hardline());
-                            docs.push(RcDoc::text(keyword_indent.clone()));
-                        } else {
-                            docs.push(RcDoc::flat_alt(
-                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
-                                RcDoc::nil(),
-                            ));
-                        }
+                        pad = push_first_arg_break(
+                            &mut docs,
+                            &keyword_indent,
+                            signals.force_multiline,
+                            config,
+                        );
                     } else if signals.force_multiline {
                         docs.push(RcDoc::hardline());
                         docs.push(RcDoc::text(keyword_indent.clone()));
@@ -2341,15 +2401,12 @@ pub fn format_keyword_aware_args(
                     if is_first_arg {
                         is_first_arg = false;
                         // First keyword in command: drop to next line when multiline
-                        if signals.force_multiline {
-                            docs.push(RcDoc::hardline());
-                            docs.push(RcDoc::text(keyword_indent.clone()));
-                        } else {
-                            docs.push(RcDoc::flat_alt(
-                                RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
-                                RcDoc::nil(),
-                            ));
-                        }
+                        pad = push_first_arg_break(
+                            &mut docs,
+                            &keyword_indent,
+                            signals.force_multiline,
+                            config,
+                        );
                     } else if signals.force_multiline {
                         docs.push(RcDoc::hardline());
                         docs.push(RcDoc::text(keyword_indent.clone()));
@@ -2517,18 +2574,16 @@ pub fn format_keyword_aware_args(
                 if is_first_arg && !is_list {
                     // Single pre-keyword arg: keep inline with command
                     is_first_arg = false;
+                    pad = ParenPad::Caller;
                 } else if is_first_arg {
                     // First arg of a list: treat like subsequent args
                     is_first_arg = false;
-                    if signals.force_multiline {
-                        docs.push(RcDoc::hardline());
-                        docs.push(RcDoc::text(keyword_indent.clone()));
-                    } else {
-                        docs.push(RcDoc::flat_alt(
-                            RcDoc::hardline().append(RcDoc::text(keyword_indent.clone())),
-                            RcDoc::nil(),
-                        ));
-                    }
+                    pad = push_first_arg_break(
+                        &mut docs,
+                        &keyword_indent,
+                        signals.force_multiline,
+                        config,
+                    );
                 } else {
                     // Subsequent args: add separator with explicit indentation
                     if signals.force_multiline {
@@ -2571,11 +2626,12 @@ pub fn format_keyword_aware_args(
 
     let combined = RcDoc::concat(docs);
 
-    if signals.force_multiline {
+    let doc = if signals.force_multiline {
         combined
     } else {
         combined.group()
-    }
+    };
+    (doc, pad)
 }
 
 /// Format keyword-aware args with a single keyword section using inline layout.
@@ -2592,9 +2648,12 @@ fn format_keyword_aware_args_inline_single(
     signals: &super::cst_to_doc::ArgumentFormatSignals,
     base_indent: &str,
     keyword_indent: &str,
-) -> RcDoc<'static, ()> {
+) -> (RcDoc<'static, ()>, ParenPad) {
     let mut docs = Vec::new();
     let mut is_first_arg = true;
+    // Pre-keyword args come first when there are any, and they stay on the
+    // opening line; the keyword-first case below decides for itself.
+    let mut pad = ParenPad::Caller;
 
     for (i, section) in sections.iter().enumerate() {
         if signals.force_multiline && blank_line_between_sections(sections, i) {
@@ -2613,8 +2672,9 @@ fn format_keyword_aware_args_inline_single(
                 if !signals.force_multiline {
                     docs.push(RcDoc::flat_alt(
                         RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
-                        RcDoc::nil(),
+                        paren_pad_flat(config),
                     ));
+                    pad = ParenPad::Builder;
                 }
                 // force_multiline=true: emit nothing — keyword stays on the opening line after '('
             } else if previous_section_ended_in_a_comment(sections, i) {
@@ -2827,6 +2887,11 @@ fn format_keyword_aware_args_inline_single(
                     keyword_indent,
                     signals.force_multiline,
                 ) {
+                    // A comment or blank line before the first argument takes
+                    // the opening line, so the paren is followed by a break.
+                    if is_first_arg {
+                        pad = ParenPad::Builder;
+                    }
                     is_first_arg = false;
                 }
 
@@ -2834,15 +2899,12 @@ fn format_keyword_aware_args_inline_single(
                     is_first_arg = false;
                 } else if is_first_arg {
                     is_first_arg = false;
-                    if signals.force_multiline {
-                        docs.push(RcDoc::hardline());
-                        docs.push(RcDoc::text(keyword_indent.to_string()));
-                    } else {
-                        docs.push(RcDoc::flat_alt(
-                            RcDoc::hardline().append(RcDoc::text(keyword_indent.to_string())),
-                            RcDoc::nil(),
-                        ));
-                    }
+                    pad = push_first_arg_break(
+                        &mut docs,
+                        keyword_indent,
+                        signals.force_multiline,
+                        config,
+                    );
                 } else if signals.force_multiline {
                     docs.push(RcDoc::hardline());
                     docs.push(RcDoc::text(keyword_indent.to_string()));
@@ -2905,11 +2967,12 @@ fn format_keyword_aware_args_inline_single(
     }
 
     let combined = RcDoc::concat(docs);
-    if signals.force_multiline {
+    let doc = if signals.force_multiline {
         combined
     } else {
         combined.group()
-    }
+    };
+    (doc, pad)
 }
 
 /// Format arguments without keyword awareness (simple line breaking)
@@ -2919,16 +2982,14 @@ fn format_simple_args(
     force_multiline: bool,
     indent_level: usize,
     force_args_on_new_line: bool,
-) -> RcDoc<'static, ()> {
+) -> (RcDoc<'static, ()>, ParenPad) {
     let inner_indent = super::cst_to_doc::indent_string(indent_level + 1, config);
 
     let mut docs = Vec::new();
     let mut is_first_arg = true;
-
-    // In flat mode (auto-layout), start with nothing before first arg
-    if !force_multiline {
-        docs.push(RcDoc::flat_alt(RcDoc::nil(), RcDoc::nil()));
-    }
+    // Unless something below breaks before the first argument, it shares the
+    // opening line and the caller pads the paren.
+    let mut pad = ParenPad::Caller;
 
     // Apply sorting if enabled (do this BEFORE source grouping)
     let mut sections_owned: Vec<KeywordSection> = sections.to_vec();
@@ -2959,19 +3020,29 @@ fn format_simple_args(
                 &inner_indent,
                 force_multiline,
             ) {
+                // A comment before the first argument takes the opening line's
+                // place, so the paren is followed by a break either way.
+                if is_first_arg {
+                    pad = ParenPad::Builder;
+                }
                 is_first_arg = false;
             }
 
             // Add separator before arg (except for the very first arg, unless force_args_on_new_line)
             if !is_first_arg || force_args_on_new_line {
                 if force_multiline {
+                    if is_first_arg {
+                        pad = ParenPad::Builder;
+                    }
                     docs.push(RcDoc::hardline());
                     docs.push(RcDoc::text(inner_indent.clone()));
                 } else {
-                    // For the first arg with force_args_on_new_line, use nil in flat mode
-                    // (no space before first arg when everything fits on one line)
+                    // For the first arg with force_args_on_new_line, the flat
+                    // arm carries whatever pad the paren is owed: flat is the
+                    // only rendering where the arg shares that line.
                     let flat = if is_first_arg {
-                        RcDoc::nil()
+                        pad = ParenPad::Builder;
+                        paren_pad_flat(config)
                     } else {
                         RcDoc::space()
                     };
@@ -3000,6 +3071,13 @@ fn format_simple_args(
             &inner_indent,
             force_multiline,
         ) {
+            // Same reason as the sibling call above: emitted before any
+            // argument, this is the first thing after the paren and it breaks.
+            // A section with only comments in it is the shape that reaches
+            // here, which no command grammar produces today.
+            if is_first_arg {
+                pad = ParenPad::Builder;
+            }
             is_first_arg = false;
         }
     }
@@ -3013,11 +3091,12 @@ fn format_simple_args(
 
     let combined = RcDoc::concat(docs);
 
-    if force_multiline {
+    let doc = if force_multiline {
         combined
     } else {
         combined.group()
-    }
+    };
+    (doc, pad)
 }
 
 #[cfg(test)]

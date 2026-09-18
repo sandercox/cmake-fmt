@@ -196,15 +196,12 @@ pub(crate) fn post_process_rendered_output(
     final_newline: config::FinalNewline,
     input_had_trailing_newline: bool,
 ) -> String {
-    // Strip trailing whitespace from each line (the pretty crate can produce
-    // indentation on otherwise-blank lines when nest() wraps line() breaks)
-    let result: String = result
-        .lines()
-        .map(|line| line.trim_end())
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    // Trim the result and ensure proper ending
+    // No per-line strip here. A pass over the finished buffer cannot tell the
+    // emitter's own whitespace from a token's payload, and stripping both
+    // deleted characters from inside quoted and bracket arguments — a value
+    // change `cmake -P` observes. Comments are trimmed where they are emitted
+    // instead, by `render_comment`. (The reason once given here was `pretty`'s
+    // `nest()`, which this file no longer uses at all.)
     let trimmed = result.trim();
 
     // If nothing meaningful, return empty

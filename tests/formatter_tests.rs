@@ -2952,38 +2952,64 @@ fn test_the_trailing_comment_is_measured_as_it_will_be_written() {
     // and 320 of 800 such shapes had no fixed point while the trim was per
     // token.
     for trailer in [" ", "   ", "\t", " \t "] {
-        for input in [
-            format!(
-                "if(AAAA BBBB) #[[{}{}\nz]]\nendif()\n",
-                "P".repeat(52),
-                trailer
+        // `true` where the shape carries a value: a quoted or bracket
+        // *argument*, whose interior whitespace is content. Carried rather than
+        // re-derived from the text — a predicate that inferred it read the
+        // `[[` of a bracket *comment* as a value and exempted the one case this
+        // rule is most careful about.
+        for (input, carries_a_value) in [
+            (
+                format!(
+                    "if(AAAA BBBB) #[[{}{}\nz]]\nendif()\n",
+                    "P".repeat(52),
+                    trailer
+                ),
+                false,
             ),
-            format!(
-                "if(AAAA BBBB) #[[{}{}\nq{}\nz]]\nendif()\n",
-                "P".repeat(52),
-                trailer,
-                trailer
+            (
+                format!(
+                    "if(AAAA BBBB) #[[{}{}\nq{}\nz]]\nendif()\n",
+                    "P".repeat(52),
+                    trailer,
+                    trailer
+                ),
+                false,
             ),
             // A multi-line *argument*, which reaches the width model through
             // `collect_logical_args` rather than through the comment path. Three
             // arguments, because with two the condition fits either way.
-            format!(
-                "if(AAAA BBBB \"q{}{}\nz\")\nendif()\n",
-                "P".repeat(62),
-                trailer
+            (
+                format!(
+                    "if(AAAA BBBB \"q{}{}\nz\")\nendif()\n",
+                    "P".repeat(62),
+                    trailer
+                ),
+                true,
             ),
-            format!(
-                "if(AAAA BBBB [[{}{}\nz]])\nendif()\n",
-                "P".repeat(62),
-                trailer
+            (
+                format!(
+                    "if(AAAA BBBB [[{}{}\nz]])\nendif()\n",
+                    "P".repeat(62),
+                    trailer
+                ),
+                true,
             ),
-            format!("if(AAAA \"q{}{}\nz\")\nendif()\n", "P".repeat(62), trailer),
-            format!("set(A [[{}{}\nz]])\n", "P".repeat(70), trailer),
-            format!(
-                "# c{}\nset(A \"q{}{}\nz\")\n",
-                trailer,
-                "P".repeat(70),
-                trailer
+            (
+                format!("if(AAAA \"q{}{}\nz\")\nendif()\n", "P".repeat(62), trailer),
+                true,
+            ),
+            (
+                format!("set(A [[{}{}\nz]])\n", "P".repeat(70), trailer),
+                true,
+            ),
+            (
+                format!(
+                    "# c{}\nset(A \"q{}{}\nz\")\n",
+                    trailer,
+                    "P".repeat(70),
+                    trailer
+                ),
+                true,
             ),
         ] {
             let once = format_text(&input, &config);
@@ -2993,16 +3019,22 @@ fn test_the_trailing_comment_is_measured_as_it_will_be_written() {
                 "a multi-line token with interior trailing {:?} never settles:\n                 --- pass 1 ---\n{}\n--- pass 2 ---\n{}",
                 trailer, once, twice
             );
-            assert!(
-                !once
-                    .lines()
-                    .any(|line| line.ends_with(' ') || line.ends_with('\t')),
-                "trailing whitespace reached the file:\n{}",
-                once
-            );
+            if !carries_a_value {
+                assert!(
+                    !once
+                        .lines()
+                        .any(|line| line.ends_with(' ') || line.ends_with('\t')),
+                    "trailing whitespace reached the file:\n{}",
+                    once
+                );
+            }
             // And nothing was duplicated: trimming the key `handled_comments` is
             // built from, rather than the text that is written, emitted the
-            // comment a second time.
+            // comment a second time. Whitespace-insensitive on purpose, because
+            // a comment's trailing whitespace is *meant* to go; that makes this
+            // oracle blind to a space lost inside a value, which is why
+            // `test_whitespace_inside_a_value_is_not_the_formatters_to_remove`
+            // asserts those byte-exactly instead.
             let content = |t: &str| t.split_whitespace().collect::<String>();
             assert_eq!(
                 content(&once),
@@ -3333,29 +3365,244 @@ fn test_a_suppressed_command_keeps_its_trailing_comment_as_written() {
 
 #[test]
 fn test_no_output_line_ends_in_whitespace() {
-    // The per-line strip in `post_process_rendered_output` is what the two width
-    // models are now trimmed to agree with, so it is load-bearing — and removing
-    // it left every test green. Every shape that can carry trailing whitespace
-    // into a token goes through here.
+    // Trailing whitespace is the emitter's to tidy, and it is tidied where the
+    // text is emitted rather than by a pass over the finished buffer. A buffer
+    // pass cannot tell the emitter's own padding from a token's payload, and
+    // stripping both deleted characters from inside quoted and bracket
+    // arguments — see the value cases below.
     let config = default_config();
     for input in [
         "set(A b) # c   \n",
-        "set(A \"q   \nz\")\n",
-        "set(A [[q   \nz]])\n",
         "if(A) #[[q   \nz]]\nendif()\n",
         "#   \nset(A b)\n",
         "set(A b)   \n",
         "set(A\tb)\t\n",
+        // One emitter per line below, and each was missed once: a comment
+        // *block* takes a different path from a lone leading comment, a
+        // bracket comment a different one again, and a comment among a custom
+        // command's arguments, a suppressed region and a keyword section each
+        // have their own. All six leaked while a single leading comment was
+        // trimmed, so the answer depended on what the neighbouring line was.
+        "# aaa   \n# bbb   \nset(A b)\n",
+        "#[[n   \nm]]\nset(A b)\n",
+        "my_cmd(a # note   \n\tb)\n",
+        "install(FILES a.h #[[n   \nm]]\n\tDESTINATION inc)\n",
+    ] {
+        // Under the settings that write padding of their own, too. Only the
+        // default was swept, so `space_between_command_parens` — the one
+        // setting whose whole job is to put a space next to a paren — was the
+        // one this property never saw.
+        for config in [
+            config.clone(),
+            FormatConfig {
+                space_between_command_parens: true,
+                ..config.clone()
+            },
+            FormatConfig {
+                space_between_command_parens: true,
+                control_flow_space_before_paren: true,
+                indent_closing_paren: true,
+                ..config.clone()
+            },
+        ] {
+            let result = format_text(input, &config);
+            for line in result.lines() {
+                assert!(
+                    !line.ends_with(' ') && !line.ends_with('\t'),
+                    "a line ends in whitespace for {:?}:\n{:?}",
+                    input,
+                    result
+                );
+            }
+        }
+    }
+}
+
+/// `space_between_command_parens` pads the *inside* of the parens, so the pad
+/// exists only while an argument shares the opening line.
+#[test]
+fn test_the_paren_pad_is_not_written_on_a_line_nothing_shares() {
+    let config = FormatConfig {
+        space_between_command_parens: true,
+        ..Default::default()
+    };
+    let inline_single = FormatConfig {
+        inline_single_keyword: true,
+        ..config.clone()
+    };
+
+    // One input per layout path that can put the first argument on the next
+    // line: the keyword-aware builder, its force-multiline arm — the same
+    // command already broken — the custom-command auto-layout group, whose
+    // break only the renderer decides, and a leading comment, which takes the
+    // opening line whatever the width. Each used to emit the pad regardless and
+    // leave it stranded; the whole-buffer strip that hid this is gone.
+    for (style, input) in [
+        (
+            &config,
+            "install(TARGETS t ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)\n",
+        ),
+        (&config, "install(\n\tTARGETS t\n\tDESTINATION lib)\n"),
+        (
+            &config,
+            "my_custom_command(aaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbb cccccccccccccccc dddddddddddddddd eeeeeeeeeeee)\n",
+        ),
+        (&config, "my_cmd(\n\t# note\n\ta)\n"),
+        (
+            &config,
+            "add_definitions(-DAAAAAAAAAAAAAAAA -DBBBBBBBBBBBBBBBB -DCCCCCCCCCCCCCCCC -DDDDDDDDDDDDDDDDD)\n",
+        ),
+        // `inline_single_keyword` has a builder of its own, and it was the one
+        // path the pad was never wired into. Two or more pre-keyword args reach
+        // its first-argument break; a blank line right after the `(` reaches it
+        // through the annotation helper instead.
+        (
+            &inline_single,
+            "set(\n\tCMAKE_SKIP_RPATH\n\t\"NO\" CACHE BOOL \"docs\"\n)\n",
+        ),
+        (
+            &inline_single,
+            "target_link_libraries(\n\n\tmylib\n\tPRIVATE\n\tfoo\n)\n",
+        ),
+    ] {
+        let config = style;
+        let out = format_text(input, config);
+        assert!(
+            out.lines().next().unwrap().ends_with('('),
+            "the fixture no longer breaks its arguments away from the paren, so \
+             it cannot pin anything, for {:?}:\n{}",
+            input,
+            out
+        );
+        assert!(
+            !out.lines()
+                .any(|line| line.ends_with(' ') || line.ends_with('\t')),
+            "the pad was written on a line nothing shares for {:?}:\n{}",
+            input,
+            out
+        );
+        assert_eq!(out, format_text(&out, config), "not idempotent:\n{}", out);
+    }
+
+    // And it is still written wherever an argument does share that line. The
+    // four below are the four builders that carry the pad in a `flat_alt` arm
+    // rather than writing it next to the paren — the keyword-aware path, its
+    // single-keyword inline form, the custom-command group, and the
+    // keyword-less fallback under a grammar that puts every argument on its own
+    // line. Each renders flat here, which is the only arm that holds the pad.
+    for (style, input, first_line) in [
+        (&config, "set(A b)\n", "set( A b )"),
+        (
+            &config,
+            "install(FILES a.h DESTINATION inc)\n",
+            "install( FILES a.h DESTINATION inc )",
+        ),
+        (
+            &inline_single,
+            "list(APPEND SRCS a.cpp)\n",
+            "list( APPEND SRCS a.cpp )",
+        ),
+        (
+            &config,
+            "my_custom_command(a b)\n",
+            "my_custom_command( a b )",
+        ),
+        (
+            &config,
+            "add_definitions(-DA -DB)\n",
+            "add_definitions( -DA -DB )",
+        ),
+        // And where only the first argument shares the line: the pad is next to
+        // the paren, the break is after it.
+        (
+            &config,
+            "set(VAR aaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbb cccccccccccccccccccc dddddddddddddddddddd)\n",
+            "set( VAR",
+        ),
+        (&config, "if(A AND B)\nendif()\n", "if( A AND B )"),
+    ] {
+        let out = format_text(input, style);
+        assert_eq!(
+            out.lines().next().unwrap(),
+            first_line,
+            "for {:?}:\n{}",
+            input,
+            out
+        );
+        assert_eq!(out, format_text(&out, style), "not idempotent:\n{}", out);
+    }
+}
+
+#[test]
+fn test_a_suppressed_region_keeps_the_whitespace_it_was_written_with() {
+    // `# cmake-fmt: off` asks for the region to be left alone, so the trimming
+    // that applies to every other comment stops at its boundary — for a comment
+    // leading a command, for one trailing a command, and for a standalone one
+    // belonging to no command at all. That third emitter is a separate path and
+    // was still trimming: whether the region was left alone depended on whether
+    // the comment had a command to belong to.
+    //
+    // The standalone case needs the bare `${V}` to be reachable at all — a
+    // comment with a command after it is that command's leading comment, and one
+    // at end of file is trimmed by the whole-output `trim()` first. A token the
+    // parser cannot fit into a command is exactly what `# cmake-fmt: off` tends
+    // to be wrapped around.
+    let config = default_config();
+    for input in [
+        "# cmake-fmt: off\n# lead   \nset( A   b )\nset( C  d )\n",
+        "# cmake-fmt: off\nset( A   b )   # note   \nset( C  d )\n",
+        "# cmake-fmt: off\nset( A   b )\n#   standalone   \n${V}\nset( C  d )\n",
     ] {
         let result = format_text(input, &config);
-        for line in result.lines() {
-            assert!(
-                !line.ends_with(' ') && !line.ends_with('\t'),
-                "a line ends in whitespace for {:?}:\n{:?}",
-                input,
-                result
-            );
-        }
+        assert!(
+            result.contains("   \n"),
+            "a suppressed region lost the whitespace it was written with for {:?}:\n{:?}",
+            input,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+
+    // Byte for byte, for the two shapes where that holds. The trailing-comment
+    // shape above is excluded on purpose: the emitter collapses the gap *before*
+    // a trailing `#` to one space, which predates suppression and applies
+    // outside a region too.
+    for input in [
+        "# cmake-fmt: off\n# lead   \nset( A   b )\nset( C  d )\n",
+        "# cmake-fmt: off\nset( A   b )\n#   standalone   \n${V}\nset( C  d )\n",
+    ] {
+        assert_eq!(
+            format_text(input, &config),
+            input,
+            "a suppressed region was rewritten"
+        );
+    }
+}
+
+#[test]
+fn test_whitespace_inside_a_value_is_not_the_formatters_to_remove() {
+    // The other half of the rule above, and a reversal: these two used to be
+    // asserted as "no line ends in whitespace" and so were being *corrupted*.
+    // A quoted or bracket argument spanning lines carries its whitespace as
+    // part of its value — `cmake -P` on `set(A "q   \nz")` prints the three
+    // spaces — so removing them changes what the variable holds. A bracket
+    // argument is the sharper case: CMake defines `[[...]]` as wholly literal
+    // with no escape mechanism, so the bytes are the only representation there
+    // is and nothing can spell them back.
+    let config = default_config();
+    for input in [
+        "set(A \"q   \nz\")\n",
+        "set(A [[q   \nz]])\n",
+        "if(AAAA BBBB \"q   \nz\")\nendif()\n",
+    ] {
+        let result = format_text(input, &config);
+        assert!(
+            result.contains("q   \n"),
+            "the value lost its trailing whitespace for {:?}:\n{:?}",
+            input,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
     }
 }
 
