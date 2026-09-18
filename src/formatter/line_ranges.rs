@@ -241,6 +241,38 @@ mod tests {
     }
 
     #[test]
+    fn test_the_spliced_buffer_is_checked_with_the_formatter_s_own_grammars() {
+        // The check has to resolve grammars the way the formatter did. Handing
+        // it an empty map would leave it not knowing that `SOURCES` on a wrapper
+        // auto-detected from `cmake_parse_arguments` is an unordered list — so
+        // it would read the sorting the formatter just did as a difference,
+        // refuse the buffer, and warn. This is the only path where the two
+        // resolutions could drift, because it is the only one that resolves
+        // twice.
+        let input = "function(my_lib)\n\tcmake_parse_arguments(MY_LIB \"\" \"NAME\" \"SOURCES\" ${ARGN})\nendfunction()\nmy_lib(NAME a SOURCES z.cpp a.cpp)\n";
+        let config = FormatConfig {
+            sort_sources: crate::formatter::SortSources::Alphabetical,
+            ..Default::default()
+        };
+        let ranges = vec![LineRange { start: 4, end: 4 }];
+
+        let (result, warnings) = format_with_line_ranges(input, &config, &ranges, None, false);
+
+        assert!(
+            result.contains("my_lib(NAME a SOURCES a.cpp z.cpp)"),
+            "the wrapper's source list was not sorted:\n{}",
+            result
+        );
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| matches!(w, FormatWarning::ContentChanged { .. })),
+            "the check refused the formatter's own sorting: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
     fn test_format_with_line_ranges_preserves_final_newline() {
         let input = "set(  FOO   bar)\nmessage(hello)\n";
         let config = FormatConfig::default();

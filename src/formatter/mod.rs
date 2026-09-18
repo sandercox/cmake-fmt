@@ -193,7 +193,9 @@ pub fn format_text_with_diagnostics_and_path(
     // Refuse to hand back output that says something different from the input.
     // Re-indenting and re-casing are the formatter's job; inventing or dropping
     // an argument is not, and both have shipped as bugs before.
-    if let Some(difference) = content_check::check(input, &result, config, &user_grammars) {
+    if let Some(difference) =
+        content_check::check_parsed(&cst, parse_input, &result, config, &user_grammars)
+    {
         let mut warnings = warnings;
         warnings.push(FormatWarning::ContentChanged {
             detail: difference.summary,
