@@ -470,3 +470,100 @@ target_compile_definitions(mylib
         pass1, pass2
     );
 }
+
+#[test]
+fn test_idempotency_unbalanced_parens_converges() {
+    // Input CMake itself rejects. The formatter supplies one missing closer per
+    // pass, so it takes as many passes as there are unclosed parens — not a
+    // fixed two, as this test first claimed. `--check` on the formatter's own
+    // output can disagree until it settles.
+    //
+    // The deficit shrinks by one per pass only because the closer lands where
+    // the parser can see it next time. That is not true in general: where the
+    // group's text ends inside an unterminated construct — a bracket comment,
+    // a quote, a bracket argument — the closer is swallowed by it and the next
+    // pass appends another, so the output grows without bound. Those shapes are
+    // covered by the content guard, which refuses to write any of this to disk;
+    // the lexer flag that would fix the cause is a follow-up.
+    //
+    // Pinned rather than fixed: closing them all at once would invent more
+    // syntax into a file that is already invalid.
+    let config = FormatConfig::default();
+
+    for (input, expected_passes) in [("cmd((# c\n\n", 2), ("cmd(((# c\n\n", 3)] {
+        let mut current = input.to_string();
+        let mut passes = 0;
+
+        for _ in 0..8 {
+            let next = format_text(&current, &config);
+            passes += 1;
+            if next == current {
+                break;
+            }
+            current = next;
+        }
+
+        // A bound, not an exact count: how many passes recovery takes is not a
+        // promise to anyone, and pinning it exactly turns any change to error
+        // recovery into a test edit.
+        assert!(
+            passes <= expected_passes,
+            "{:?} should reach a fixed point within {} passes, took {}",
+            input,
+            expected_passes,
+            passes
+        );
+        assert!(current.contains("# c"), "comment lost:\n{}", current);
+        assert!(current.contains("cmd("), "command lost:\n{}", current);
+    }
+}
+
+#[test]
+fn test_idempotency_unterminated_group_with_comment() {
+    // The verbatim text of a comment-bearing group ends inside the open line
+    // comment when the parser never saw the closing paren, so the caller's
+    // paren landed inside the comment and the next pass appended another —
+    // one byte per run, forever, with `--check` never going green.
+    let config = FormatConfig::default();
+
+    for input in [
+        "f((A # c",
+        "f((A\n# c",
+        "set(V (a # c",
+        "target_sources(t PRIVATE (a.cpp # c",
+    ] {
+        let once = format_text(input, &config);
+        assert_eq!(
+            once,
+            format_text(&once, &config),
+            "still growing for {:?}",
+            input
+        );
+    }
+}
+
+#[test]
+fn test_idempotency_balanced_nested_groups() {
+    // The ordinary case is a fixed point on the first pass, *and* the group is
+    // still there. Asserting only idempotency passed before the fix too:
+    // deleting the group is idempotent as well.
+    let config = FormatConfig::default();
+    for (input, expected) in [
+        ("if((TRUE))\nendif()\n", "if((TRUE))\nendif()\n"),
+        (
+            "if((A AND B) OR (C AND D))\nendif()\n",
+            "if((A AND B) OR (C AND D))\nendif()\n",
+        ),
+        ("if(NOT(TRUE))\nendif()\n", "if(NOT(TRUE))\nendif()\n"),
+        ("set(V (a b) c.cpp)\n", "set(V (a b) c.cpp)\n"),
+    ] {
+        let once = format_text(input, &config);
+        assert_eq!(once, expected, "wrong output for {:?}", input);
+        assert_eq!(
+            once,
+            format_text(&once, &config),
+            "not idempotent: {}",
+            input
+        );
+    }
+}

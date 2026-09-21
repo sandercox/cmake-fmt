@@ -1,6 +1,7 @@
 use cmake_fmt::formatter::format_text;
 use cmake_fmt::formatter::{
     ClosingStyle, CommandCase, CommentStyle, FinalNewline, FormatConfig, UserCommandCase,
+    format_text_with_diagnostics,
 };
 
 // Helper to create default config
@@ -2952,38 +2953,64 @@ fn test_the_trailing_comment_is_measured_as_it_will_be_written() {
     // and 320 of 800 such shapes had no fixed point while the trim was per
     // token.
     for trailer in [" ", "   ", "\t", " \t "] {
-        for input in [
-            format!(
-                "if(AAAA BBBB) #[[{}{}\nz]]\nendif()\n",
-                "P".repeat(52),
-                trailer
+        // `true` where the shape carries a value: a quoted or bracket
+        // *argument*, whose interior whitespace is content. Carried rather than
+        // re-derived from the text — a predicate that inferred it read the
+        // `[[` of a bracket *comment* as a value and exempted the one case this
+        // rule is most careful about.
+        for (input, carries_a_value) in [
+            (
+                format!(
+                    "if(AAAA BBBB) #[[{}{}\nz]]\nendif()\n",
+                    "P".repeat(52),
+                    trailer
+                ),
+                false,
             ),
-            format!(
-                "if(AAAA BBBB) #[[{}{}\nq{}\nz]]\nendif()\n",
-                "P".repeat(52),
-                trailer,
-                trailer
+            (
+                format!(
+                    "if(AAAA BBBB) #[[{}{}\nq{}\nz]]\nendif()\n",
+                    "P".repeat(52),
+                    trailer,
+                    trailer
+                ),
+                false,
             ),
             // A multi-line *argument*, which reaches the width model through
             // `collect_logical_args` rather than through the comment path. Three
             // arguments, because with two the condition fits either way.
-            format!(
-                "if(AAAA BBBB \"q{}{}\nz\")\nendif()\n",
-                "P".repeat(62),
-                trailer
+            (
+                format!(
+                    "if(AAAA BBBB \"q{}{}\nz\")\nendif()\n",
+                    "P".repeat(62),
+                    trailer
+                ),
+                true,
             ),
-            format!(
-                "if(AAAA BBBB [[{}{}\nz]])\nendif()\n",
-                "P".repeat(62),
-                trailer
+            (
+                format!(
+                    "if(AAAA BBBB [[{}{}\nz]])\nendif()\n",
+                    "P".repeat(62),
+                    trailer
+                ),
+                true,
             ),
-            format!("if(AAAA \"q{}{}\nz\")\nendif()\n", "P".repeat(62), trailer),
-            format!("set(A [[{}{}\nz]])\n", "P".repeat(70), trailer),
-            format!(
-                "# c{}\nset(A \"q{}{}\nz\")\n",
-                trailer,
-                "P".repeat(70),
-                trailer
+            (
+                format!("if(AAAA \"q{}{}\nz\")\nendif()\n", "P".repeat(62), trailer),
+                true,
+            ),
+            (
+                format!("set(A [[{}{}\nz]])\n", "P".repeat(70), trailer),
+                true,
+            ),
+            (
+                format!(
+                    "# c{}\nset(A \"q{}{}\nz\")\n",
+                    trailer,
+                    "P".repeat(70),
+                    trailer
+                ),
+                true,
             ),
         ] {
             let once = format_text(&input, &config);
@@ -2993,16 +3020,22 @@ fn test_the_trailing_comment_is_measured_as_it_will_be_written() {
                 "a multi-line token with interior trailing {:?} never settles:\n                 --- pass 1 ---\n{}\n--- pass 2 ---\n{}",
                 trailer, once, twice
             );
-            assert!(
-                !once
-                    .lines()
-                    .any(|line| line.ends_with(' ') || line.ends_with('\t')),
-                "trailing whitespace reached the file:\n{}",
-                once
-            );
+            if !carries_a_value {
+                assert!(
+                    !once
+                        .lines()
+                        .any(|line| line.ends_with(' ') || line.ends_with('\t')),
+                    "trailing whitespace reached the file:\n{}",
+                    once
+                );
+            }
             // And nothing was duplicated: trimming the key `handled_comments` is
             // built from, rather than the text that is written, emitted the
-            // comment a second time.
+            // comment a second time. Whitespace-insensitive on purpose, because
+            // a comment's trailing whitespace is *meant* to go; that makes this
+            // oracle blind to a space lost inside a value, which is why
+            // `test_whitespace_inside_a_value_is_not_the_formatters_to_remove`
+            // asserts those byte-exactly instead.
             let content = |t: &str| t.split_whitespace().collect::<String>();
             assert_eq!(
                 content(&once),
@@ -3333,30 +3366,309 @@ fn test_a_suppressed_command_keeps_its_trailing_comment_as_written() {
 
 #[test]
 fn test_no_output_line_ends_in_whitespace() {
-    // The per-line strip in `post_process_rendered_output` is what the two width
-    // models are now trimmed to agree with, so it is load-bearing — and removing
-    // it left every test green. Every shape that can carry trailing whitespace
-    // into a token goes through here.
+    // Trailing whitespace is the emitter's to tidy, and it is tidied where the
+    // text is emitted rather than by a pass over the finished buffer. A buffer
+    // pass cannot tell the emitter's own padding from a token's payload, and
+    // stripping both deleted characters from inside quoted and bracket
+    // arguments — see the value cases below.
     let config = default_config();
     for input in [
         "set(A b) # c   \n",
-        "set(A \"q   \nz\")\n",
-        "set(A [[q   \nz]])\n",
         "if(A) #[[q   \nz]]\nendif()\n",
         "#   \nset(A b)\n",
         "set(A b)   \n",
         "set(A\tb)\t\n",
+        // One emitter per line below, and each was missed once: a comment
+        // *block* takes a different path from a lone leading comment, a
+        // bracket comment a different one again, and a comment among a custom
+        // command's arguments, a suppressed region and a keyword section each
+        // have their own. All six leaked while a single leading comment was
+        // trimmed, so the answer depended on what the neighbouring line was.
+        "# aaa   \n# bbb   \nset(A b)\n",
+        "#[[n   \nm]]\nset(A b)\n",
+        "my_cmd(a # note   \n\tb)\n",
+        "install(FILES a.h #[[n   \nm]]\n\tDESTINATION inc)\n",
     ] {
-        let result = format_text(input, &config);
-        for line in result.lines() {
-            assert!(
-                !line.ends_with(' ') && !line.ends_with('\t'),
-                "a line ends in whitespace for {:?}:\n{:?}",
-                input,
-                result
-            );
+        // Under the settings that write padding of their own, too. Only the
+        // default was swept, so `space_between_command_parens` — the one
+        // setting whose whole job is to put a space next to a paren — was the
+        // one this property never saw.
+        for config in [
+            config.clone(),
+            FormatConfig {
+                space_between_command_parens: true,
+                ..config.clone()
+            },
+            FormatConfig {
+                space_between_command_parens: true,
+                control_flow_space_before_paren: true,
+                indent_closing_paren: true,
+                ..config.clone()
+            },
+        ] {
+            let result = format_text(input, &config);
+            for line in result.lines() {
+                assert!(
+                    !line.ends_with(' ') && !line.ends_with('\t'),
+                    "a line ends in whitespace for {:?}:\n{:?}",
+                    input,
+                    result
+                );
+            }
         }
     }
+}
+
+/// `space_between_command_parens` pads the *inside* of the parens, so the pad
+/// exists only while an argument shares the opening line.
+#[test]
+fn test_the_paren_pad_is_not_written_on_a_line_nothing_shares() {
+    let config = FormatConfig {
+        space_between_command_parens: true,
+        ..Default::default()
+    };
+    let inline_single = FormatConfig {
+        inline_single_keyword: true,
+        ..config.clone()
+    };
+
+    // One input per layout path that can put the first argument on the next
+    // line: the keyword-aware builder, its force-multiline arm — the same
+    // command already broken — the custom-command auto-layout group, whose
+    // break only the renderer decides, and a leading comment, which takes the
+    // opening line whatever the width. Each used to emit the pad regardless and
+    // leave it stranded; the whole-buffer strip that hid this is gone.
+    for (style, input) in [
+        (
+            &config,
+            "install(TARGETS t ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)\n",
+        ),
+        (&config, "install(\n\tTARGETS t\n\tDESTINATION lib)\n"),
+        (
+            &config,
+            "my_custom_command(aaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbb cccccccccccccccc dddddddddddddddd eeeeeeeeeeee)\n",
+        ),
+        (&config, "my_cmd(\n\t# note\n\ta)\n"),
+        (
+            &config,
+            "add_definitions(-DAAAAAAAAAAAAAAAA -DBBBBBBBBBBBBBBBB -DCCCCCCCCCCCCCCCC -DDDDDDDDDDDDDDDDD)\n",
+        ),
+        // `inline_single_keyword` has a builder of its own, and it was the one
+        // path the pad was never wired into. Two or more pre-keyword args reach
+        // its first-argument break; a blank line right after the `(` reaches it
+        // through the annotation helper instead.
+        (
+            &inline_single,
+            "set(\n\tCMAKE_SKIP_RPATH\n\t\"NO\" CACHE BOOL \"docs\"\n)\n",
+        ),
+        (
+            &inline_single,
+            "target_link_libraries(\n\n\tmylib\n\tPRIVATE\n\tfoo\n)\n",
+        ),
+    ] {
+        let config = style;
+        let out = format_text(input, config);
+        assert!(
+            out.lines().next().unwrap().ends_with('('),
+            "the fixture no longer breaks its arguments away from the paren, so \
+             it cannot pin anything, for {:?}:\n{}",
+            input,
+            out
+        );
+        assert!(
+            !out.lines()
+                .any(|line| line.ends_with(' ') || line.ends_with('\t')),
+            "the pad was written on a line nothing shares for {:?}:\n{}",
+            input,
+            out
+        );
+        assert_eq!(out, format_text(&out, config), "not idempotent:\n{}", out);
+    }
+
+    // And it is still written wherever an argument does share that line. The
+    // four below are the four builders that carry the pad in a `flat_alt` arm
+    // rather than writing it next to the paren — the keyword-aware path, its
+    // single-keyword inline form, the custom-command group, and the
+    // keyword-less fallback under a grammar that puts every argument on its own
+    // line. Each renders flat here, which is the only arm that holds the pad.
+    for (style, input, first_line) in [
+        (&config, "set(A b)\n", "set( A b )"),
+        (
+            &config,
+            "install(FILES a.h DESTINATION inc)\n",
+            "install( FILES a.h DESTINATION inc )",
+        ),
+        (
+            &inline_single,
+            "list(APPEND SRCS a.cpp)\n",
+            "list( APPEND SRCS a.cpp )",
+        ),
+        (
+            &config,
+            "my_custom_command(a b)\n",
+            "my_custom_command( a b )",
+        ),
+        (
+            &config,
+            "add_definitions(-DA -DB)\n",
+            "add_definitions( -DA -DB )",
+        ),
+        // And where only the first argument shares the line: the pad is next to
+        // the paren, the break is after it.
+        (
+            &config,
+            "set(VAR aaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbb cccccccccccccccccccc dddddddddddddddddddd)\n",
+            "set( VAR",
+        ),
+        (&config, "if(A AND B)\nendif()\n", "if( A AND B )"),
+    ] {
+        let out = format_text(input, style);
+        assert_eq!(
+            out.lines().next().unwrap(),
+            first_line,
+            "for {:?}:\n{}",
+            input,
+            out
+        );
+        assert_eq!(out, format_text(&out, style), "not idempotent:\n{}", out);
+    }
+}
+
+#[test]
+fn test_a_suppressed_region_keeps_the_whitespace_it_was_written_with() {
+    // `# cmake-fmt: off` asks for the region to be left alone, so the trimming
+    // that applies to every other comment stops at its boundary — for a comment
+    // leading a command, for one trailing a command, and for a standalone one
+    // belonging to no command at all. That third emitter is a separate path and
+    // was still trimming: whether the region was left alone depended on whether
+    // the comment had a command to belong to.
+    //
+    // The standalone case needs the bare `${V}` to be reachable at all — a
+    // comment with a command after it is that command's leading comment, and one
+    // at end of file is trimmed by the whole-output `trim()` first. A token the
+    // parser cannot fit into a command is exactly what `# cmake-fmt: off` tends
+    // to be wrapped around.
+    let config = default_config();
+    for input in [
+        "# cmake-fmt: off\n# lead   \nset( A   b )\nset( C  d )\n",
+        "# cmake-fmt: off\nset( A   b )   # note   \nset( C  d )\n",
+        "# cmake-fmt: off\nset( A   b )\n#   standalone   \n${V}\nset( C  d )\n",
+    ] {
+        let result = format_text(input, &config);
+        assert!(
+            result.contains("   \n"),
+            "a suppressed region lost the whitespace it was written with for {:?}:\n{:?}",
+            input,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+
+    // Byte for byte, for the two shapes where that holds. The trailing-comment
+    // shape above is excluded on purpose: the emitter collapses the gap *before*
+    // a trailing `#` to one space, which predates suppression and applies
+    // outside a region too.
+    for input in [
+        "# cmake-fmt: off\n# lead   \nset( A   b )\nset( C  d )\n",
+        "# cmake-fmt: off\nset( A   b )\n#   standalone   \n${V}\nset( C  d )\n",
+    ] {
+        assert_eq!(
+            format_text(input, &config),
+            input,
+            "a suppressed region was rewritten"
+        );
+    }
+}
+
+#[test]
+fn test_whitespace_inside_a_value_is_not_the_formatters_to_remove() {
+    // The other half of the rule above, and a reversal: these two used to be
+    // asserted as "no line ends in whitespace" and so were being *corrupted*.
+    // A quoted or bracket argument spanning lines carries its whitespace as
+    // part of its value — `cmake -P` on `set(A "q   \nz")` prints the three
+    // spaces — so removing them changes what the variable holds. A bracket
+    // argument is the sharper case: CMake defines `[[...]]` as wholly literal
+    // with no escape mechanism, so the bytes are the only representation there
+    // is and nothing can spell them back.
+    let config = default_config();
+    for input in [
+        "set(A \"q   \nz\")\n",
+        "set(A [[q   \nz]])\n",
+        "if(AAAA BBBB \"q   \nz\")\nendif()\n",
+    ] {
+        let result = format_text(input, &config);
+        assert!(
+            result.contains("q   \n"),
+            "the value lost its trailing whitespace for {:?}:\n{:?}",
+            input,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+/// A `( ... )` group carrying a comment is emitted as its author wrote it.
+#[test]
+fn test_a_comment_inside_a_parenthesized_group_is_left_alone() {
+    // `render_nested_group` emits such a group verbatim, because folding a line
+    // comment onto one line would swallow whatever follows it. So the one place
+    // a comment is normally prepared for output is bypassed, and the group's
+    // comment keeps its trailing whitespace and its own hash spacing. Pinned so
+    // that it is a decision rather than the same oversight as the six emitters
+    // that used to forget the trim.
+    let config = FormatConfig {
+        comment_style: CommentStyle::HashSpace,
+        ..Default::default()
+    };
+    let input = "if((A #note   \n) AND B)\nendif()\n";
+    let result = format_text(input, &config);
+    assert!(
+        result.contains("#note   \n"),
+        "the group's comment was rewritten:\n{:?}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // The same comment outside a group does go through the funnel.
+    let outside = format_text("if(A) #note   \nendif()\n", &config);
+    assert!(
+        outside.contains("# note\n"),
+        "a comment outside a group was not normalized:\n{:?}",
+        outside
+    );
+}
+
+/// A backslash in an unquoted argument escapes what follows it.
+#[test]
+fn test_an_escaped_paren_or_quote_does_not_end_an_unquoted_argument() {
+    // `cmake -P` reads `message(A\"B)` and the `\#`, `\(`, `\)` and `\ ` forms as
+    // one argument each. The lexer broke on the escaped character instead, so
+    // `\"` opened a quoted argument that never closed and the parse ran to end
+    // of file — silently deleting commands from `libgit2`, `ESP-IDF` and
+    // several vcpkg ports.
+    let config = default_config();
+    for escape in ["\\\"", "\\#", "\\(", "\\)", "\\ "] {
+        let input = format!("message(A{}B)\nmessage(TAIL)\n", escape);
+        // Through the warnings as well as the text, because a formatter that
+        // refuses a file hands the input straight back — so `result == input`
+        // alone would read a refusal as success.
+        let (result, warnings) = format_text_with_diagnostics(&input, &config);
+        assert!(
+            warnings.is_empty(),
+            "the file was not formatted cleanly for {:?}: {:?}",
+            input,
+            warnings
+        );
+        assert_eq!(result, input, "the argument was rewritten for {:?}", input);
+    }
+
+    // The lexer excludes a newline from the escape, because CMake calls `\`
+    // before one a *bad character* rather than a line continuation. Nothing is
+    // asserted about it here on purpose: `message(A\<newline>B)` is a parse
+    // error to `cmake -P`, so there is no oracle, and every difference between
+    // escaping the newline and not is a layout choice on input CMake rejects
+    // either way. An assertion here would pin the implementation, not a rule.
+    let _ = format_text("message(A\\\nB)\n", &config);
 }
 
 #[test]
@@ -3390,6 +3702,664 @@ fn test_a_preserved_closer_with_no_arguments_gets_no_paren_space() {
     assert!(
         result.contains("endif()") && !result.contains("endif( )"),
         "an empty preserved closer was spaced:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+// ============================================================================
+// NESTED PARENTHESES IN ARGUMENT LISTS
+// ============================================================================
+
+#[test]
+fn test_parenthesized_condition_preserved() {
+    // Regression: https://github.com/sandercox/cmake-fmt/issues/5
+    // Parenthesized groups used to be dropped, turning if((TRUE)) into if().
+    let input = "if((TRUE))\nendif()\n\nif((TRUE) AND (TRUE))\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn test_parenthesized_condition_groups_normalized() {
+    let input = "if(   (  TRUE   AND   FALSE  )   )\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, "if((TRUE AND FALSE))\nendif()\n");
+}
+
+#[test]
+fn test_parenthesized_condition_nested_groups() {
+    let input = "if((A AND B) OR (C AND D))\n\tmessage(one)\nelseif(NOT (X OR Y))\n\tmessage(two)\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn test_parenthesized_condition_adjacent_to_operator() {
+    // No whitespace between NOT and ( — the group merges into one argument
+    let input = "if(NOT(TRUE))\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn test_parenthesized_group_in_while_condition() {
+    let input = "while((A) AND (B))\nendwhile()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, input);
+}
+
+#[test]
+fn test_parenthesized_group_with_comment_kept_verbatim() {
+    // Folding a group containing a line comment onto one line would swallow
+    // the rest of the condition, so the group is emitted as written.
+    let input = "if((A # why\n\tAND B) OR C)\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert!(
+        result.contains("# why"),
+        "comment inside group was lost:\n{}",
+        result
+    );
+    assert!(
+        result.contains("OR C"),
+        "condition after group was lost:\n{}",
+        result
+    );
+}
+
+#[test]
+fn test_parenthesized_group_in_keyword_aware_command() {
+    // Keyword-aware commands used to drop nested groups entirely
+    let input = "set(MY_VAR (a b) c)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+    assert_eq!(result, "set(MY_VAR (a b) c)\n");
+}
+
+#[test]
+fn test_parenthesized_condition_idempotent_when_wrapped() {
+    let input = concat!(
+        "if((VERY_LONG_VARIABLE_NAME_ONE AND VERY_LONG_VARIABLE_NAME_TWO) ",
+        "OR (VERY_LONG_VARIABLE_NAME_THREE AND VERY_LONG_VARIABLE_NAME_FOUR))\n",
+        "endif()\n"
+    );
+    let config = default_config();
+    let once = format_text(input, &config);
+    let twice = format_text(&once, &config);
+    assert_eq!(once, twice, "wrapped condition is not idempotent");
+    assert!(
+        once.contains("(VERY_LONG_VARIABLE_NAME_ONE AND VERY_LONG_VARIABLE_NAME_TWO)"),
+        "group was split or dropped:\n{}",
+        once
+    );
+}
+
+#[test]
+fn test_blank_lines_before_nested_group_are_clamped() {
+    // The token path clamps to max_blank_lines; the group path has to as well.
+    let input = "mycustomcmd(A\n\n\n\n(B C)\n\n\n\nD)\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(result, "mycustomcmd(\n\tA\n\n\t(B C)\n\n\tD\n)\n");
+
+    let none = FormatConfig {
+        max_blank_lines: 0,
+        ..Default::default()
+    };
+    assert_eq!(
+        format_text(input, &none),
+        "mycustomcmd(\n\tA\n\t(B C)\n\tD\n)\n"
+    );
+}
+
+#[test]
+fn test_nested_group_overflows_single_value_keyword() {
+    // A SingleValue keyword already holding its one value must push a group
+    // into a new positional section, exactly as it does for a plain token.
+    let config = FormatConfig {
+        max_line_length: 30,
+        ..Default::default()
+    };
+
+    let with_group = format_text(
+        "install(FILES a.h DESTINATION inc (extra group) COMPONENT dev)\n",
+        &config,
+    );
+    let with_token = format_text(
+        "install(FILES a.h DESTINATION inc extra COMPONENT dev)\n",
+        &config,
+    );
+
+    assert!(
+        with_group.contains("\tDESTINATION inc\n\t(extra group)\n"),
+        "group stayed inside the SingleValue section:\n{}",
+        with_group
+    );
+    assert_eq!(
+        with_group.replace("(extra group)", "extra"),
+        with_token,
+        "a group and a token should produce the same section structure"
+    );
+}
+
+#[test]
+fn test_parenthesized_group_with_comment_exact_output() {
+    // Known limitation: a group containing a comment is emitted verbatim,
+    // because folding it onto one line would comment out the rest of the
+    // condition. The group's own lines keep the indentation they had in the
+    // source — the section parser decides this before the indent is known.
+    let input = "if(OUTER)\nif((A # why\nOR B))\nendif()\nendif()\n";
+    let config = default_config();
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result,
+        "if(OUTER)\n\tif((A # why\nOR B))\n\tendif()\nendif()\n"
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_empty_nested_group() {
+    let config = default_config();
+    assert_eq!(
+        format_text("if(())\nendif()\n", &config),
+        "if(())\nendif()\n"
+    );
+}
+
+#[test]
+fn test_nested_group_gets_paren_spacing() {
+    // has_args must count a group, or space_between_command_parens skips it
+    let config = FormatConfig {
+        space_between_command_parens: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        format_text("if((A))\nendif()\n", &config),
+        "if( (A) )\nendif()\n"
+    );
+    assert_eq!(format_text("if()\nendif()\n", &config), "if()\nendif()\n");
+}
+
+#[test]
+fn test_a_forced_closer_keeps_the_opener_s_groups() {
+    // The opener's arguments were collected with the token-only iterator, which
+    // skips a nested `( ... )` node, so `if((A) AND B)` produced `endif(AND B)`
+    // — arguments that do not match the opener, which CMake itself warns about
+    // ("A logical block opening on the line ... closes on the line ... with
+    // mis-matching arguments").
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        ..Default::default()
+    };
+    let result = format_text(
+        "if((A) AND B)\n\tmessage(x)\nelse()\n\tmessage(z)\nendif()\n",
+        &config,
+    );
+
+    assert!(
+        result.contains("endif((A) AND B)"),
+        "the closer dropped the group:\n{}",
+        result
+    );
+    assert!(
+        result.contains("else((A) AND B)"),
+        "the mid-block command dropped the group:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_forced_closer_normalizes_the_openers_group() {
+    // The opener's arguments are rendered verbatim when a group carries a
+    // comment, which is right for the argument list it came from — folding a
+    // line comment onto one line would swallow what follows it — and wrong for
+    // rebuilding a closer: the comment ended up in the file twice, and the rest
+    // of the condition landed at column 0.
+    let config = FormatConfig {
+        closing_style: ClosingStyle::Force,
+        ..Default::default()
+    };
+    let input = "if(WIN32 AND (MSVC # only MSVC\nOR CLANG_CL))\n\tmessage(hi)\nendif()\n";
+    let result = format_text(input, &config);
+
+    assert_eq!(
+        result.matches("# only MSVC").count(),
+        1,
+        "the opener's comment was written twice:\n{}",
+        result
+    );
+    assert!(
+        result.contains("endif(WIN32 AND (MSVC OR CLANG_CL))"),
+        "the closer should carry the normalized condition:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // The normalization has to recurse: with only the top level normalized, a
+    // comment two groups deep was still written into the closer a second time
+    // while the depth-1 case above kept passing.
+    let result = format_text(
+        "if(W AND (X AND (Y # inner\nOR Z)))\n\tmessage(hi)\nendif()\n",
+        &config,
+    );
+    assert_eq!(
+        result.matches("# inner").count(),
+        1,
+        "a comment nested two groups deep was written twice:\n{}",
+        result
+    );
+    assert!(
+        result.contains("endif(W AND (X AND (Y OR Z)))"),
+        "the closer should carry the normalized nested condition:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+
+    // A file can turn `force` on for itself, and the closer reads that
+    // effective setting — so the opener has to be collected from it too.
+    // Gating on the file-level config deleted the closer's arguments.
+    let plain = default_config();
+    let result = format_text(
+        "# cmake-fmt: closing_style=force\nif(A AND B)\n\tmessage(hi)\nendif(A AND B)\n",
+        &plain,
+    );
+    assert!(
+        result.contains("endif(A AND B)"),
+        "an in-file directive lost the closer's arguments:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &plain), "not idempotent");
+}
+
+#[test]
+fn test_a_directive_anywhere_in_the_file_keeps_the_closer_s_arguments() {
+    // The opener used to render its arguments only when the *file-level* config
+    // already said `force`, but the closer reads the setting in effect where the
+    // closer sits. A directive placed after the opener turned `force` on too
+    // late: the closer took the `force` arm and found nothing to emit, so
+    // `endif(A AND B)` came back as `endif()` — the author's condition deleted,
+    // at a stable fixed point and exit 0. Every position below is a position a
+    // directive can legally occupy relative to the block it affects.
+    let plain = default_config();
+    let directive = "# cmake-fmt: closing_style=force";
+    for (where_, input) in [
+        (
+            "before the opener",
+            format!("{directive}\nif(A AND B)\n\tmessage(hi)\nendif(A AND B)\n"),
+        ),
+        (
+            "inside the block",
+            format!("if(A AND B)\n\t{directive}\n\tmessage(hi)\nendif(A AND B)\n"),
+        ),
+        (
+            "trailing the opener",
+            format!("if(A AND B) {directive}\n\tmessage(hi)\nendif(A AND B)\n"),
+        ),
+        (
+            "just before the closer",
+            format!("if(A AND B)\n\tmessage(hi)\n{directive}\nendif(A AND B)\n"),
+        ),
+        (
+            "inside a nested block",
+            format!(
+                "if(A AND B)\n\tif(C)\n\t\t{directive}\n\t\tmessage(hi)\n\tendif(C)\nendif(A AND B)\n"
+            ),
+        ),
+        (
+            "before an else",
+            format!(
+                "if(A AND B)\n\t{directive}\n\tmessage(hi)\nelse(A AND B)\n\tmessage(bye)\nendif(A AND B)\n"
+            ),
+        ),
+        (
+            "in a foreach",
+            format!("foreach(x a b)\n\t{directive}\n\tmessage(${{x}})\nendforeach(x)\n"),
+        ),
+        // At or after the closer the directive is too late to reach it, so the
+        // file-level `closing_style` decides — which is `remove`, and the
+        // closer's arguments go. Swept so that stays a deliberate answer.
+        (
+            "trailing the closer",
+            format!("if(A AND B)\n\tmessage(hi)\nendif(A AND B) {directive}\n"),
+        ),
+        (
+            "after the closer",
+            format!("if(A AND B)\n\tmessage(hi)\nendif(A AND B)\n{directive}\n"),
+        ),
+    ] {
+        let result = format_text(&input, &plain);
+        // `force` makes a closer repeat what its opener holds, so the foreach
+        // closer carries the loop variable *and* the list. A directive at or
+        // after the closer never reaches it, so the default `remove` applies.
+        let closer = match where_ {
+            "in a foreach" => "endforeach(x a b)",
+            "trailing the closer" | "after the closer" => "endif()",
+            _ => "endif(A AND B)",
+        };
+        assert!(
+            result.contains(closer),
+            "a directive {where_} lost `{closer}`:\n{result}"
+        );
+        assert_eq!(
+            result,
+            format_text(&result, &plain),
+            "a directive {where_} is not idempotent:\n{result}"
+        );
+    }
+}
+
+#[test]
+fn test_a_token_glued_to_the_group_before_it_merges_too() {
+    // The mirror of the test below: there a group follows a token, here a token
+    // follows a group. The section walk has to clear its separator flag after
+    // emitting a group, or `(x)y.cpp` arrives as two arguments — and `y.cpp`,
+    // no longer part of the barrier, then sorts away from the group it belongs
+    // to, which changes what the file says.
+    for config in [
+        default_config(),
+        FormatConfig {
+            sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+            ..Default::default()
+        },
+        FormatConfig {
+            sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+            source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+            ..Default::default()
+        },
+    ] {
+        for input in [
+            "set(SRCS (x)y.cpp a.cpp)\n",
+            "set(SRCS z.cpp (x)y.cpp a.cpp)\n",
+            "target_sources(t PRIVATE (x)y.cpp a.cpp)\n",
+        ] {
+            let result = format_text(input, &config);
+            assert!(
+                result.contains("(x)y.cpp"),
+                "the group and the token glued to it came apart:\n{}",
+                result
+            );
+            assert_eq!(result, format_text(&result, &config), "not idempotent");
+        }
+    }
+}
+
+#[test]
+fn test_an_unterminated_group_is_closed_outside_its_comment() {
+    // In `f((A # c)` the trailing `)` is comment text, not an RPAREN — the
+    // parser never saw the group close. The verbatim text a commented group is
+    // emitted as therefore ends *inside* the open comment, so the caller's `)`
+    // would land inside it too rather than becoming a token, and the next run
+    // would append another, and the next: the file grows by a byte per run and
+    // `--check` never goes green. Asking the last token rather than the last
+    // character is what tells the two apart — see `render_nested_group`.
+    let config = default_config();
+    // Both spellings of the closing test agree once there is a trailing
+    // newline — the group's last token is then the NEWLINE — so the input
+    // *without* one is the case that discriminates, and the one this test
+    // originally missed.
+    for input in ["f((A # c)", "f((A # c)\n", "f((A # c", "if(A AND (B # c)"] {
+        let once = format_text(input, &config);
+        let twice = format_text(&once, &config);
+        assert_eq!(
+            once, twice,
+            "the output keeps growing for {:?}:\n--- pass 1 ---\n{}\n--- pass 2 ---\n{}",
+            input, once, twice
+        );
+        let thrice = format_text(&twice, &config);
+        assert_eq!(twice, thrice, "not idempotent for {:?}", input);
+        assert!(
+            thrice.len() <= once.len(),
+            "the output grew across passes for {:?}: {} -> {}",
+            input,
+            once.len(),
+            thrice.len()
+        );
+    }
+}
+
+#[test]
+fn test_every_walk_clears_its_separator_after_a_group() {
+    // Three walks collect a group as one logical argument, and each has to clear
+    // its separator flag afterwards or the token glued to the group comes away
+    // from it. Only the `cmake_rules` copy was pinned; these are the other two,
+    // both observable at default settings.
+    let config = default_config();
+    for (input, expected) in [
+        // `format_argument_list` — a newline in the list, so it breaks
+        ("f(x\n(q)y.cpp)\n", "f(\n\tx\n\t(q)y.cpp\n)\n"),
+        // `collect_args_with` — no newline, so it stays flat
+        ("f((q)y.cpp z.cpp)\n", "f((q)y.cpp z.cpp)\n"),
+        ("f(a (q)y.cpp b)\n", "f(a (q)y.cpp b)\n"),
+    ] {
+        let result = format_text(input, &config);
+        assert_eq!(
+            result, expected,
+            "the token glued to the group came away for {:?}",
+            input
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+#[test]
+fn test_a_paren_inside_a_value_is_not_a_group() {
+    // Which arguments hold a group is recorded where the sections are built,
+    // because that is the only place that knows: the group arrives as an
+    // `ArgumentList` node. Asking the rendered string needed a scanner over
+    // quoted and bracket spans, and it was wrong in both directions —
+    // `[[foo(1).cpp]]` is one filename and was read as a group, pinning the
+    // whole list, while `a.cpp[[x(1)]]` holds a real group and the scanner
+    // opened a bracket span the lexer does not, hiding it and letting arguments
+    // sort across it.
+    let sorting = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        ..Default::default()
+    };
+    // A paren inside a quoted or bracket argument is a character, so these sort
+    for (input, expected) in [
+        (
+            "set(SRCS z.cpp \"foo(1).cpp\" a.cpp)\n",
+            "set(SRCS \"foo(1).cpp\" a.cpp z.cpp)\n",
+        ),
+        (
+            "set(SRCS z.cpp [[foo(1).cpp]] a.cpp)\n",
+            "set(SRCS [[foo(1).cpp]] a.cpp z.cpp)\n",
+        ),
+        (
+            "install(FILES z.cpp [[foo(1).cpp]] a.cpp DESTINATION d)\n",
+            "install(FILES [[foo(1).cpp]] a.cpp z.cpp DESTINATION d)\n",
+        ),
+        // The `[=[ ]=]` spelling through a keyword section. A positional run
+        // additionally requires every value to look like a source file, and the
+        // filename heuristic does not see through this wrapper — unrelated to
+        // the barrier question, and it only ever declines to sort.
+        (
+            "install(FILES z.cpp [=[foo(1).cpp]=] a.cpp DESTINATION d)\n",
+            "install(FILES [=[foo(1).cpp]=] a.cpp z.cpp DESTINATION d)\n",
+        ),
+    ] {
+        assert_eq!(
+            format_text(input, &sorting),
+            expected,
+            "a paren inside a value was read as a group"
+        );
+    }
+    // A real group is a barrier however it is spelled, including the one the
+    // scanner could not see. Here the arguments on each side may sort among
+    // themselves — what must not happen is one crossing the group.
+    for (input, before, after) in [
+        (
+            "set(SRCS z.cpp y.cpp a.cpp[[x(1)]] b.cpp)\n",
+            vec!["y.cpp", "z.cpp"],
+            vec!["b.cpp"],
+        ),
+        (
+            "set(SRCS a.cpp[[x(1)]] z.cpp y.cpp)\n",
+            vec![],
+            vec!["y.cpp", "z.cpp"],
+        ),
+    ] {
+        let result = format_text(input, &sorting);
+        let inner = result
+            .trim_end()
+            .trim_start_matches("set(SRCS ")
+            .trim_end_matches(')');
+        let words: Vec<&str> = inner.split_whitespace().collect();
+        let at = words
+            .iter()
+            .position(|w| w.contains("[[x(1)]]"))
+            .unwrap_or_else(|| panic!("the group went missing:\n{}", result));
+        assert_eq!(&words[..at], before.as_slice(), "crossed into:\n{}", result);
+        assert_eq!(
+            &words[at + 1..],
+            after.as_slice(),
+            "crossed out of:\n{}",
+            result
+        );
+        assert_eq!(result, format_text(&result, &sorting), "not idempotent");
+    }
+
+    for input in [
+        "set(SRCS z.cpp NOT(x.cpp) a.cpp)\n",
+        "set(SRCS z.cpp a.cpp(b) c.cpp)\n",
+        "set(SRCS (x)y.cpp a.cpp)\n",
+        // a quoted value glued to a group: the quote no longer hides it
+        "set(SRCS z.cpp \"a\"(b) c.cpp)\n",
+        // and a bracket argument glued to one
+        "set(SRCS z.cpp [[a]](b) c.cpp)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &sorting),
+            input,
+            "arguments moved across a group"
+        );
+    }
+
+    // A token that opens a bracket argument and never closes it has swallowed
+    // the rest of the file, so nothing after it can be read — including whether
+    // it is a filename. That is a veto on the whole run, never an exemption:
+    // as an exemption it cancelled the value check and *enabled* sorting a list
+    // that had been left alone.
+    //
+    // The tool also appends a `)` per run for an unterminated bracket argument —
+    // `set(SRCS a [[b` does the same on main, with no group involved — so this
+    // shape has no fixed point either way. What must hold is that nothing moved.
+    // And an unterminated bracket vetoes rather than exempts: these two sorted
+    // where the previous predicate left them alone.
+    for input in [
+        "set(SRCS z.cpp y.cpp -DFOO[[z b.cpp a.cpp)\n",
+        "set(SRCS z.cpp y.cpp -DFOO[=[z b.cpp a.cpp)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &sorting),
+            input,
+            "an unterminated bracket exempted the run from the value check"
+        );
+    }
+    // The veto is the only thing holding these two: every other test in the
+    // chain passes them. Order rather than bytes, because the tool closes the
+    // unterminated command and so cannot return the input unchanged.
+    for input in [
+        "set(SRCS z.cpp y.cpp [[a(b) a.cpp)\n",
+        "set(SRCS z.cpp y.cpp [[a a.cpp)\n",
+    ] {
+        assert!(
+            format_text(input, &sorting).starts_with("set(SRCS z.cpp y.cpp [["),
+            "an unterminated bracket exempted the run from the value check:\n{}",
+            format_text(input, &sorting)
+        );
+    }
+
+    let mut result = format_text("set(SRCS z.cpp [[a(b) c.cpp)\n", &sorting);
+    for pass in 1..=3 {
+        assert!(
+            result.starts_with("set(SRCS z.cpp [[a(b) c.cpp)"),
+            "an argument sorted into an unterminated bracket argument by pass {}:\n{}",
+            pass,
+            result
+        );
+        result = format_text(&result, &sorting);
+    }
+}
+
+#[test]
+fn test_a_group_glued_to_the_token_before_it_is_still_a_barrier() {
+    // Adjacency merging renders `NOT(x.cpp)` as one argument, which does not
+    // *start* with a paren — so the barrier test missed it and the arguments
+    // around the group sorted across it.
+    let config = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        source_grouping: cmake_fmt::formatter::SourceGrouping::HeadersFirst,
+        ..Default::default()
+    };
+    for input in [
+        "set(SRCS z.cpp a.cpp(b) c.cpp)\n",
+        "set(SRCS z.cpp NOT(x.cpp) a.cpp)\n",
+    ] {
+        assert_eq!(
+            format_text(input, &config),
+            input,
+            "arguments moved across a merged group"
+        );
+    }
+
+    // A quoted value that merely contains a paren is a value, not a group.
+    // `"${GEN}"` does not test this — it has no paren, and the
+    // variable-reference test catches it either way. A quoted filename with a
+    // paren in it does.
+    let sorting = FormatConfig {
+        sort_sources: cmake_fmt::formatter::SortSources::Alphabetical,
+        ..Default::default()
+    };
+    assert_eq!(
+        format_text("set(SRCS z.cpp \"foo(1).cpp\" a.cpp)\n", &sorting),
+        "set(SRCS \"foo(1).cpp\" a.cpp z.cpp)\n",
+        "a quoted value containing a paren is a value, not a barrier"
+    );
+    assert_eq!(
+        format_text("set(SRCS \"${GEN}\" z.cpp a.cpp)\n", &sorting),
+        "set(SRCS \"${GEN}\" a.cpp z.cpp)\n",
+        "a quoted variable reference should hold its place and let the rest sort"
+    );
+}
+
+#[test]
+fn test_a_trailing_comment_after_a_group_stays_on_its_line() {
+    // The node arm resets the blank-line counter, which is what keeps a comment
+    // written after a group a *trailing* comment rather than an own-line one.
+    let config = FormatConfig::default();
+    let result = format_text("set(V\n\t(b) # tail\n\tc)\n", &config);
+    let line = result
+        .lines()
+        .find(|l| l.contains("# tail"))
+        .expect("the comment survived");
+    assert!(
+        line.contains("(b)"),
+        "the comment left the group's line:\n{}",
+        result
+    );
+    assert_eq!(result, format_text(&result, &config), "not idempotent");
+}
+
+#[test]
+fn test_a_group_stays_glued_across_a_blank_line() {
+    // The force-multiline path merges a group onto the token before it too;
+    // without that, `NOT` and `(TRUE)` split across lines.
+    let config = FormatConfig::default();
+    let result = format_text("f(x\n\nNOT(TRUE))\n", &config);
+    assert!(
+        result.contains("NOT(TRUE)"),
+        "the group was split from the token it is glued to:\n{}",
         result
     );
     assert_eq!(result, format_text(&result, &config), "not idempotent");

@@ -9,6 +9,7 @@ use rowan::NodeOrToken;
 
 use super::builtins;
 use super::cmake_rules;
+use super::cmake_rules::ParenPad;
 use super::comments;
 use super::config::{ClosingStyle, CommandCase, FormatConfig, UserCommandCase};
 use super::grammar::GrammarRegistry;
@@ -25,14 +26,21 @@ pub(crate) struct ArgumentFormatSignals {
     pub(crate) has_comments: bool,
 }
 
-/// Scope frame for tracking block opener arguments
+/// Scope frame for tracking block opener arguments.
+///
+/// Holds the opener's argument list rather than its rendering. Rendering it here
+/// meant deciding, at the opener, whether `closing_style` would need it — but a
+/// `# cmake-fmt: closing_style=force` directive anywhere *after* the opener
+/// turns it on later, and the closer then found an empty list and emitted
+/// nothing, deleting the arguments the author wrote. Keeping the node is also
+/// cheaper: nothing is rendered unless a closer actually asks.
 struct ScopeFrame {
-    opener_args: Vec<String>,
+    opener_args: Option<ArgumentList>,
 }
 
 /// Context for formatting block closers and mid-block commands
 struct CloserContext {
-    opener_args: Vec<String>,
+    opener_args: Option<ArgumentList>,
     is_mid_block: bool,
 }
 
@@ -298,12 +306,17 @@ fn format_file(
                                         let text = if !lc.text.starts_with("#[")
                                             && !block_comment_lines.contains(&lc_line)
                                         {
-                                            cmake_rules::normalize_comment_whitespace(
+                                            cmake_rules::render_comment(
                                                 &lc.text,
                                                 config.comment_style,
+                                                true,
                                             )
                                         } else {
-                                            lc.text.clone()
+                                            cmake_rules::render_comment(
+                                                &lc.text,
+                                                config.comment_style,
+                                                false,
+                                            )
                                         };
                                         docs.push(RcDoc::text(format!("{}{}", indent_str, text)));
                                         docs.push(RcDoc::hardline());
@@ -319,7 +332,12 @@ fn format_file(
                                         {
                                             docs.push(RcDoc::hardline());
                                         }
-                                        // Suppressed: preserve comment text as-is
+                                        // Suppressed: verbatim, trailing whitespace
+                                        // included. `# cmake-fmt: off` is a
+                                        // request not to touch the region, and
+                                        // that has to include the whitespace the
+                                        // author left there — the trailing-comment
+                                        // arm below already keeps it.
                                         let text = lc.text.clone();
                                         docs.push(RcDoc::text(format!("{}{}", indent_str, text)));
                                         docs.push(RcDoc::hardline());
@@ -387,12 +405,17 @@ fn format_file(
                                 let text = if !lc.text.starts_with("#[")
                                     && !block_comment_lines.contains(&lc_line)
                                 {
-                                    cmake_rules::normalize_comment_whitespace(
+                                    cmake_rules::render_comment(
                                         &lc.text,
                                         config.comment_style,
+                                        true,
                                     )
                                 } else {
-                                    lc.text.clone()
+                                    cmake_rules::render_comment(
+                                        &lc.text,
+                                        config.comment_style,
+                                        false,
+                                    )
                                 };
                                 docs.push(RcDoc::text(format!("{}{}", indent_str, text)));
                                 docs.push(RcDoc::hardline());
@@ -503,18 +526,14 @@ fn format_file(
                             // Handle block openers (indent and push scope after emitting)
                             if is_block_opener(&cmd_name) {
                                 current_indent += 1;
-                                // Extract opener arguments for scope tracking
-                                // Logical arguments, not raw tokens: adjacent
-                                // tokens like `${DIR}` + `/x.h` are one
-                                // argument. Collecting tokens made a forced
-                                // closer disagree with its opener — a space
-                                // appeared mid-path, and the two got different
-                                // clause layouts. CMake itself warns about the
-                                // mismatch.
-                                let opener_args: Vec<String> = cmd
-                                    .argument_list()
-                                    .map(|al| collect_logical_args(&al))
-                                    .unwrap_or_default();
+                                // The opener's argument list, rendered only if
+                                // a closer asks for it — see `ScopeFrame`. Kept
+                                // as the node rather than collected here: a
+                                // group has to be normalized at the point the
+                                // effective `closing_style` is known, and
+                                // collecting eagerly rendered every nested group
+                                // twice.
+                                let opener_args = cmd.argument_list();
                                 scope_stack.push(ScopeFrame { opener_args });
                             }
 
@@ -600,8 +619,16 @@ fn format_file(
                             // Normalize line comments (not bracket comments), but not when suppressed or in a comment block
                             let comment_line =
                                 line_number_at_offset(source, token.text_range().start().into());
-                            let text = if token.kind() == SyntaxKind::COMMENT
-                                && !tracker.is_suppressed()
+                            let text = if tracker.is_suppressed() {
+                                // Verbatim, like the leading and trailing
+                                // comments of a suppressed command. `off` asks
+                                // for the region to be left as written, and that
+                                // includes the whitespace at the end of a line;
+                                // this arm was trimming it while the other two
+                                // were not, so the answer depended on whether
+                                // the comment had a command to belong to.
+                                comment_text.clone()
+                            } else if token.kind() == SyntaxKind::COMMENT
                                 && !block_comment_lines.contains(&comment_line)
                             {
                                 cmake_rules::normalize_comment_whitespace(
@@ -609,7 +636,11 @@ fn format_file(
                                     config.comment_style,
                                 )
                             } else {
-                                comment_text
+                                cmake_rules::render_comment(
+                                    &comment_text,
+                                    config.comment_style,
+                                    false,
+                                )
                             };
                             docs.push(RcDoc::text(format!("{}{}", indent_str, text)));
                             docs.push(RcDoc::hardline());
@@ -684,14 +715,14 @@ fn format_command(
     };
 
     // Handle block closers and mid-block commands based on closing_style
-    let args_doc = if let Some(closer_ctx) = closer_context {
+    let (args_doc, paren_pad) = if let Some(closer_ctx) = closer_context {
         if closer_ctx.is_mid_block && name.to_lowercase() == "elseif" {
             // elseif carries a condition — always preserve its arguments
             if let Some(arg_list) = cmd.argument_list() {
                 let is_custom = !builtins::is_builtin_command(&name_lower);
                 format_argument_list(&arg_list, ctx, is_custom, &name_lower)
             } else {
-                RcDoc::nil()
+                (RcDoc::nil(), ParenPad::Builder)
             }
         } else {
             // True closers (endif, endforeach, etc.) — apply closing_style
@@ -752,17 +783,26 @@ fn format_command(
                             format_argument_list(&arg_list, ctx, is_custom, &name_lower)
                         }
                     } else {
-                        RcDoc::nil()
+                        (RcDoc::nil(), ParenPad::Builder)
                     }
                 }
                 ClosingStyle::Remove => {
                     // Remove mode: emit empty argument list
-                    RcDoc::nil()
+                    (RcDoc::nil(), ParenPad::Builder)
                 }
                 ClosingStyle::Force => {
-                    // Force mode: emit opener's arguments
-                    if closer_ctx.opener_args.is_empty() {
-                        RcDoc::nil()
+                    // Force mode: emit the opener's arguments, rendered here
+                    // because only here is the effective `closing_style` known.
+                    // A group is always normalized — its verbatim text carries
+                    // the group's own comments and newlines, which a closer must
+                    // not repeat.
+                    let rendered = closer_ctx
+                        .opener_args
+                        .as_ref()
+                        .map(collect_condition_args)
+                        .unwrap_or_default();
+                    if rendered.is_empty() {
+                        (RcDoc::nil(), ParenPad::Builder)
                     } else {
                         // A closer echoing a condition is laid out by the same
                         // rules as its opener, measured at its own width — which
@@ -773,6 +813,14 @@ fn format_command(
                         // read signals from, so the reconstructed condition is
                         // treated as written on one line: it wraps only if it
                         // doesn't fit.
+                        //
+                        // `collect_condition_args`, computed once above, is
+                        // what both halves need: it merges adjacent tokens, so
+                        // `${DIR}` + `/x.h` stays one argument and the closer
+                        // cannot disagree with its opener about the clause
+                        // split, and it normalizes a group, whose verbatim text
+                        // carries the group's own comments and newlines that a
+                        // closer must not repeat.
                         let signals = ArgumentFormatSignals {
                             force_multiline: false,
                             has_comments: false,
@@ -785,28 +833,25 @@ fn format_command(
                             // which reads its arguments through
                             // `format_argument_list`.
                             let trailing = trailing_width_after_command(cmd.syntax(), ctx.config);
-                            format_condition_args(
-                                &signals,
-                                ctx,
-                                &name_lower,
-                                &closer_ctx.opener_args,
-                                trailing,
-                            )
+                            format_condition_args(&signals, ctx, &name_lower, &rendered, trailing)
                         } else {
                             None
                         };
 
-                        laid_out.unwrap_or_else(|| {
+                        let doc = laid_out.unwrap_or_else(|| {
+                            // Non-empty: the guard above returned already.
                             // Mirror the space the opening paren gets, or
                             // space_between_command_parens yields `endif( A)`
                             // — spaced open, unspaced close.
-                            let doc = RcDoc::text(closer_ctx.opener_args.join(" "));
+                            let doc = RcDoc::text(rendered.join(" "));
                             if ctx.config.space_between_command_parens {
                                 doc.append(RcDoc::text(" "))
                             } else {
                                 doc
                             }
-                        })
+                        });
+                        // Either arm opens with the condition's first clause.
+                        (doc, ParenPad::Caller)
                     }
                 }
             }
@@ -869,7 +914,7 @@ fn format_command(
                 format_argument_list(&arg_list, ctx, is_custom, &name_lower)
             }
         } else {
-            RcDoc::nil()
+            (RcDoc::nil(), ParenPad::Builder)
         }
     };
 
@@ -900,6 +945,8 @@ fn format_command(
                         | SyntaxKind::ENV_VAR_REF
                         | SyntaxKind::CACHE_VAR_REF
                         | SyntaxKind::GENERATOR_EXPR
+                        // A nested `( ... )` group is an argument too
+                        | SyntaxKind::ARGUMENT_LIST
                 )
             })
         })
@@ -911,16 +958,28 @@ fn format_command(
             match ctx.config.closing_style {
                 ClosingStyle::Preserve => writes_own_args(),
                 ClosingStyle::Remove => false,
-                ClosingStyle::Force => !closer.opener_args.is_empty(),
+                // Whether the *forced* closer writes anything, which is what
+                // the Force arm above emits — so the paren space follows the
+                // arguments actually written, not the ones the source had.
+                ClosingStyle::Force => closer
+                    .opener_args
+                    .as_ref()
+                    .is_some_and(|al| !collect_condition_args(al).is_empty()),
             }
         }
         _ => writes_own_args(),
     };
-    let space_after = if ctx.config.space_between_command_parens && has_args {
-        " "
-    } else {
-        ""
-    };
+    // The pad only exists where something shares the opening line. Where the
+    // arguments break away from it, `args_doc` was built knowing that and either
+    // put the pad in its own flat arm or left it out; either way it is not the
+    // caller's to write, and writing it regardless left a space at end of line —
+    // which the whole-buffer strip used to take back off, and no longer does.
+    let space_after =
+        if ctx.config.space_between_command_parens && has_args && paren_pad == ParenPad::Caller {
+            " "
+        } else {
+            ""
+        };
     let paren_open = format!("{}({}", space_before, space_after);
     let cmd_doc = RcDoc::text(formatted_name)
         .append(RcDoc::text(paren_open))
@@ -962,7 +1021,20 @@ pub(crate) fn detect_argument_formatting_signals(arg_list: &ArgumentList) -> Arg
                 }
             }
             NodeOrToken::Node(_) => {
-                // Nodes reset newline count
+                // Deliberately does NOT look inside a nested `( ... )` group.
+                // A group renders as one atomic argument, and when it carries a
+                // comment that argument is multi-line, which the renderer
+                // measures as a single long line — so the containing command
+                // can break where it need not have. That mis-measure is
+                // one-directional: it over-estimates, so it only ever causes a
+                // spurious break, never a line over max_line_length. It does not
+                // make the result idempotent — `add_library((x # c\ny)\n\nSTATIC)`
+                // is not a fixed point, and neither is the same shape without a
+                // group, so that is a separate pre-existing bug in how a blank
+                // line before a Flag keyword is re-read. Recursing here would make the
+                // measurement honest but the output worse: the command would
+                // then take the force-multiline path and put every remaining
+                // argument on its own line, where today the tail stays compact.
                 consecutive_newline_count = 0;
             }
         }
@@ -1004,12 +1076,12 @@ fn is_condition_command(name_lower: &str) -> bool {
 
 /// Operators that join the clauses of a condition.
 ///
-/// Recognised wherever they appear in the argument list — there is no
-/// paren-depth tracking here, and on this branch nothing reaches it that would
-/// need any: a parenthesised sub-expression is dropped before this layout sees
-/// it, which is issue #5 and is fixed on a separate branch. Once that lands a
-/// group arrives as one argument, so an `AND` inside `(B OR C)` is part of that
-/// argument's text and still never tested.
+/// Recognised wherever they appear in the argument list, and nothing here
+/// tracks paren depth — it does not need to. A parenthesised sub-expression
+/// arrives as a single argument, so an `AND` inside `(B OR C)` is part of that
+/// argument's text and is never tested as an operator. Before issue #5 was
+/// fixed the same held for a different and much worse reason: the group was
+/// deleted outright before this layout saw it.
 ///
 /// Case-sensitive, because CMake itself is: `if(A and B)` is not a lowercase
 /// spelling of the operator, it is an error ("Unknown arguments specified").
@@ -1301,21 +1373,58 @@ fn format_condition_args(
     Some(RcDoc::text(rendered).append(closing))
 }
 
+/// Whether an argument list holds anything at all, without rendering nested
+/// groups — `collect_logical_args` would, and on the force-multiline path its
+/// result is never used.
+fn has_arguments(arg_list: &ArgumentList) -> bool {
+    arg_list.syntax().children_with_tokens().any(|child| {
+        matches!(
+            child.kind(),
+            SyntaxKind::UNQUOTED_ARGUMENT
+                | SyntaxKind::QUOTED_ARGUMENT
+                | SyntaxKind::BRACKET_ARGUMENT
+                | SyntaxKind::VARIABLE_REF
+                | SyntaxKind::ENV_VAR_REF
+                | SyntaxKind::CACHE_VAR_REF
+                | SyntaxKind::GENERATOR_EXPR
+                | SyntaxKind::ARGUMENT_LIST
+        )
+    })
+}
+
 /// Format an argument list with intelligent line breaking
 fn format_argument_list(
     arg_list: &ArgumentList,
     ctx: &FormatContext,
     is_custom_command: bool,
     name_lower: &str,
-) -> RcDoc<'static, ()> {
-    let args = collect_logical_args(arg_list);
-
-    if args.is_empty() {
-        return RcDoc::nil();
+) -> (RcDoc<'static, ()>, ParenPad) {
+    if !has_arguments(arg_list) {
+        return (RcDoc::nil(), ParenPad::Builder);
     }
 
     // Detect formatting signals
     let signals = detect_argument_formatting_signals(arg_list);
+
+    // Collected only where it is read. The force-multiline path rebuilds from
+    // tokens, and collecting here as well would render every nested `( ... )`
+    // group twice — except for a condition, which needs its arguments on that
+    // path too: a hand-wrapped condition arrives force-multiline, and the clause
+    // layout engaging there is what makes it normalizing rather than only a
+    // rescue for overflow.
+    //
+    // Known hole: with more than 200 arguments the auto-layout guard further
+    // down falls through to that walk anyway, and this vector — groups already
+    // rendered — is discarded, so each group is rendered twice after all.
+    // Deciding earlier would mean counting logical arguments without merging
+    // adjacent ones, i.e. a second copy of the merge rule, which is the
+    // duplication that caused issue #5. A 200+ argument command containing a
+    // group is rare and the cost is 2x, not quadratic, so it stays.
+    let args = if signals.force_multiline && !is_condition_command(name_lower) {
+        Vec::new()
+    } else {
+        collect_logical_args(arg_list)
+    };
 
     // `if`/`elseif`/`while` hold a boolean expression rather than a list, so
     // they get a layout that keeps each clause readable when it has to wrap.
@@ -1328,7 +1437,7 @@ fn format_argument_list(
             trailing_width_after(arg_list, ctx.config),
         )
     {
-        return doc;
+        return (doc, ParenPad::Caller);
     }
 
     // If no multiline signals, use auto-layout (flat_alt + group)
@@ -1340,9 +1449,12 @@ fn format_argument_list(
         if args.len() == 1 {
             // Single argument: simple case, but still need closing paren position
             // so that space_between_command_parens / indent_closing_paren apply.
-            return RcDoc::text(args[0].clone())
-                .append(closing_paren_position(ctx.config, ctx.indent_level, false))
-                .group();
+            return (
+                RcDoc::text(args[0].clone())
+                    .append(closing_paren_position(ctx.config, ctx.indent_level, false))
+                    .group(),
+                ParenPad::Caller,
+            );
         }
 
         // Use explicit text indentation via flat_alt instead of nest()
@@ -1363,10 +1475,13 @@ fn format_argument_list(
                         RcDoc::space(),
                     ));
                 } else {
-                    // First arg: flat → no separator, broken → newline + indent
+                    // First arg: flat → the paren's pad, if it is owed one,
+                    // broken → newline + indent. The pad travels in the flat arm
+                    // because only the renderer knows which arm is taken, and on
+                    // the broken one it would end the line.
                     all_docs.push(RcDoc::flat_alt(
                         RcDoc::hardline().append(RcDoc::text(inner_indent.clone())),
-                        RcDoc::nil(),
+                        cmake_rules::paren_pad_flat(ctx.config),
                     ));
                 }
                 all_docs.push(RcDoc::text(arg.clone()));
@@ -1376,7 +1491,7 @@ fn format_argument_list(
             all_docs.push(closing_paren_position(ctx.config, ctx.indent_level, false));
 
             // Group all arguments together - when it doesn't fit flat, all break
-            return RcDoc::concat(all_docs).group();
+            return (RcDoc::concat(all_docs).group(), ParenPad::Builder);
         } else {
             // Builtin command: first arg stays inline, rest break
             let first_text = args[0].clone();
@@ -1396,7 +1511,10 @@ fn format_argument_list(
 
             // When flat: "first rest1 rest2"
             // When broken: "first\n<inner>rest1\n<inner>rest2\n<base>"
-            return RcDoc::text(first_text).append(RcDoc::concat(rest_docs).group());
+            return (
+                RcDoc::text(first_text).append(RcDoc::concat(rest_docs).group()),
+                ParenPad::Caller,
+            );
         }
     }
 
@@ -1465,7 +1583,11 @@ fn format_argument_list(
                     }
                     SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT => {
                         // Comments at same indent level as arguments
-                        let text = token.text();
+                        let text = &cmake_rules::render_comment(
+                            token.text(),
+                            ctx.config.comment_style,
+                            false,
+                        );
                         rest_parts.push('\n');
 
                         // If there were blank lines before this comment, emit extra newlines
@@ -1496,8 +1618,39 @@ fn format_argument_list(
                     }
                 }
             }
-            NodeOrToken::Node(_) => {
-                saw_separator = true;
+            NodeOrToken::Node(node) => {
+                if let Some(nested) = ArgumentList::cast(node) {
+                    // Nested `( ... )` group: emit as a single argument
+                    let text = render_nested_group(&nested);
+
+                    if !saw_separator && seen_first_arg {
+                        rest_parts.push_str(&text);
+                    } else if !seen_first_arg {
+                        if is_custom_command {
+                            rest_parts.push('\n');
+                            rest_parts.push_str(&inner_indent);
+                            rest_parts.push_str(&text);
+                        } else {
+                            first_arg = Some(text);
+                        }
+                        seen_first_arg = true;
+                    } else {
+                        rest_parts.push('\n');
+                        if consecutive_newline_count >= 2 {
+                            let blank_lines = consecutive_newline_count - 1;
+                            let blank_lines_to_emit =
+                                std::cmp::min(blank_lines, ctx.config.max_blank_lines);
+                            for _ in 0..blank_lines_to_emit {
+                                rest_parts.push('\n');
+                            }
+                        }
+                        rest_parts.push_str(&inner_indent);
+                        rest_parts.push_str(&text);
+                    }
+                    saw_separator = false;
+                } else {
+                    saw_separator = true;
+                }
                 consecutive_newline_count = 0;
             }
         }
@@ -1512,23 +1665,34 @@ fn format_argument_list(
 
     // Build final Doc IR from pre-rendered string
     // Using RcDoc::text with pre-rendered content avoids deeply-nested concat trees
+    // Every arm below either opens with a newline or opens with `first`, so the
+    // pad follows from which one it is.
     if is_custom_command {
         if !rest_parts.is_empty() {
-            RcDoc::text(rest_parts).append(RcDoc::text(format!("\n{}", closing_indent)))
+            (
+                RcDoc::text(rest_parts).append(RcDoc::text(format!("\n{}", closing_indent))),
+                ParenPad::Builder,
+            )
         } else {
-            RcDoc::nil()
+            (RcDoc::nil(), ParenPad::Builder)
         }
     } else if let Some(first) = first_arg {
         if !rest_parts.is_empty() {
-            RcDoc::text(first)
-                .append(RcDoc::text(rest_parts))
-                .append(RcDoc::text(format!("\n{}", closing_indent)))
+            (
+                RcDoc::text(first)
+                    .append(RcDoc::text(rest_parts))
+                    .append(RcDoc::text(format!("\n{}", closing_indent))),
+                ParenPad::Caller,
+            )
         } else {
             // Single-arg force-multiline builtin: still need closing paren on its own line
-            RcDoc::text(first).append(RcDoc::text(format!("\n{}", closing_indent)))
+            (
+                RcDoc::text(first).append(RcDoc::text(format!("\n{}", closing_indent))),
+                ParenPad::Caller,
+            )
         }
     } else {
-        RcDoc::nil()
+        (RcDoc::nil(), ParenPad::Builder)
     }
 }
 
@@ -1537,12 +1701,35 @@ fn format_argument_list(
 /// For example, `${CMAKE_CURRENT_SOURCE_DIR}` + `/src` (two CST tokens)
 /// becomes one logical argument `${CMAKE_CURRENT_SOURCE_DIR}/src`.
 pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
+    collect_args_with(arg_list, GroupRendering::AsWritten)
+}
+
+/// How a nested group should be rendered when collecting logical arguments.
+#[derive(Clone, Copy)]
+enum GroupRendering {
+    /// What the argument list itself needs: a group carrying a comment is
+    /// emitted verbatim, because folding a line comment onto one line would
+    /// swallow whatever follows it.
+    AsWritten,
+    /// What rebuilding a closer from its opener needs: always the normalized
+    /// form. The verbatim text carries the group's comments and its source
+    /// newlines, so a forced closer wrote the opener's comment into the file a
+    /// second time and left part of the condition at column 0.
+    Normalized,
+}
+
+/// The same arguments a closer would be rebuilt from, with groups normalized.
+fn collect_condition_args(arg_list: &ArgumentList) -> Vec<String> {
+    collect_args_with(arg_list, GroupRendering::Normalized)
+}
+
+fn collect_args_with(arg_list: &ArgumentList, groups: GroupRendering) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
     let mut saw_separator = true;
 
     for child in arg_list.syntax().children_with_tokens() {
-        if let NodeOrToken::Token(token) = child {
-            match token.kind() {
+        match child {
+            NodeOrToken::Token(token) => match token.kind() {
                 SyntaxKind::UNQUOTED_ARGUMENT
                 | SyntaxKind::QUOTED_ARGUMENT
                 | SyntaxKind::BRACKET_ARGUMENT
@@ -1550,21 +1737,13 @@ pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
                 | SyntaxKind::ENV_VAR_REF
                 | SyntaxKind::CACHE_VAR_REF
                 | SyntaxKind::GENERATOR_EXPR => {
-                    // Per line, not per token: `post_process_rendered_output`
-                    // strips trailing whitespace from every line, so a token
-                    // that spans lines is written narrower than it reads here —
-                    // and these strings are what `format_condition_args`
-                    // measures. `if(AAAA BBBB "q…   \nz")` had no fixed point:
-                    // the layout broke it, the strip made the pieces fit, the
-                    // next pass joined them again.
-                    //
-                    // Only the sites a width decision reads from need this. The
-                    // raw force-multiline walk below and the standalone-comment
-                    // path have already broken by the time they emit, so
-                    // trimming there changes nothing — measured over 216
-                    // shape/style combinations — and the strip cleans up after
-                    // them.
-                    let text = &cmake_rules::trim_line_ends(token.text());
+                    // Untrimmed, and that is the point: these strings are what
+                    // `format_condition_args` measures, and nothing rewrites
+                    // them afterwards. Trimming here while the emitter wrote the
+                    // bytes as read was one half of a disagreement that cost the
+                    // fixed point; deleting the characters to match was the
+                    // other, and changed the value the script holds.
+                    let text = token.text();
                     if !saw_separator && !args.is_empty() {
                         args.last_mut().unwrap().push_str(text);
                     } else {
@@ -1578,10 +1757,85 @@ pub(crate) fn collect_logical_args(arg_list: &ArgumentList) -> Vec<String> {
                 _ => {
                     saw_separator = true;
                 }
+            },
+            NodeOrToken::Node(node) => {
+                // A nested `( ... )` group is one logical argument, e.g. the
+                // grouped sub-expression in `if((A AND B) OR C)`.
+                if let Some(nested) = ArgumentList::cast(node) {
+                    let text = match groups {
+                        GroupRendering::AsWritten => render_nested_group(&nested),
+                        GroupRendering::Normalized => {
+                            format!("({})", collect_condition_args(&nested).join(" "))
+                        }
+                    };
+                    if !saw_separator && !args.is_empty() {
+                        args.last_mut().unwrap().push_str(&text);
+                    } else {
+                        args.push(text);
+                    }
+                    saw_separator = false;
+                } else {
+                    saw_separator = true;
+                }
             }
         }
     }
     args
+}
+
+/// Render a nested parenthesized argument group as a single logical argument.
+///
+/// Inner whitespace is normalized to single spaces (`( A  AND B )` becomes
+/// `(A AND B)`). Groups containing comments are emitted verbatim instead,
+/// because folding a line comment into one line would swallow what follows it.
+///
+/// Two things follow from that verbatim path, both deliberate: the group keeps
+/// whatever indentation it had in the source, since the section parser builds it
+/// before the indent level is known; and `comment_style` is not applied inside
+/// it, since the text never reaches comment normalization. Re-emitting the
+/// group's own arguments with the configured indent and normalized comments
+/// would fix both, and is the right eventual shape.
+pub(crate) fn render_nested_group(group: &ArgumentList) -> String {
+    let has_comment = group
+        .syntax()
+        .descendants_with_tokens()
+        .any(|c| matches!(c.kind(), SyntaxKind::COMMENT | SyntaxKind::BRACKET_COMMENT));
+
+    if has_comment {
+        let mut text = group.syntax().text().to_string();
+
+        // If the parser never saw the group's closing paren, the verbatim text
+        // ends inside the open line comment. The caller's closing paren would
+        // then land inside that comment rather than becoming a real token, so
+        // the next run would append another one, and the next — the file grows
+        // by a byte per run and `--check` never goes green. Close it here, on
+        // its own line so it stays outside the comment.
+        //
+        // Asked of the last token rather than the last character, and the
+        // difference is the whole fix. In `f((A # c)` with no trailing newline
+        // the group's verbatim text *does* end in `)` — comment text, not an
+        // RPAREN — so testing the character calls the group closed, no `)` is
+        // appended, and the caller's lands inside the comment. The next run
+        // appends another, and the next: one byte per run, for ever.
+        //
+        // A trailing newline hides it, because the group's last token is then
+        // the NEWLINE and both spellings agree. That is why the earlier claim
+        // that nothing separates them was wrong — every shape tried had one.
+        let terminated = group
+            .syntax()
+            .last_token()
+            .is_some_and(|token| token.kind() == SyntaxKind::RPAREN);
+        if !terminated {
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push(')');
+        }
+
+        return text;
+    }
+
+    format!("({})", collect_logical_args(group).join(" "))
 }
 
 /// Detect the mode keyword for multi-mode commands
