@@ -1,7 +1,7 @@
 use cmake_fmt::formatter::format_text;
 use cmake_fmt::formatter::{
-    ClosingStyle, CommandCase, CommentStyle, FinalNewline, FormatConfig, UserCommandCase,
-    format_text_with_diagnostics,
+    ClosingStyle, CommandCase, CommentStyle, FinalNewline, FormatConfig, FormatWarning,
+    UserCommandCase, format_text_with_diagnostics,
 };
 
 // Helper to create default config
@@ -3600,6 +3600,111 @@ fn test_whitespace_inside_a_value_is_not_the_formatters_to_remove() {
         assert!(
             result.contains("q   \n"),
             "the value lost its trailing whitespace for {:?}:\n{:?}",
+            input,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+}
+
+/// A carriage return inside a value is that value's byte, not a line ending.
+#[test]
+fn test_a_carriage_return_inside_a_value_is_not_a_line_ending() {
+    // Same rule as the test above, for the other whole-buffer pass: the input
+    // had every `\r` deleted before parsing, which reached inside a quoted and a
+    // bracket argument exactly as the whitespace strip did. `set(A "a\rb")` came
+    // back as `set(A "ab")` — a value `cmake -P` reads differently — and the
+    // content guard could not see it, because it deleted every `\r` from both
+    // sides before comparing.
+    let config = default_config();
+    for input in ["set(A \"a\rb\")\n", "set(A [[a\rb]])\n"] {
+        let result = format_text(input, &config);
+        assert!(
+            result.contains("a\rb"),
+            "the value lost its carriage return for {:?}:\n{:?}",
+            input,
+            result
+        );
+        assert_eq!(result, format_text(&result, &config), "not idempotent");
+    }
+
+    // `\r\n` between lines is a line ending — `line_ending = auto` reads it and
+    // writes it back.
+    assert_eq!(format_text("set(A b)\r\n", &config), "set(A b)\r\n");
+
+    // A lone `\r` is *space*, which is what CMake calls it: `cmake -P` on
+    // `set(A 1)\rmessage(x)` is a parse error, so the `\r` does not end the
+    // command. Asserted as "the same as a space", so this cannot drift into
+    // asserting whatever the lexer happens to do.
+    // Doubled, because that is where space and line ending part company: two
+    // newlines are a blank line to preserve, two spaces are not.
+    assert_eq!(
+        format_text("set(A b)\r\rset(C d)\n", &config),
+        format_text("set(A b)  set(C d)\n", &config)
+    );
+
+    // And it does not end a comment. `cmake -P` on `# c\rmessage("x")` prints
+    // nothing, so the `message` is commented out; treating the `\r` as a line
+    // ending here promoted it to a command — uncommenting code, exit 0, no
+    // warning, and invisible to the content guard, which re-parses the output
+    // with this same lexer and so ends the comment in the same wrong place on
+    // both sides.
+    let commented = format_text("message(\"start\")\n# c\rmessage(\"x\")\n", &config);
+    assert!(
+        commented.lines().count() == 2 && commented.contains("\rmessage(\"x\")"),
+        "the lone carriage return ended the comment and uncommented what followed:\n{:?}",
+        commented
+    );
+    assert_eq!(
+        commented,
+        format_text(&commented, &config),
+        "not idempotent"
+    );
+
+    // And a file written with CRLF still gets CRLF back.
+    let crlf = FormatConfig {
+        line_ending: cmake_fmt::formatter::LineEnding::CrLf,
+        ..Default::default()
+    };
+    assert_eq!(format_text("set(A b)\n", &crlf), "set(A b)\r\n");
+}
+
+/// A comment is identified by where it is, not by what it says.
+#[test]
+fn test_the_same_comment_twice_is_written_twice() {
+    // The set of comments already emitted as a command's leading or trailing
+    // comment was keyed on the comment's text, so a file holding the same
+    // `# note` twice read the second one as already emitted and dropped it. The
+    // content guard caught that and refused the file, which turned a silent loss
+    // into a valid file that could not be formatted at all — still a bug, and
+    // the one a user actually hits.
+    let config = default_config();
+    for input in [
+        // trailing, then standalone at end of file
+        "set(A b) # note\n# note\n",
+        // trailing, then standalone between blank lines, then a command
+        "set(A b) # note\n\n# note\n\nset(C d)\n",
+        // leading, then standalone
+        "# note\nset(A b)\n# note\n",
+        // three of them
+        "# note\nset(A b) # note\nset(C d)\n# note\n",
+    ] {
+        // Asserted through the warnings, not the text: when the guard refuses,
+        // `format_text` hands the *input* straight back, so counting comments in
+        // its return value would count the input's and pass either way.
+        let (result, warnings) = format_text_with_diagnostics(input, &config);
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| matches!(w, FormatWarning::ContentChanged { .. })),
+            "the file could not be formatted at all for {:?}: {:?}",
+            input,
+            warnings
+        );
+        assert_eq!(
+            result.matches("# note").count(),
+            input.matches("# note").count(),
+            "a copy of the comment was dropped for {:?}:\n{}",
             input,
             result
         );

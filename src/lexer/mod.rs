@@ -56,11 +56,21 @@ impl<'a> Lexer<'a> {
                 self.cursor.advance(); // \n
                 SyntaxKind::NEWLINE
             }
-
-            // Whitespace (spaces and tabs, NOT newlines)
-            ' ' | '\t' => {
+            // Whitespace (spaces and tabs, NOT newlines).
+            //
+            // A lone `\r` is one of them, which is what CMake calls it:
+            // `set(A 1)\rmessage(x)` is a parse error to `cmake -P`, so the `\r`
+            // does not end the command, and `# c\rmessage(x)` runs nothing, so
+            // it does not end the comment either. It reaches here at all because
+            // the formatter normalizes `\r\n` only — deleting every `\r` also
+            // deleted the ones inside a quoted or bracket argument, which are
+            // that argument's value. With no arm it fell through to the
+            // unquoted-argument lexer, which breaks on `\r` at once: a
+            // zero-width token, a cursor that never advances, and a loop that
+            // allocates until the process is killed.
+            ' ' | '\t' | '\r' => {
                 self.cursor.advance();
-                while matches!(self.cursor.peek(), Some(' ' | '\t')) {
+                while matches!(self.cursor.peek(), Some(' ' | '\t' | '\r')) {
                     self.cursor.advance();
                 }
                 SyntaxKind::WHITESPACE
@@ -122,9 +132,15 @@ impl<'a> Lexer<'a> {
     }
 
     fn lex_line_comment(&mut self) -> SyntaxKind {
-        // Consume until newline (but don't consume the newline itself)
+        // Consume until newline (but don't consume the newline itself).
+        //
+        // `\n` only. A lone `\r` is whitespace to CMake, not a line ending, so
+        // ending the comment here uncommented everything after it on the line —
+        // silently, and invisibly to the content guard, which re-parses the
+        // output with this same lexer and so ends the comment in the same wrong
+        // place on both sides. A `\r\n` ends at its `\n`.
         while let Some(ch) = self.cursor.peek() {
-            if ch == '\n' || ch == '\r' {
+            if ch == '\n' {
                 break;
             }
             self.cursor.advance();

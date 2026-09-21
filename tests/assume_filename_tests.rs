@@ -2368,12 +2368,19 @@ fn test_sharing_an_inode_with_stdin_is_not_enough_to_be_refused() {
             .stdin(std::process::Stdio::from(stdin))
             .output()
             .expect("run cmake-fmt");
-        assert_eq!(
-            output.status.code(),
-            Some(0),
+        // Whether `--ignore-file` was refused, not whether the run as a whole
+        // succeeded. Reaching `drains_stdin` at all requires stdin mode, and
+        // sharing an inode with stdin requires the ignore file to *be* the
+        // document — so this fixture is read as two languages, and `build/` is
+        // a live ignore pattern but not valid CMake. The exit code therefore
+        // carries the content guard's verdict on `build/()` as well, which has
+        // nothing to do with what is being tested here.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("names this run's own stdin"),
             "--ignore-file {} was refused for merely sharing an inode with stdin: {}",
             ignore_file,
-            String::from_utf8_lossy(&output.stderr)
+            stderr
         );
     }
 }

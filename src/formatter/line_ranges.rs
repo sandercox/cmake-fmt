@@ -1,5 +1,5 @@
 use crate::formatter::{
-    FormatConfig, SuppressionWarning,
+    FormatConfig, FormatWarning,
     config::{FinalNewline, LineEnding},
     detect_line_ending, format_text_with_diagnostics_and_path,
 };
@@ -87,7 +87,7 @@ pub fn format_with_line_ranges(
     ranges: &[LineRange],
     file_path: Option<&Path>,
     verbose: bool,
-) -> (String, Vec<SuppressionWarning>) {
+) -> (String, Vec<FormatWarning>) {
     // Step 1: Format the full file
     let (formatted, warnings) =
         format_text_with_diagnostics_and_path(input, config, file_path, verbose);
@@ -157,6 +157,22 @@ pub fn format_with_line_ranges(
         }
     }
 
+    // Step 7: the splice above takes lines by index from two texts whose line
+    // counts differ as soon as formatting re-wraps anything, so the result can
+    // say something neither of them said — dropping a target's whole source
+    // list, for instance. The formatter checks its own output; this is the
+    // buffer actually about to be written, so it needs checking too.
+    if let Some(detail) = super::describe_content_change(input, &result, config, file_path, verbose)
+    {
+        // Not de-duplicated: if the inner format had refused, `formatted` would
+        // equal `input`, the splice would reproduce the input, and
+        // `describe_content_change` would have returned `None` — so `warnings`
+        // cannot already carry one when this runs.
+        let mut warnings = warnings;
+        warnings.push(FormatWarning::ContentChanged { detail });
+        return (input.to_string(), warnings);
+    }
+
     (result, warnings)
 }
 
@@ -221,6 +237,81 @@ mod tests {
         assert_eq!(lines[0], "set(FOO bar)");
         assert_eq!(lines[1], "message(hello)");
         assert_eq!(lines[2], "set(  BAZ   qux)");
+    }
+
+    #[test]
+    fn test_the_spliced_buffer_is_checked_with_the_formatter_s_own_grammars() {
+        // The check has to resolve grammars the way the formatter did. Handing
+        // it an empty map would leave it not knowing that `SOURCES` on a wrapper
+        // auto-detected from `cmake_parse_arguments` is an unordered list — so
+        // it would read the sorting the formatter just did as a difference,
+        // refuse the buffer, and warn. This is the only path where the two
+        // resolutions could drift, because it is the only one that resolves
+        // twice.
+        let input = "function(my_lib)\n\tcmake_parse_arguments(MY_LIB \"\" \"NAME\" \"SOURCES\" ${ARGN})\nendfunction()\nmy_lib(NAME a SOURCES z.cpp a.cpp)\n";
+        let config = FormatConfig {
+            sort_sources: crate::formatter::SortSources::Alphabetical,
+            ..Default::default()
+        };
+        let ranges = vec![LineRange { start: 4, end: 4 }];
+
+        let (result, warnings) = format_with_line_ranges(input, &config, &ranges, None, false);
+
+        assert!(
+            result.contains("my_lib(NAME a SOURCES a.cpp z.cpp)"),
+            "the wrapper's source list was not sorted:\n{}",
+            result
+        );
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| matches!(w, FormatWarning::ContentChanged { .. })),
+            "the check refused the formatter's own sorting: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn test_the_spliced_buffer_sees_a_wrapper_declared_in_a_sibling_file() {
+        // `resolve_user_grammars` has two sources: wrappers found in the file
+        // being formatted, and wrappers found anywhere in the project. The case
+        // above declares its wrapper in the file under test, so it only ever
+        // exercised the first — passing `None` for `file_path` here survived the
+        // whole suite while the check lost every project-wide grammar and read
+        // the formatter's own sorting as a content change.
+        let tempdir = tempfile::TempDir::new().expect("tempdir");
+        let root = tempdir.path();
+        std::fs::write(
+            root.join("CMakeLists.txt"),
+            "function(my_lib)\n\tcmake_parse_arguments(MY_LIB \"\" \"NAME\" \"SOURCES\" ${ARGN})\nendfunction()\n",
+        )
+        .expect("write");
+        let target = root.join("sub.cmake");
+        let input = "set(  PAD   1)\nmy_lib(NAME a SOURCES z.cpp a.cpp)\n";
+        std::fs::write(&target, input).expect("write");
+        crate::formatter::grammar::clear_project_grammar_cache();
+
+        let config = FormatConfig {
+            sort_sources: crate::formatter::SortSources::Alphabetical,
+            ..Default::default()
+        };
+        let ranges = vec![LineRange { start: 2, end: 2 }];
+        let (result, warnings) =
+            format_with_line_ranges(input, &config, &ranges, Some(target.as_path()), false);
+
+        assert!(
+            result.contains("my_lib(NAME a SOURCES a.cpp z.cpp)"),
+            "the sibling file's wrapper was not resolved:\n{}",
+            result
+        );
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| matches!(w, FormatWarning::ContentChanged { .. })),
+            "the check refused the formatter's own sorting: {:?}",
+            warnings
+        );
+        crate::formatter::grammar::clear_project_grammar_cache();
     }
 
     #[test]
