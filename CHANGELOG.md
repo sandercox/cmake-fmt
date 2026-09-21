@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-21
+
 ### Fixed
 - `space_between_command_parens` no longer leaves a space at the end of a line. The pad goes *inside* the parens, but it was written next to the `(` whether or not an argument followed on that line, and the whole-buffer trailing-whitespace strip — which this release removes, because it also reached inside values — used to take it back off. The pad is now decided where the line break is: by the builder when only the renderer knows, and left out when the arguments start on the next line
 - A backslash in an unquoted argument escapes what follows it, so `message(-DVERSION=\"${V}\")` is one argument. The lexer broke on the escaped `\"` instead, opening a quoted argument that never closed and running the parse to end of file — which silently deleted commands from `libgit2`, `ESP-IDF` and several vcpkg ports. `\#`, `\(`, `\)` and `\ ` were wrong the same way. A newline still ends the argument: CMake calls a backslash before one a bad character, not a line continuation
